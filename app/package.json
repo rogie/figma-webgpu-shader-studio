@@ -1,0 +1,28 @@
+{
+  "name": "figma-webgpu-shader-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@codemirror/lang-javascript": "^6.2.2",
+    "@codemirror/view": "^6.38.6",
+    "@replit/codemirror-interact": "^6.3.1",
+    "@rogieking/figui3": "^6.13.0",
+    "@uiw/codemirror-theme-xcode": "^4.25.2",
+    "@uiw/react-codemirror": "^4.23.7",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "reset-css": "^5.0.2",
+    "sucrase": "^3.35.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "@webgpu/types": "^0.1.52",
+    "vite": "^5.4.11"
+  }
+}
