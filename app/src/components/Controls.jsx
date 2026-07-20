@@ -34,7 +34,6 @@ function NumberControl({ def, value, onChange }) {
     return (
       <fig-slider
         value={current}
-        variant="neue"
         min={def.min ?? 0}
         max={def.max ?? 1}
         step={def.step ?? 0.01}
