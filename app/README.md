@@ -12,10 +12,53 @@ A browser shader editor/viewer for **Figma shader modules** — the `setup(devic
 ```bash
 cd app
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
-Open the printed URL. The interface mirrors the original `shader.gl` application: a preset rail, FigUI3 property sidebar, optional CodeMirror panel, and large checkerboard visualizer. The `dither`, `grain`, `pixelate`, and `sphere` modules from the repo root are bundled as presets. A generated sample image is loaded so effects render immediately; drop or upload your own image/video to change the input.
+Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in
+`.env.local`. The publishable key is safe to use in the browser; never put a
+Supabase secret or service-role key in this app.
+
+Open the printed URL. The interface mirrors the original `shader.gl` application: a preset rail, FigUI3 property sidebar, CodeMirror panel, and large checkerboard visualizer. The `dither`, `grain`, `pixelate`, and `sphere` modules from the repo root are bundled as presets. A bundled sample image is loaded so effects render immediately; drop or upload your own image/video to change the input.
+
+## Supabase setup
+
+The app uses Supabase Auth, Postgres, and Storage for magic-link accounts,
+cloud shaders, thumbnails, and input media.
+
+1. Create or open the Supabase project.
+2. Run
+   [`../supabase/migrations/20260719220000_shader_cloud.sql`](../supabase/migrations/20260719220000_shader_cloud.sql)
+   in the Supabase SQL Editor. This creates the `shaders` table, private
+   `shader-assets` bucket, and their Row Level Security policies.
+3. In **Authentication → URL Configuration**, set:
+   - Site URL: `https://rogie.github.io/figma-webgpu-shader-studio/`
+   - Redirect URLs:
+     - `http://localhost:5173/**`
+     - `https://rogie.github.io/figma-webgpu-shader-studio/**`
+4. Keep Email enabled under **Authentication → Providers**. Magic-link login
+   uses Supabase's email template and SMTP configuration.
+
+Uploaded images and videos are limited to 25 MB in both the browser and
+Storage. The bucket remains private: its RLS policy permits owners to read
+draft assets and anonymous visitors to read assets only when the corresponding
+shader is public.
+
+## GitHub Pages
+
+The workflow at
+[`../.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml)
+builds and deploys the `app` directory whenever `main` is pushed.
+
+Configure these repository settings:
+
+- Variable `VITE_SUPABASE_URL`
+- Secret `VITE_SUPABASE_PUBLISHABLE_KEY`
+- **Settings → Pages → Source:** GitHub Actions
+
+Public share links use `?shader=<id>`, so they work on GitHub Pages without an
+SPA rewrite.
 
 ## How it works
 
@@ -24,9 +67,14 @@ Open the printed URL. The interface mirrors the original `shader.gl` application
 - **`src/components/Controls.jsx`** — renders one FigUI3 control per `defineProperties` entry (dispatching on `control` then `type`) and writes values back into `frame.params` in the exact shape modules read (`{r,g,b,a}`, `{x,y,radius,angle}`, gradients, etc.).
 - **FigUI3 bundles** — the app loads the core UI plus `fig-editor.js`/CSS and the experimental `fig-lab.js`/CSS bundle (FigUI3’s current replacement for the older “experimental” naming).
 - **Export** — the Export button downloads the current source as `main.ts` plus a generated `features.json` (`version: 2`, with `isAnimated`/`usesMouse` inferred), matching the shader-coder deliverable.
+- **Cloud library** — built-in presets stay local. Signed-in users can save,
+  duplicate, delete, and reopen their own shaders from the same swatch rail.
+- **Sharing** — owners can mark a saved shader public and copy a link. Database
+  and Storage RLS enforce private drafts independently of the UI.
 
 ## Notes / limitations
 
 - Close, not pixel-exact, match to Figma's compositor (canvas uses the preferred format, input is `rgba8unorm`).
 - Validation is browser-side (not `naga` like `figma shader build`), so error wording differs.
 - Point-type params use numeric fields; on-canvas draggable handles are a future enhancement.
+- Cloud saving requires the Supabase migration and environment variables above.

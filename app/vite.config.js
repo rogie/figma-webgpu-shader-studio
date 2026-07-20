@@ -4,6 +4,10 @@ import react from "@vitejs/plugin-react";
 // Presets are the shader modules that live one level up from app/.
 // Allow Vite to read them as `?raw` text imports.
 export default defineConfig({
+  base:
+    process.env.GITHUB_PAGES === "true"
+      ? "/figma-webgpu-shader-studio/"
+      : "/",
   plugins: [react()],
   server: {
     port: 5173,

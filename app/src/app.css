@@ -38,6 +38,25 @@ body,
       height: 32px;
     }
 
+    .app-nav-actions {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: var(--spacer-1);
+    }
+
+    .account-avatar {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      color: var(--figma-color-text-secondary);
+      background: var(--figma-color-bg-secondary);
+      font-size: var(--body-small-fontSize);
+      font-weight: 600;
+    }
+
     fig-chooser {
       --fig-chooser-gap: var(--spacer-1);
       --fig-chooser-inline-margin: 0;
@@ -79,8 +98,20 @@ body,
         justify-content: space-between;
         gap: var(--spacer-2);
 
-        fig-input-text {
+        .shader-title {
           width: 100%;
+          min-width: 0;
+        }
+
+        hstack {
+          flex: 0 0 auto;
+        }
+
+        .document-status {
+          display: block;
+          margin-top: calc(var(--spacer-1) * -1);
+          color: var(--figma-color-text-tertiary);
+          font-size: var(--body-small-fontSize);
         }
       }
 
@@ -154,6 +185,19 @@ body,
       .unknown-type {
         color: var(--figma-color-text-secondary);
         font-size: var(--body-small-fontSize);
+      }
+
+      .sharing-controls {
+        margin-top: var(--spacer-4);
+        padding-top: var(--spacer-3);
+        border-top: 1px solid var(--figma-color-border);
+
+        p {
+          padding: 0 var(--spacer-2);
+          color: var(--figma-color-text-secondary);
+          font-size: var(--body-small-fontSize);
+          line-height: 1.35;
+        }
       }
     }
 
@@ -277,6 +321,19 @@ body,
             color: var(--figma-color-text-secondary);
           }
         }
+
+        .upload-overlay {
+          position: absolute;
+          z-index: 7;
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
+          padding: var(--spacer-2) var(--spacer-3);
+          color: var(--figma-color-text);
+          background: var(--figma-color-bg);
+          border-radius: var(--radius-medium);
+          box-shadow: var(--figma-elevation-400-menu-panel);
+        }
       }
 
       .shader-viewer-visualizer-settings {
@@ -330,6 +387,77 @@ body,
       }
     }
   }
+}
+
+.auth-dialog {
+  width: min(400px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--figma-color-text);
+  background: var(--figma-color-bg);
+  border: 1px solid var(--figma-color-border);
+  border-radius: var(--radius-large);
+  box-shadow: var(--figma-elevation-400-menu-panel);
+
+  &::backdrop {
+    background: rgba(0, 0, 0, 0.35);
+    backdrop-filter: blur(2px);
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+  }
+
+  fig-header {
+    justify-content: space-between;
+  }
+
+  .auth-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacer-3);
+    padding: var(--spacer-3);
+
+    > p {
+      color: var(--figma-color-text-secondary);
+      line-height: 1.4;
+    }
+
+    fig-input-text {
+      width: 100%;
+    }
+  }
+
+  fig-footer {
+    justify-content: flex-end;
+    gap: var(--spacer-2);
+  }
+
+  .form-message {
+    font-size: var(--body-small-fontSize);
+
+    &.success {
+      color: var(--figma-color-text-success);
+    }
+
+    &.error {
+      color: var(--figma-color-text-danger);
+    }
+  }
+}
+
+.status-toast {
+  position: fixed;
+  z-index: 100;
+  left: 50%;
+  bottom: var(--spacer-4);
+  transform: translateX(-50%);
+  padding: var(--spacer-2) var(--spacer-3);
+  color: var(--figma-color-text);
+  background: var(--figma-color-bg);
+  border: 1px solid var(--figma-color-border);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--figma-elevation-400-menu-panel);
 }
 
 .fig-icon {

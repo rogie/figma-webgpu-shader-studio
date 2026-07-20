@@ -3,6 +3,7 @@ import { useState } from "react";
 export default function Preview({
   canvasRef,
   error,
+  uploading,
   onPickFile,
   onDropError,
 }) {
@@ -52,6 +53,12 @@ export default function Preview({
           <fig-icon name="add" />
           <strong>Drop image or video</strong>
           <span>Use it as the shader input</span>
+        </div>
+      )}
+      {uploading && !dragging && (
+        <div className="upload-overlay">
+          <fig-spinner />
+          <span>Loading input…</span>
         </div>
       )}
       {error && (
