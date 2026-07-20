@@ -34,6 +34,8 @@ import iconSun from "./assets/sun.svg";
 import iconUpload from "./assets/upload.svg";
 
 const INITIAL = getPreset("dither");
+const INITIAL_MODULE = loadModule(INITIAL.source);
+const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
 const THUMBNAIL_COLORS = [
   ["#1d3557", "#f1fa8c"],
   ["#5c2a72", "#ff8fab"],
@@ -93,8 +95,8 @@ export default function App() {
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
   const [source, setSource] = useState(INITIAL.source);
-  const [props, setProps] = useState({});
-  const [values, setValues] = useState({});
+  const [props, setProps] = useState(INITIAL_MODULE.props);
+  const [values, setValues] = useState(INITIAL_VALUES);
   const [error, setError] = useState(null);
   const [fatal, setFatal] = useState(null);
   const [running, setRunning] = useState(false);
@@ -752,6 +754,7 @@ export default function App() {
                 onKeyDown={(event) => {
                   if (event.key === "Enter") finishRename();
                 }}
+                dangerouslySetInnerHTML={{ __html: "" }}
               />
               <span className="document-status">
                 {saving ? "Saving…" : dirty ? "Unsaved" : currentShader ? "Saved" : "Local"}
@@ -827,6 +830,7 @@ export default function App() {
                       setIsPublic(event.target.checked);
                       setDirty(true);
                     }}
+                    dangerouslySetInnerHTML={{ __html: "" }}
                   />
                 </fig-field>
                 <p>

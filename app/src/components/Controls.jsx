@@ -15,6 +15,19 @@ function readNumber(event) {
   return Number(value);
 }
 
+// FigUI3 controls generate their implementation in light DOM. Marking that
+// content as opaque prevents React from deleting it on subsequent renders.
+const opaqueContent = { __html: "" };
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function NumberControl({ def, value, onChange }) {
   const current = value ?? def.defaultValue ?? 0;
   if (def.control === "slider") {
@@ -28,6 +41,7 @@ function NumberControl({ def, value, onChange }) {
         units={def.unit || ""}
         text="true"
         onInput={(event) => onChange(readNumber(event))}
+        dangerouslySetInnerHTML={opaqueContent}
       />
     );
   }
@@ -39,6 +53,7 @@ function NumberControl({ def, value, onChange }) {
       step={def.step ?? 0.01}
       units={def.unit || ""}
       onInput={(event) => onChange(readNumber(event))}
+      dangerouslySetInnerHTML={opaqueContent}
     />
   );
 }
@@ -46,19 +61,22 @@ function NumberControl({ def, value, onChange }) {
 function SelectControl({ def, value, onChange }) {
   const options = def.options || [];
   const numeric = options.length > 0 && typeof options[0].value === "number";
+  const optionMarkup = options
+    .map(
+      (option) =>
+        `<option value="${escapeHtml(option.value)}">${escapeHtml(
+          option.label ?? option.value
+        )}</option>`
+    )
+    .join("");
   return (
     <fig-dropdown
       value={value ?? def.defaultValue}
       onInput={(event) =>
         onChange(numeric ? Number(event.target.value) : event.target.value)
       }
-    >
-      {options.map((option) => (
-        <option key={String(option.value)} value={option.value}>
-          {option.label ?? option.value}
-        </option>
-      ))}
-    </fig-dropdown>
+      dangerouslySetInnerHTML={{ __html: optionMarkup }}
+    />
   );
 }
 
@@ -82,6 +100,7 @@ function ColorControl({ def, value, onChange }) {
           a: rgba.a,
         });
       }}
+      dangerouslySetInnerHTML={opaqueContent}
     />
   );
 }
@@ -100,9 +119,10 @@ function VectorControl({ keys, def, value, onChange }) {
           onInput={(event) =>
             onChange({ ...current, [key]: readNumber(event) })
           }
-        >
-          <span slot="prepend">{key[0].toUpperCase()}</span>
-        </fig-input-number>
+          dangerouslySetInnerHTML={{
+            __html: `<span slot="prepend">${key[0].toUpperCase()}</span>`,
+          }}
+        />
       ))}
     </div>
   );
@@ -130,6 +150,7 @@ function GradientControl({ def, value, onChange }) {
             onInput={(event) =>
               update(index, { ...stop, position: readNumber(event) })
             }
+            dangerouslySetInnerHTML={opaqueContent}
           />
           <ColorControl
             def={{ defaultValue: stop.color }}
@@ -184,6 +205,7 @@ function Control({ def, value, onChange }) {
       <fig-switch
         checked={value ?? def.defaultValue ?? false}
         onInput={(event) => onChange(event.target.checked)}
+        dangerouslySetInnerHTML={opaqueContent}
       />
     );
   }
@@ -192,6 +214,7 @@ function Control({ def, value, onChange }) {
       <fig-input-text
         value={value ?? def.defaultValue ?? ""}
         onInput={(event) => onChange(event.target.value)}
+        dangerouslySetInnerHTML={opaqueContent}
       />
     );
   }
@@ -279,7 +302,12 @@ export default function Controls({ props, values, onChange }) {
     );
   }
   return entries.map(([name, def]) => (
-    <fig-field direction="horizontal" key={name}>
+    <fig-field
+      direction="horizontal"
+      key={`${name}:${def.type}:${def.control || ""}:${JSON.stringify(
+        def.options || []
+      )}`}
+    >
       <label>{def.label || name}</label>
       <Control
         def={def}

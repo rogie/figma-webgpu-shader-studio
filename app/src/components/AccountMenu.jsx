@@ -114,6 +114,7 @@ export default function AccountMenu({ open, onOpenChange }) {
                 placeholder="you@example.com"
                 required
                 onInput={(event) => setEmail(event.target.value)}
+                dangerouslySetInnerHTML={{ __html: "" }}
               />
             </fig-field>
             {message && <p className="form-message success">{message}</p>}
