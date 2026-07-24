@@ -1,0 +1,6 @@
+# Minimal Supabase config for local/CLI deploy of Edge Functions.
+# Project link: supabase link --project-ref <ref>
+
+[functions.chat]
+# BYOK chat forwards the caller's key; JWT is optional.
+verify_jwt = false

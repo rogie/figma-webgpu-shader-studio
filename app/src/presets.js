@@ -198,3 +198,22 @@ export const PRESETS = [
 export function getPreset(id) {
   return PRESETS.find((p) => p.id === id) || PRESETS[0];
 }
+
+const BUILTIN_MODULE_FILES = {
+  dither: "dither.ts",
+  grain: "grain.ts",
+  pixelate: "pixelate.ts",
+  sphere: "sphere.ts",
+};
+
+/** Display name for the code editor tab / header (repo `.ts` for built-ins). */
+export function shaderModuleFileName(presetId, shaderName) {
+  if (BUILTIN_MODULE_FILES[presetId]) return BUILTIN_MODULE_FILES[presetId];
+  const slug =
+    (shaderName || "main")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "main";
+  return `${slug}.ts`;
+}

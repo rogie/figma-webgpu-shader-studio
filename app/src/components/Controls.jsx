@@ -1,3 +1,5 @@
+import { useEffect, useRef } from "react";
+
 function toHexByte(value) {
   return Math.max(0, Math.min(255, Math.round((value ?? 0) * 255)))
     .toString(16)
@@ -12,6 +14,15 @@ function colorToHex(color) {
 
 function readNumber(event) {
   const value = event.target.value ?? event.detail;
+  return Number(value);
+}
+
+function readPropskitSliderNumber(event) {
+  const detail = event.nativeEvent?.detail ?? event.detail;
+  const value =
+    detail && typeof detail === "object" && "value" in detail
+      ? detail.value
+      : detail;
   return Number(value);
 }
 
@@ -30,20 +41,6 @@ function escapeHtml(value) {
 
 function NumberControl({ def, value, onChange }) {
   const current = value ?? def.defaultValue ?? 0;
-  if (def.control === "slider") {
-    return (
-      <fig-slider
-        value={current}
-        min={def.min ?? 0}
-        max={def.max ?? 1}
-        step={def.step ?? 0.01}
-        units={def.unit || ""}
-        text="true"
-        onInput={(event) => onChange(readNumber(event))}
-        dangerouslySetInnerHTML={opaqueContent}
-      />
-    );
-  }
   return (
     <fig-input-number
       value={current}
@@ -57,7 +54,77 @@ function NumberControl({ def, value, onChange }) {
   );
 }
 
-function SelectControl({ def, value, onChange }) {
+function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
+  const sliderRef = useRef(null);
+
+  useEffect(() => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    const handleValue = (callback) => (event) => {
+      const next = readPropskitSliderNumber(event);
+      if (Number.isFinite(next)) callback(name, next);
+    };
+    const handleInput = handleValue(onInputValue);
+    const handleChange = handleValue(onCommit);
+    slider.addEventListener("input", handleInput);
+    slider.addEventListener("change", handleChange);
+    return () => {
+      slider.removeEventListener("input", handleInput);
+      slider.removeEventListener("change", handleChange);
+    };
+  }, [name, onCommit, onInputValue]);
+
+  return (
+    <propskit-slider
+      ref={sliderRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
+      value={value ?? def.defaultValue ?? 0}
+      default={def.defaultValue}
+      min={def.min ?? 0}
+      max={def.max ?? 1}
+      step={def.step ?? 0.01}
+      units={def.unit || ""}
+      text="true"
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function SwitchControl({ name, def, value, onChange }) {
+  const switchRef = useRef(null);
+  const checked = Boolean(value ?? def.defaultValue ?? false);
+
+  useEffect(() => {
+    const control = switchRef.current;
+    if (!control) return;
+    const handleValue = (event) => {
+      const next = event.detail?.checked ?? control.checked;
+      onChange(name, Boolean(next));
+    };
+    control.addEventListener("input", handleValue);
+    control.addEventListener("change", handleValue);
+    return () => {
+      control.removeEventListener("input", handleValue);
+      control.removeEventListener("change", handleValue);
+    };
+  }, [name, onChange]);
+
+  return (
+    <propskit-switch
+      ref={switchRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
+      {...(checked ? { checked: "" } : {})}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function SelectControl({ name, def, value, onChange }) {
+  const selectRef = useRef(null);
   const options = def.options || [];
   const numeric = options.length > 0 && typeof options[0].value === "number";
   const optionMarkup = options
@@ -68,12 +135,33 @@ function SelectControl({ def, value, onChange }) {
         )}</option>`
     )
     .join("");
+
+  useEffect(() => {
+    const select = selectRef.current;
+    if (!select) return;
+    const handleValue = (event) => {
+      const detail = event.detail;
+      const raw =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value);
+      onChange(name, numeric ? Number(raw) : raw);
+    };
+    select.addEventListener("input", handleValue);
+    select.addEventListener("change", handleValue);
+    return () => {
+      select.removeEventListener("input", handleValue);
+      select.removeEventListener("change", handleValue);
+    };
+  }, [name, numeric, onChange]);
+
   return (
-    <fig-dropdown
+    <propskit-select
+      ref={selectRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
       value={value ?? def.defaultValue}
-      onInput={(event) =>
-        onChange(numeric ? Number(event.target.value) : event.target.value)
-      }
       dangerouslySetInnerHTML={{ __html: optionMarkup }}
     />
   );
@@ -99,6 +187,46 @@ function ColorControl({ def, value, onChange }) {
           a: rgba.a,
         });
       }}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitColorControl({ name, def, value, onChange }) {
+  const colorRef = useRef(null);
+  const current =
+    value || def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
+
+  useEffect(() => {
+    const control = colorRef.current;
+    if (!control) return;
+    const handleValue = () => {
+      const input = control.querySelector("fig-input-color");
+      const rgba = input?.rgba;
+      if (!rgba) return;
+      onChange(name, {
+        r: rgba.r / 255,
+        g: rgba.g / 255,
+        b: rgba.b / 255,
+        a: rgba.a,
+      });
+    };
+    control.addEventListener("input", handleValue);
+    control.addEventListener("change", handleValue);
+    return () => {
+      control.removeEventListener("input", handleValue);
+      control.removeEventListener("change", handleValue);
+    };
+  }, [name, onChange]);
+
+  return (
+    <propskit-color
+      ref={colorRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
+      value={colorToHex(current)}
+      alpha="true"
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -193,20 +321,8 @@ function GradientControl({ def, value, onChange }) {
 }
 
 function Control({ def, value, onChange }) {
-  if (def.control === "select") {
-    return <SelectControl def={def} value={value} onChange={onChange} />;
-  }
   if (def.type === "number") {
     return <NumberControl def={def} value={value} onChange={onChange} />;
-  }
-  if (def.type === "boolean") {
-    return (
-      <fig-switch
-        checked={value ?? def.defaultValue ?? false}
-        onInput={(event) => onChange(event.target.checked)}
-        dangerouslySetInnerHTML={opaqueContent}
-      />
-    );
   }
   if (def.type === "string") {
     return (
@@ -216,9 +332,6 @@ function Control({ def, value, onChange }) {
         dangerouslySetInnerHTML={opaqueContent}
       />
     );
-  }
-  if (def.type === "color") {
-    return <ColorControl def={def} value={value} onChange={onChange} />;
   }
   if (def.type === "point") {
     return (
@@ -291,7 +404,7 @@ function Control({ def, value, onChange }) {
   return <code className="unknown-type">{def.type || "unknown"}</code>;
 }
 
-export default function Controls({ props, values, onChange }) {
+export default function Controls({ props, values, onChange, onInput }) {
   const entries = Object.entries(props || {});
   if (entries.length === 0) {
     return (
@@ -300,19 +413,64 @@ export default function Controls({ props, values, onChange }) {
       </fig-field>
     );
   }
-  return entries.map(([name, def]) => (
-    <fig-field
-      direction="horizontal"
-      key={`${name}:${def.type}:${def.control || ""}:${JSON.stringify(
-        def.options || []
-      )}`}
-    >
-      <label>{def.label || name}</label>
-      <Control
-        def={def}
-        value={values[name]}
-        onChange={(value) => onChange(name, value)}
-      />
-    </fig-field>
-  ));
+  return entries.map(([name, def]) => {
+    const key = `${name}:${def.type}:${def.control || ""}:${JSON.stringify(
+      def.options || []
+    )}`;
+    if (def.type === "number" && def.control === "slider") {
+      return (
+        <PropskitSliderControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={onInput}
+          onCommit={onChange}
+        />
+      );
+    }
+    if (def.control === "select") {
+      return (
+        <SelectControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onChange={onChange}
+        />
+      );
+    }
+    if (def.type === "boolean") {
+      return (
+        <SwitchControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onChange={onChange}
+        />
+      );
+    }
+    if (def.type === "color") {
+      return (
+        <PropskitColorControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onChange={onChange}
+        />
+      );
+    }
+    return (
+      <fig-field direction="horizontal" key={key}>
+        <label>{def.label || name}</label>
+        <Control
+          def={def}
+          value={values[name]}
+          onChange={(value) => onChange(name, value)}
+        />
+      </fig-field>
+    );
+  });
 }

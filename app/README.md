@@ -72,9 +72,41 @@ SPA rewrite.
 - **Sharing** — owners can mark a saved shader public and copy a link. Database
   and Storage RLS enforce private drafts independently of the UI.
 
+## AI chat (BYOK)
+
+The Code pane’s **Chat** mode iterates on the open shader module using your own
+OpenAI, Anthropic, or Gemini API key.
+
+1. Open **Settings** and paste an OpenAI, Anthropic, and/or Gemini key. Keys are
+   stored only in `localStorage` on this device — never in Supabase.
+2. Deploy the Edge Function that proxies provider calls (needed for Anthropic
+   CORS and to keep the system prompt server-side):
+
+   ```bash
+   supabase functions deploy chat
+   ```
+
+   The function reads `x-user-api-key` from each request. No platform
+   provider secrets are required.
+3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-4.1 / 4o /
+   o-series, Claude Opus/Sonnet/Haiku, Gemini 2.x / 3.x), send a message, and
+   when the model returns a full TypeScript fence it is applied to the editor
+   (with Undo apply).
+
+Each request includes the current module source plus bundled authoring skills
+(`figma-shader-coder`, `v3` module contract, WGSL, WebGPU). Chat history is
+saved per shader in `localStorage` and resumed when you reopen Chat.
+
+You can attach an image (all providers) or video (Gemini only) via the **+**
+menu next to Send; media is sent as multimodal context for that turn (max 3 MB).
+
+Chat still needs `VITE_SUPABASE_URL` + publishable key so the browser can reach
+`/functions/v1/chat`. Sign-in is not required for chat.
+
 ## Notes / limitations
 
 - Close, not pixel-exact, match to Figma's compositor (canvas uses the preferred format, input is `rgba8unorm`).
 - Validation is browser-side (not `naga` like `figma shader build`), so error wording differs.
 - Point-type params use numeric fields; on-canvas draggable handles are a future enhancement.
 - Cloud saving requires the Supabase migration and environment variables above.
+- Chat requires the deployed `chat` Edge Function and a BYOK provider key.

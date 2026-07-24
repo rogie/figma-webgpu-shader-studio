@@ -32,6 +32,7 @@ body,
     justify-content: space-between;
     align-items: center;
     gap: var(--spacer-3);
+    margin-right: var(--spacer-3);
 
     .app-logo {
       width: 32px;
@@ -58,12 +59,40 @@ body,
     }
 
     fig-chooser {
-      --fig-chooser-gap: var(--spacer-1);
+      --fig-chooser-gap: var(--spacer-2);
       --fig-chooser-inline-margin: 0;
 
       width: 32px;
       height: 100%;
       flex: 1;
+
+      .new-shader-menu {
+        display: block;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+      }
+
+      .new-shader-swatch-wrap {
+        display: block;
+        position: relative;
+        width: 32px;
+        height: 32px;
+        cursor: pointer;
+
+        .new-shader-swatch {
+          display: block;
+        }
+
+        fig-icon {
+          position: absolute;
+          z-index: 2;
+          inset: 50% auto auto 50%;
+          transform: translate(-50%, -50%);
+          pointer-events: none;
+          color: var(--figma-color-icon-secondary);
+        }
+      }
 
       fig-choice {
         width: 32px;
@@ -82,137 +111,27 @@ body,
     margin: 1rem;
     margin-left: 0;
 
-    .shader-viewer-properties {
-      width: var(--sidebar-width);
-      min-width: var(--sidebar-width);
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-
-      > fig-header {
-        margin-top: calc(var(--spacer-2) * -1);
-        justify-content: space-between;
-        gap: var(--spacer-2);
-
-        .shader-title {
-          width: 100%;
-          min-width: 0;
-        }
-
-        hstack {
-          flex: 0 0 auto;
-        }
-
-        .document-status {
-          display: block;
-          margin-top: calc(var(--spacer-1) * -1);
-          color: var(--figma-color-text-tertiary);
-          font-size: var(--body-small-fontSize);
-        }
-      }
-
-      .shader-viewer-properties-content {
-        flex: 1;
-        padding: var(--spacer-2) 0;
-        overflow-y: auto;
-        overflow-x: hidden;
-        scrollbar-width: thin;
-      }
-
-      fig-input-text.shader-name {
-        font-weight: var(--body-medium-strong-fontWeight);
-        font-size: var(--body-large-fontSize);
-        margin-left: calc(var(--spacer-2) * -1);
-
-        &[readonly] {
-          background-color: transparent;
-          box-shadow: none;
-          outline: none;
-
-          &:hover,
-          &:focus,
-          &:focus-within,
-          &:has(input:focus) {
-            background-color: transparent;
-            box-shadow: none;
-            outline: none;
-          }
-        }
-
-        &:not(:focus-within):not(:hover) {
-          background-color: transparent;
-        }
-
-        &:not([readonly]):focus-within {
-          background-color: var(--figma-color-bg-secondary);
-          outline: var(--figma-focus-outline);
-          outline-offset: var(--figma-focus-outline-offset);
-        }
-      }
-
-      .vector-control {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: var(--spacer-1);
-        width: 100%;
-
-        fig-input-number {
-          min-width: 0;
-          width: 100%;
-        }
-      }
-
-      .compound-control,
-      .gradient-control {
-        display: flex;
-        flex-direction: column;
-        gap: var(--spacer-1);
-        width: 100%;
-      }
-
-      .gradient-stop {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto auto;
-        align-items: center;
-        gap: var(--spacer-1);
-      }
-
-      .empty-state,
-      .unknown-type {
-        color: var(--figma-color-text-secondary);
-        font-size: var(--body-small-fontSize);
-      }
-
-      .sharing-controls {
-        margin-top: var(--spacer-4);
-        padding-top: var(--spacer-3);
-        border-top: 1px solid var(--figma-color-border);
-
-        p {
-          padding: 0 var(--spacer-2);
-          color: var(--figma-color-text-secondary);
-          font-size: var(--body-small-fontSize);
-          line-height: 1.35;
-        }
-      }
-    }
-
-    .shader-viewer-code {
+    .shader-viewer-sidebar {
       width: var(--code-width);
       min-width: 320px;
       height: 100%;
       margin: 0;
-      margin-right: var(--spacer-3);
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .shader-viewer-code,
+    .shader-viewer-chat {
+      margin: 0;
       padding: 0;
       border-radius: var(--viewer-radius);
       overflow: hidden;
       position: relative;
       display: flex;
       flex-direction: column;
+      min-height: 0;
       background-color: var(--figma-color-bg-secondary);
 
       &::after {
@@ -229,10 +148,53 @@ body,
         flex: 0 0 auto;
         align-items: center;
         justify-content: space-between;
+        gap: var(--spacer-2);
+
+        .code-pane-heading {
+          flex: 1;
+          min-width: 0;
+          --hstack-gap: var(--spacer-2);
+
+          > h2 {
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+        }
+
+        > hstack:last-child {
+          flex: 0 0 auto;
+          --hstack-gap: var(--spacer-1);
+
+          /* fig-header pulls all ghost icon buttons right by -spacer-2;
+             keep that only on the last control so the pair isn't crushed. */
+          fig-button[icon][variant="ghost"] {
+            margin-right: 0;
+          }
+
+          > :last-child fig-button[icon][variant="ghost"] {
+            margin-right: calc(var(--spacer-2) * -1);
+          }
+        }
+
+        fig-button svg {
+          display: block;
+          color: var(--figma-color-icon);
+        }
+
+        fig-button fig-icon {
+          color: var(--figma-color-icon);
+        }
       }
+    }
+
+    .shader-viewer-code {
+      flex: 1 1 auto;
+      min-height: 140px;
 
       .code-editor {
-        flex: 1;
+        flex: 1 1 auto;
         min-height: 0;
         overflow: hidden;
 
@@ -248,9 +210,241 @@ body,
       }
     }
 
+    .shader-viewer-chat {
+      flex: 0 0 var(--chat-height, 260px);
+      min-height: 160px;
+
+      .code-chat {
+        display: flex;
+        flex-direction: column;
+        flex: 1 1 auto;
+        min-height: 0;
+        height: auto;
+        padding: 0;
+        color: var(--figma-color-text);
+
+        .chat-toolbar {
+          flex: 0 0 auto;
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
+          padding: var(--spacer-2) var(--spacer-3);
+          border-bottom: 1px solid var(--figma-color-border);
+        }
+
+        .chat-messages {
+          flex: 1;
+          min-height: 0;
+          overflow: auto;
+          padding: var(--spacer-3);
+          display: flex;
+          flex-direction: column;
+          gap: var(--spacer-3);
+        }
+
+        .chat-empty {
+          margin: auto;
+          max-width: 28rem;
+          text-align: center;
+          color: var(--figma-color-text-secondary);
+          display: flex;
+          flex-direction: column;
+          gap: var(--spacer-2);
+
+          code {
+            font-family: var(--font-family-monospace, ui-monospace, monospace);
+            color: var(--figma-color-text);
+          }
+        }
+
+        .chat-bubble {
+          max-width: 100%;
+          padding: var(--spacer-2) var(--spacer-3);
+          border-radius: var(--radius-medium, 8px);
+          white-space: pre-wrap;
+          word-break: break-word;
+          font-size: var(--font-size-small, 12px);
+          line-height: 1.45;
+        }
+
+        .chat-bubble-user {
+          align-self: flex-end;
+          background: var(--figma-color-bg-brand-tertiary, var(--figma-color-bg-secondary));
+          color: var(--figma-color-text);
+        }
+
+        .chat-bubble-assistant {
+          align-self: stretch;
+          background: var(--figma-color-bg-secondary);
+          border: 1px solid var(--figma-color-border);
+        }
+
+        .chat-bubble-assistant.is-pending {
+          opacity: 0.85;
+        }
+
+        .chat-prose {
+          margin: 0;
+        }
+
+        .chat-code-note {
+          margin-top: var(--spacer-2);
+          color: var(--figma-color-text-secondary);
+          font-size: var(--font-size-small, 12px);
+        }
+
+        .chat-error {
+          flex: 0 0 auto;
+          margin: 0;
+          padding: 0 var(--spacer-3) var(--spacer-2);
+          color: var(--figma-color-text-danger, #c00);
+          font-size: var(--font-size-small, 12px);
+        }
+
+        .chat-link {
+          appearance: none;
+          border: 0;
+          background: none;
+          padding: 0;
+          color: var(--figma-color-text-brand, var(--figma-color-text));
+          text-decoration: underline;
+          cursor: pointer;
+          font: inherit;
+        }
+
+        .chat-composer {
+          flex: 0 0 auto;
+          display: flex;
+          flex-direction: column;
+          gap: var(--spacer-2);
+          padding: var(--spacer-3);
+          border-top: 1px solid var(--figma-color-border);
+        }
+
+        .chat-input {
+          width: 100%;
+          box-sizing: border-box;
+          resize: none;
+          font: inherit;
+        }
+
+        .chat-composer-actions {
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
+
+          fig-dropdown {
+            flex: 0 0 auto;
+            width: max-content;
+            max-width: 16rem;
+          }
+
+          .chat-composer-send,
+          > fig-button {
+            margin-left: auto;
+          }
+
+          .chat-composer-send {
+            display: flex;
+            align-items: center;
+            gap: var(--spacer-1);
+          }
+        }
+
+        .chat-pending-attachment {
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
+          padding: var(--spacer-1) var(--spacer-2);
+          border: 1px solid var(--figma-color-border);
+          border-radius: var(--radius-medium, 8px);
+          background: var(--figma-color-bg-secondary);
+          font-size: var(--font-size-small, 12px);
+
+          img,
+          video {
+            width: 40px;
+            height: 40px;
+            object-fit: cover;
+            border-radius: 4px;
+            background: var(--figma-color-bg);
+          }
+
+          span {
+            flex: 1;
+            min-width: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          }
+        }
+
+        .chat-attachment-preview {
+          display: block;
+          max-width: 100%;
+          max-height: 160px;
+          border-radius: 6px;
+          margin-bottom: var(--spacer-2);
+          object-fit: contain;
+          background: var(--figma-color-bg);
+        }
+
+        .chat-attachment-chip {
+          margin-bottom: var(--spacer-1);
+          color: var(--figma-color-text-secondary);
+          font-size: var(--font-size-small, 12px);
+        }
+      }
+    }
+
+    .pane-resizer {
+      position: relative;
+      flex: 0 0 var(--spacer-3);
+      height: 100%;
+      cursor: col-resize;
+      touch-action: none;
+      outline: none;
+
+      &::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: 50%;
+        width: 2px;
+        transform: translateX(-50%);
+        background: transparent;
+        transition: background-color 120ms ease;
+      }
+
+      &:hover::after,
+      &:focus-visible::after,
+      &:active::after {
+        background: var(--figma-color-border-brand-strong);
+      }
+
+      &.pane-resizer-row {
+        flex: 0 0 var(--spacer-3);
+        width: 100%;
+        height: auto;
+        cursor: row-resize;
+        z-index: 2;
+
+        &::after {
+          top: 50%;
+          bottom: auto;
+          left: 0;
+          right: 0;
+          width: auto;
+          height: 2px;
+          transform: translateY(-50%);
+        }
+      }
+    }
+
     .shader-viewer-visualizer {
       flex: 1;
-      min-width: 0;
+      min-width: 220px;
       height: 100%;
       position: relative;
       overflow: hidden;
@@ -336,20 +530,20 @@ body,
         }
       }
 
-      .shader-viewer-visualizer-settings {
+      .tools {
         position: absolute;
-        top: var(--spacer-2);
-        right: var(--spacer-2);
+        bottom: var(--spacer-2);
+        left: 50%;
+        transform: translateX(-50%);
         z-index: 5;
-        display: none;
+        display: flex;
         align-items: center;
         justify-content: center;
         gap: var(--spacer-2);
-      }
-
-      &:hover .shader-viewer-visualizer-settings,
-      &:focus-within .shader-viewer-visualizer-settings {
-        display: flex;
+        padding: var(--spacer-2);
+        background: var(--figma-color-bg);
+        border-radius: var(--radius-large);
+        box-shadow: var(--figma-elevation-400-menu-panel);
       }
 
       .error-overlay {
@@ -389,59 +583,183 @@ body,
   }
 }
 
-.auth-dialog {
-  width: min(400px, calc(100vw - 32px));
-  padding: 0;
-  color: var(--figma-color-text);
-  background: var(--figma-color-bg);
-  border: 1px solid var(--figma-color-border);
-  border-radius: var(--radius-large);
-  box-shadow: var(--figma-elevation-400-menu-panel);
 
-  &::backdrop {
-    background: rgba(0, 0, 0, 0.35);
-    backdrop-filter: blur(2px);
-  }
-
-  form {
-    display: flex;
-    flex-direction: column;
-  }
+.settings-popup {
+  width: 340px;
 
   fig-header {
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
-  .auth-dialog-content {
+  .settings-keys {
+    margin-top: var(--spacer-3);
     display: flex;
     flex-direction: column;
-    gap: var(--spacer-3);
-    padding: var(--spacer-3);
+    gap: var(--spacer-2);
 
-    > p {
-      color: var(--figma-color-text-secondary);
-      line-height: 1.4;
+    h4 {
+      margin: 0;
+      font-size: var(--font-size-small, 12px);
+      font-weight: 600;
     }
 
-    fig-input-text {
+    .settings-keys-note {
+      margin: 0;
+      color: var(--figma-color-text-secondary);
+      font-size: var(--font-size-small, 12px);
+      line-height: 1.4;
+    }
+  }
+}
+
+.shader-properties-dialog {
+  z-index: 20;
+  width: var(--sidebar-width);
+  max-height: calc(100vh - 32px);
+  overflow: visible;
+
+  &[open]:not([open="false"]) {
+    display: flex;
+    flex-direction: column;
+  }
+
+  > fig-header[dialog-header] {
+    flex: 0 0 auto;
+    justify-content: space-between;
+    gap: var(--spacer-2);
+    overflow: visible;
+
+    .shader-title {
+      flex: 1;
+      width: 100%;
+      min-width: 0;
+      user-select: none;
+      pointer-events: none;
+
+      &:has(fig-input-text:not([readonly])) {
+        pointer-events: auto;
+      }
+
+      &.is-renaming {
+        display: flex;
+        align-items: center;
+        gap: var(--spacer-2);
+        pointer-events: auto;
+
+        fig-input-text.shader-name {
+          flex: 1;
+          min-width: 0;
+          width: auto;
+        }
+
+        > fig-button {
+          flex: 0 0 auto;
+          margin-right: calc(var(--spacer-2) * -1);
+        }
+      }
+    }
+
+    hstack {
+      flex: 0 0 auto;
+      --hstack-gap: var(--spacer-1);
+
+      /* Same as code header: fig-header -spacer-2 on every ghost icon
+         crushes the more/close pair; keep it only on the last control. */
+      fig-button[icon][variant="ghost"] {
+        margin-right: 0;
+      }
+
+      > :last-child fig-button[icon][variant="ghost"],
+      > fig-button[icon][variant="ghost"]:last-child {
+        margin-right: calc(var(--spacer-2) * -1);
+      }
+    }
+  }
+
+  fig-content {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .shader-properties-dialog-content {
+    max-height: min(70vh, 640px);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacer-2);
+    overflow-x: hidden;
+    scrollbar-width: thin;
+  }
+
+  fig-input-text.shader-name {
+    width: 100%;
+    margin-left: calc(var(--spacer-2) * -1);
+
+    /* Read-only title: look like plain text; figui border/focus only when editing */
+    &[readonly]:not([readonly="false"]) {
+      background-color: transparent;
+      box-shadow: none !important;
+      outline: none !important;
+      cursor: default;
+      user-select: none;
+
+      &:hover,
+      &:has(:is(input, textarea):focus) {
+        background-color: transparent;
+        box-shadow: none !important;
+        outline: none !important;
+      }
+    }
+
+    &:not([readonly]) {
+      user-select: text;
+    }
+  }
+
+  .vector-control {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacer-1);
+    width: 100%;
+
+    fig-input-number {
+      min-width: 0;
       width: 100%;
     }
   }
 
-  fig-footer {
-    justify-content: flex-end;
-    gap: var(--spacer-2);
+  .compound-control,
+  .gradient-control {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacer-1);
+    width: 100%;
   }
 
-  .form-message {
+  .gradient-stop {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    align-items: center;
+    gap: var(--spacer-1);
+  }
+
+  .empty-state,
+  .unknown-type {
+    color: var(--figma-color-text-secondary);
     font-size: var(--body-small-fontSize);
+  }
 
-    &.success {
-      color: var(--figma-color-text-success);
-    }
+  .sharing-controls {
+    margin-top: var(--spacer-4);
+    padding-top: var(--spacer-3);
+    border-top: 1px solid var(--figma-color-border);
 
-    &.error {
-      color: var(--figma-color-text-danger);
+    p {
+      padding: 0 var(--spacer-2);
+      color: var(--figma-color-text-secondary);
+      font-size: var(--body-small-fontSize);
+      line-height: 1.35;
     }
   }
 }
@@ -460,12 +778,6 @@ body,
   box-shadow: var(--figma-elevation-400-menu-panel);
 }
 
-.fig-icon {
-  display: block;
-  width: 16px;
-  height: 16px;
-}
-
 @media (max-width: 1180px) {
   :root {
     --code-width: 380px;
@@ -475,31 +787,31 @@ body,
 @media (max-width: 900px) {
   #root .shader-viewer {
     display: grid;
-    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: minmax(0, 1fr) minmax(280px, 42%);
 
-    .shader-viewer-properties {
-      grid-column: 1;
-      grid-row: 1 / -1;
-    }
-
     .shader-viewer-visualizer {
-      grid-column: 2;
+      grid-column: 1;
       grid-row: 1;
+      min-width: 0;
       margin-bottom: var(--spacer-3);
     }
 
-    .shader-viewer-code {
-      grid-column: 2;
+    > .pane-resizer:not(.pane-resizer-row) {
+      display: none;
+    }
+
+    .shader-viewer-sidebar {
+      grid-column: 1;
       grid-row: 2;
       position: relative;
       inset: auto;
       z-index: auto;
       width: auto;
       min-width: 0;
-      height: auto;
+      height: 100%;
+      min-height: 320px;
       margin: 0;
-      box-shadow: none;
     }
   }
 }
