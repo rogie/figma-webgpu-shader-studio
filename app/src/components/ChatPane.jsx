@@ -1,11 +1,18 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   extractModuleSource,
+  formatChatError,
   splitAssistantContent,
   validateModuleSource,
 } from "../lib/chatApply.js";
 import {
-  attachmentForApi,
   attachmentMeta,
   fileToChatAttachment,
   providerSupportsChatVideo,
@@ -25,8 +32,12 @@ import {
   getProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
+import { toApiMessages } from "../lib/chatPayload.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import { streamChat } from "../services/chat.js";
+import SendIcon from "./SendIcon.jsx";
+import StopIcon from "./StopIcon.jsx";
+import UndoIcon from "./UndoIcon.jsx";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
 const MAX_UNDO = 12;
@@ -53,39 +64,32 @@ function providerLabel(provider) {
   return provider;
 }
 
-function toApiMessages(messages, pendingAttachment) {
-  return messages.map((message, index) => {
-    const isLast = index === messages.length - 1;
-    const api = {
-      role: message.role,
-      content: message.content,
-    };
-    if (
-      isLast &&
-      message.role === "user" &&
-      pendingAttachment?.dataBase64
-    ) {
-      api.attachments = [attachmentForApi(pendingAttachment)];
-    } else if (message.attachment?.name) {
-      // Persisted history keeps metadata only; remind the model in prose.
-      api.content = message.content?.trim()
-        ? message.content
-        : `Attached ${message.attachment.kind || "image"}: ${message.attachment.name}`;
-    }
-    return api;
-  });
+function isEmptyAssistant(message) {
+  return (
+    message?.role === "assistant" &&
+    !message.pending &&
+    !String(message.content || "").trim()
+  );
 }
 
-export default function ChatPane({
-  source,
-  kind,
-  fileName,
-  shaderKey,
-  features,
-  onApplySource,
-  onOpenSettings,
-  onNotice,
-}) {
+function pruneEmptyAssistants(thread) {
+  return thread.filter((message) => !isEmptyAssistant(message));
+}
+
+const ChatPane = forwardRef(function ChatPane(
+  {
+    source,
+    kind,
+    fileName,
+    shaderKey,
+    features,
+    onApplySource,
+    onOpenSettings,
+    onNotice,
+    onCanClearChange,
+  },
+  ref
+) {
   const [model, setModel] = useState(loadSavedModel);
   const [draft, setDraft] = useState("");
   const [threads, setThreads] = useState(loadChatThreads);
@@ -103,7 +107,7 @@ export default function ChatPane({
   const pendingApiAttachmentRef = useRef(null);
 
   const threadId = messageKey(shaderKey);
-  const messages = threads[threadId] || [];
+  const messages = pruneEmptyAssistants(threads[threadId] || []);
   const apiKey = useMemo(
     () => getProviderKey(model.provider),
     [model.provider, keyVersion]
@@ -111,6 +115,19 @@ export default function ChatPane({
   const hasKey = Boolean(apiKey);
   const videoSupported = providerSupportsChatVideo(model.provider);
   const canSend = Boolean(draft.trim() || attachment) && !streaming;
+  let undoMessageIndex = -1;
+  if (undoCount > 0) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        message.role === "assistant" &&
+        extractModuleSource(message.content)
+      ) {
+        undoMessageIndex = index;
+        break;
+      }
+    }
+  }
 
   useEffect(() => subscribeProviderKeys(() => setKeyVersion((n) => n + 1)), []);
 
@@ -124,6 +141,18 @@ export default function ChatPane({
   useEffect(() => {
     saveChatThreads(threads);
   }, [threads]);
+
+  useEffect(() => {
+    setThreads((prev) => {
+      const current = prev[threadId];
+      if (!current?.some(isEmptyAssistant)) return prev;
+      return { ...prev, [threadId]: pruneEmptyAssistants(current) };
+    });
+  }, [threadId]);
+
+  useEffect(() => {
+    onCanClearChange?.(messages.length > 0);
+  }, [messages.length, onCanClearChange]);
 
   useEffect(() => {
     const el = listRef.current;
@@ -145,7 +174,10 @@ export default function ChatPane({
       const target = event.target?.closest?.("fig-dropdown") || event.target;
       const value = target?.value ?? event.detail ?? event.target?.value;
       const next = CHAT_MODELS.find((entry) => entry.id === value);
-      if (next) setModel(next);
+      if (next) {
+        setModel(next);
+        setError("");
+      }
     };
     control.addEventListener("input", onInput);
     control.addEventListener("change", onInput);
@@ -177,6 +209,7 @@ export default function ChatPane({
   };
 
   const clearCurrentChat = () => {
+    if (messages.length === 0) return;
     if (streaming) stop();
     setThreads((prev) => {
       const next = { ...prev };
@@ -186,6 +219,14 @@ export default function ChatPane({
     setAttachment(null);
     setError("");
   };
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      clearChat: clearCurrentChat,
+    }),
+    [threadId, streaming]
+  );
 
   const pickAttachment = async (file, kind) => {
     if (!file) return;
@@ -261,6 +302,25 @@ export default function ChatPane({
     );
 
     let assembled = "";
+    let sawError = false;
+    const finishAssistant = (content) => {
+      updateThread((current) => {
+        const next = pruneEmptyAssistants([...current]);
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return next;
+        if (!String(content || "").trim()) {
+          next.pop();
+          return next;
+        }
+        next[next.length - 1] = {
+          role: "assistant",
+          content,
+          pending: false,
+        };
+        return next;
+      });
+    };
+
     try {
       for await (const event of streamChat({
         provider: model.provider,
@@ -290,23 +350,22 @@ export default function ChatPane({
             return next;
           });
         } else if (event.type === "error") {
+          sawError = true;
           setError(event.message || "Chat failed.");
           break;
         }
       }
 
-      updateThread((current) => {
-        const next = [...current];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant") {
-          next[next.length - 1] = {
-            role: "assistant",
-            content: assembled,
-            pending: false,
-          };
+      if (sawError || !assembled.trim()) {
+        finishAssistant("");
+        if (!sawError && !controller.signal.aborted) {
+          setError(
+            `${model.label} returned an empty reply. Try again or choose another model.`
+          );
         }
-        return next;
-      });
+      } else {
+        finishAssistant(assembled);
+      }
 
       const moduleSource = extractModuleSource(assembled);
       if (moduleSource) {
@@ -327,18 +386,7 @@ export default function ChatPane({
       if (err?.name !== "AbortError") {
         setError(err.message || String(err));
       }
-      updateThread((current) => {
-        const next = [...current];
-        const last = next[next.length - 1];
-        if (last?.role === "assistant" && last.pending) {
-          next[next.length - 1] = {
-            role: "assistant",
-            content: assembled || "(interrupted)",
-            pending: false,
-          };
-        }
-        return next;
-      });
+      finishAssistant(assembled);
     } finally {
       abortRef.current = null;
       pendingApiAttachmentRef.current = null;
@@ -375,36 +423,6 @@ export default function ChatPane({
 
   return (
     <div className="code-chat">
-      {(undoCount > 0 || streaming || messages.length > 0) && (
-        <div className="chat-toolbar">
-          {undoCount > 0 && (
-            <fig-button
-              type="button"
-              variant="ghost"
-              size="small"
-              onClick={undoLastApply}
-            >
-              Undo apply
-            </fig-button>
-          )}
-          {messages.length > 0 && !streaming && (
-            <fig-button
-              type="button"
-              variant="ghost"
-              size="small"
-              onClick={clearCurrentChat}
-            >
-              Clear chat
-            </fig-button>
-          )}
-          {streaming && (
-            <fig-button type="button" variant="ghost" size="small" onClick={stop}>
-              Stop
-            </fig-button>
-          )}
-        </div>
-      )}
-
       <div className="chat-messages" ref={listRef}>
         {messages.length === 0 && (
           <div className="chat-empty">
@@ -466,123 +484,168 @@ export default function ChatPane({
             >
               {prose && <div className="chat-prose">{prose}</div>}
               {code && (
-                <div className="chat-code-note">Updated module applied to editor.</div>
+                <div className="chat-code-note">
+                  <span>Updated module applied to editor.</span>
+                  {index === undoMessageIndex && (
+                    <fig-tooltip text="Undo apply" delay="0">
+                      <fig-button
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        size="small"
+                        aria-label="Undo apply"
+                        onClick={undoLastApply}
+                      >
+                        <UndoIcon />
+                      </fig-button>
+                    </fig-tooltip>
+                  )}
+                </div>
               )}
               {message.pending && !message.content && (
-                <div className="chat-prose">Thinking…</div>
+                <fig-shimmer aria-label="Thinking">
+                  <div className="chat-prose">Thinking…</div>
+                </fig-shimmer>
               )}
             </div>
           );
         })}
       </div>
 
-      {error && <p className="chat-error">{error}</p>}
-
-      <div className="chat-composer">
-        {hasKey ? (
-          <>
-            {attachment && (
-              <div className="chat-pending-attachment">
-                {attachment.kind === "image" ? (
-                  <img src={attachment.previewUrl} alt={attachment.name} />
-                ) : (
-                  <video src={attachment.previewUrl} muted />
-                )}
-                <span>{attachment.name}</span>
-                <fig-button
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  size="small"
-                  aria-label="Remove attachment"
-                  onClick={() => setAttachment(null)}
-                >
-                  <fig-icon name="x" />
-                </fig-button>
-              </div>
-            )}
-            <textarea
-              className="chat-input"
-              rows={3}
-              value={draft}
-              placeholder={`Ask about ${fileName}…`}
-              disabled={streaming}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-            />
-          </>
-        ) : null}
-        <div className="chat-composer-actions">
-          {modelDropdown}
-          {!hasKey ? (
-            <fig-button
-              type="button"
-              variant="secondary"
-              onClick={onOpenSettings}
-            >
-              Add API key
-            </fig-button>
-          ) : (
-            <div className="chat-composer-send">
-              <fig-menu position="top right">
-                <fig-tooltip text="Attach media" delay="0">
+      <div className="chat-footer">
+        {error && (
+          <p className="chat-error" title={error}>
+            {formatChatError(error)}
+          </p>
+        )}
+        <div className="chat-composer">
+          {hasKey ? (
+            <>
+              {attachment && (
+                <div className="chat-pending-attachment">
+                  {attachment.kind === "image" ? (
+                    <img src={attachment.previewUrl} alt={attachment.name} />
+                  ) : (
+                    <video src={attachment.previewUrl} muted />
+                  )}
+                  <span>{attachment.name}</span>
                   <fig-button
-                    fig-menu-trigger=""
                     type="button"
                     variant="ghost"
                     icon="true"
-                    aria-label="Attach media"
-                    disabled={streaming ? "" : undefined}
+                    size="small"
+                    aria-label="Remove attachment"
+                    onClick={() => setAttachment(null)}
                   >
-                    <fig-icon name="add" />
+                    <fig-icon name="x" />
                   </fig-button>
-                </fig-tooltip>
-                <fig-menu-item
-                  value="image"
-                  onClick={() => imageInputRef.current?.click()}
-                >
-                  Image
-                </fig-menu-item>
-                <fig-menu-item
-                  value="video"
-                  disabled={!videoSupported}
-                  onClick={() => {
-                    if (!videoSupported) {
-                      setError("Video attachments are only supported with Gemini.");
-                      return;
-                    }
-                    videoInputRef.current?.click();
-                  }}
-                >
-                  {videoSupported ? "Video" : "Video (Gemini only)"}
-                </fig-menu-item>
-              </fig-menu>
+                </div>
+              )}
+              <textarea
+                className="chat-input"
+                rows={3}
+                value={draft}
+                placeholder={`Ask about ${fileName}…`}
+                disabled={streaming}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={onKeyDown}
+              />
+            </>
+          ) : null}
+          <div className="chat-composer-actions">
+            {modelDropdown}
+            {!hasKey ? (
               <fig-button
                 type="button"
-                variant="primary"
-                disabled={!canSend}
-                onClick={send}
+                variant="secondary"
+                onClick={onOpenSettings}
               >
-                {streaming ? "Sending…" : "Send"}
+                Add API key
               </fig-button>
-            </div>
-          )}
+            ) : (
+              <div className="chat-composer-send">
+                <fig-menu position="top right">
+                  <fig-tooltip text="Attach media" delay="0">
+                    <fig-button
+                      fig-menu-trigger=""
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Attach media"
+                      disabled={streaming ? "" : undefined}
+                    >
+                      <fig-icon name="add" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item
+                    value="image"
+                    onClick={() => imageInputRef.current?.click()}
+                  >
+                    Image
+                  </fig-menu-item>
+                  <fig-menu-item
+                    value="video"
+                    disabled={!videoSupported}
+                    onClick={() => {
+                      if (!videoSupported) {
+                        setError(
+                          "Video attachments are only supported with Gemini."
+                        );
+                        return;
+                      }
+                      videoInputRef.current?.click();
+                    }}
+                  >
+                    {videoSupported ? "Video" : "Video (Gemini only)"}
+                  </fig-menu-item>
+                </fig-menu>
+                {streaming ? (
+                  <fig-tooltip text="Stop" delay="0">
+                    <fig-button
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Stop"
+                      onClick={stop}
+                    >
+                      <StopIcon />
+                    </fig-button>
+                  </fig-tooltip>
+                ) : (
+                  <fig-tooltip text="Send" delay="0">
+                    <fig-button
+                      type="button"
+                      variant="primary"
+                      icon="true"
+                      aria-label="Send"
+                      disabled={!canSend}
+                      onClick={send}
+                    >
+                      <SendIcon />
+                    </fig-button>
+                  </fig-tooltip>
+                )}
+              </div>
+            )}
+          </div>
+          <input
+            ref={imageInputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={onImageChosen}
+          />
+          <input
+            ref={videoInputRef}
+            type="file"
+            accept="video/*"
+            hidden
+            onChange={onVideoChosen}
+          />
         </div>
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/*"
-          hidden
-          onChange={onImageChosen}
-        />
-        <input
-          ref={videoInputRef}
-          type="file"
-          accept="video/*"
-          hidden
-          onChange={onVideoChosen}
-        />
       </div>
     </div>
   );
-}
+});
+
+export default ChatPane;

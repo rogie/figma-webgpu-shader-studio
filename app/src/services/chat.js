@@ -1,7 +1,12 @@
 import { isSupabaseConfigured } from "../lib/supabase.js";
+import {
+  buildChatRequest,
+  createChatSseParser,
+} from "../lib/chatPayload.js";
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
 
 /**
  * Stream a chat completion via the Supabase Edge Function proxy.
@@ -54,7 +59,7 @@ export async function* streamChat({
       Authorization: `Bearer ${publishableKey}`,
       "x-user-api-key": apiKey.trim(),
     },
-    body: JSON.stringify({
+    body: JSON.stringify(buildChatRequest({
       provider,
       model,
       messages,
@@ -63,7 +68,7 @@ export async function* streamChat({
       fileName,
       features,
       skills,
-    }),
+    })),
     signal,
   });
 
@@ -71,7 +76,10 @@ export async function* streamChat({
     let message = `Chat request failed (${response.status})`;
     try {
       const json = await response.json();
-      if (json?.error) message = String(json.error);
+      if (typeof json?.error === "string") message = json.error;
+      else if (json?.error?.message) message = String(json.error.message);
+      else if (json?.message) message = String(json.message);
+      else if (json) message = JSON.stringify(json);
     } catch {
       try {
         const text = await response.text();
@@ -91,36 +99,48 @@ export async function* streamChat({
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = "";
+  const parser = createChatSseParser();
+  let sawDone = false;
+  let receivedEvent = false;
 
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const parts = buffer.split("\n");
-    buffer = parts.pop() ?? "";
-    for (const line of parts) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data) continue;
-      try {
-        const event = JSON.parse(data);
-        if (event.type === "delta" && typeof event.text === "string") {
-          yield { type: "delta", text: event.text };
-        } else if (event.type === "done") {
-          yield { type: "done" };
-        } else if (event.type === "error") {
-          yield {
-            type: "error",
-            message: event.message || "Chat stream error",
-          };
-        }
-      } catch {
-        // ignore malformed SSE lines
-      }
+    let timeoutId;
+    const read = reader.read();
+    let result;
+    try {
+      result = await Promise.race([
+        read,
+        new Promise((resolve) => {
+          timeoutId = window.setTimeout(
+            () => resolve({ timedOut: true }),
+            RESPONSE_IDLE_TIMEOUT_MS
+          );
+        }),
+      ]);
+    } finally {
+      if (timeoutId) window.clearTimeout(timeoutId);
     }
+    if (result.timedOut) {
+      await reader.cancel();
+      yield {
+        type: "error",
+        message: receivedEvent
+          ? "The model stopped responding for 60 seconds. The partial reply was preserved; try again."
+          : "The model did not start responding within 60 seconds. Try again or choose a faster model.",
+      };
+      return;
+    }
+    const { done, value } = result;
+    const events = done
+      ? parser.push(decoder.decode(), { flush: true })
+      : parser.push(decoder.decode(value, { stream: true }));
+    for (const event of events) {
+      receivedEvent = true;
+      if (event.type === "done") sawDone = true;
+      yield event;
+    }
+    if (done) break;
   }
 
-  yield { type: "done" };
+  if (!sawDone) yield { type: "done" };
 }

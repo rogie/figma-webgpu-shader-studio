@@ -57,8 +57,10 @@ Configure these repository settings:
 - Secret `VITE_SUPABASE_PUBLISHABLE_KEY`
 - **Settings → Pages → Source:** GitHub Actions
 
-Public share links use `?shader=<id>`, so they work on GitHub Pages without an
-SPA rewrite.
+Shader links use the shader or preset ID as the path (for example,
+`/dither` or `/<saved-shader-id>`). The deployment copies `index.html` to
+`404.html` so refreshing one of these routes still loads the app on GitHub
+Pages.
 
 ## How it works
 

@@ -45,7 +45,9 @@ function sseEncode(payload: unknown): string {
 
 function sseStreamFromUpstream(
   upstream: Response,
-  extractDelta: (json: Record<string, unknown>) => string | null,
+  extractDelta: (
+    json: Record<string, unknown>,
+  ) => string | null | { text?: string | null; error?: string | null },
 ): Response {
   if (!upstream.ok || !upstream.body) {
     throw new Error(`Upstream error ${upstream.status}`);
@@ -54,51 +56,120 @@ function sseStreamFromUpstream(
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const encoder = new TextEncoder();
 
+  const emitData = (
+    data: string,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+  ) => {
+    if (!data || data === "[DONE]") return;
+    try {
+      const json = JSON.parse(data) as Record<string, unknown>;
+      if (json.type === "error") {
+        const err = json.error as { message?: string } | undefined;
+        controller.enqueue(
+          encoder.encode(
+            sseEncode({
+              type: "error",
+              message: err?.message || "Provider stream error",
+            }),
+          ),
+        );
+        return;
+      }
+      const providerError = json.error as { message?: string } | undefined;
+      if (
+        providerError &&
+        typeof providerError === "object" &&
+        providerError.message
+      ) {
+        controller.enqueue(
+          encoder.encode(
+            sseEncode({
+              type: "error",
+              message: providerError.message,
+            }),
+          ),
+        );
+        return;
+      }
+      const extracted = extractDelta(json);
+      const text =
+        typeof extracted === "string" ? extracted : extracted?.text;
+      const error =
+        typeof extracted === "object" && extracted ? extracted.error : null;
+      if (error) {
+        controller.enqueue(
+          encoder.encode(sseEncode({ type: "error", message: error })),
+        );
+      }
+      if (text) {
+        controller.enqueue(
+          encoder.encode(sseEncode({ type: "delta", text })),
+        );
+      }
+    } catch {
+      // Skip malformed provider chunks.
+    }
+  };
+
+  const emitLines = (
+    input: string,
+    controller: ReadableStreamDefaultController<Uint8Array>,
+    flush = false,
+  ) => {
+    buffer += input;
+    const lines = buffer.split("\n");
+    buffer = flush ? "" : (lines.pop() ?? "");
+    if (flush && lines.at(-1) === "") lines.pop();
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith("data:")) continue;
+      emitData(trimmed.slice(5).trim(), controller);
+    }
+    if (flush && buffer.trim().startsWith("data:")) {
+      emitData(buffer.trim().slice(5).trim(), controller);
+      buffer = "";
+    }
+  };
+
+  let cancelled = false;
   return new Response(
     new ReadableStream({
-      async pull(controller) {
-        const { done, value } = await reader.read();
-        if (done) {
-          controller.enqueue(new TextEncoder().encode(sseEncode({ type: "done" })));
-          controller.close();
-          return;
-        }
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split("\n");
-        buffer = lines.pop() ?? "";
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith("data:")) continue;
-          const data = trimmed.slice(5).trim();
-          if (!data || data === "[DONE]") continue;
+      start(controller) {
+        void (async () => {
           try {
-            const json = JSON.parse(data) as Record<string, unknown>;
-            if (json.type === "error") {
-              const err = json.error as { message?: string } | undefined;
-              controller.enqueue(
-                new TextEncoder().encode(
-                  sseEncode({
-                    type: "error",
-                    message: err?.message || "Provider stream error",
-                  }),
-                ),
-              );
-              continue;
+            while (!cancelled) {
+              const { done, value } = await reader.read();
+              if (done) {
+                emitLines(decoder.decode(), controller, true);
+                controller.enqueue(encoder.encode(sseEncode({ type: "done" })));
+                controller.close();
+                return;
+              }
+              emitLines(decoder.decode(value, { stream: true }), controller);
             }
-            const delta = extractDelta(json);
-            if (delta) {
-              controller.enqueue(
-                new TextEncoder().encode(sseEncode({ type: "delta", text: delta })),
-              );
-            }
-          } catch {
-            // skip malformed chunks
+          } catch (error) {
+            if (cancelled) return;
+            const message =
+              error instanceof Error
+                ? error.message
+                : "Provider stream disconnected";
+            controller.enqueue(
+              encoder.encode(
+                sseEncode({
+                  type: "error",
+                  message,
+                }),
+              ),
+            );
+            controller.close();
           }
-        }
+        })();
       },
       cancel() {
-        reader.cancel();
+        cancelled = true;
+        return reader.cancel();
       },
     }),
     {
@@ -107,6 +178,7 @@ function sseStreamFromUpstream(
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
         Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
       },
     },
   );
@@ -204,8 +276,8 @@ function toGeminiContents(messages: ChatMessage[]) {
     }
     for (const a of attachments) {
       parts.push({
-        inline_data: {
-          mime_type: a.mimeType,
+        inlineData: {
+          mimeType: a.mimeType,
           data: a.dataBase64,
         },
       });
@@ -254,6 +326,21 @@ async function streamAnthropic(
   system: string,
   messages: ChatMessage[],
 ): Promise<Response> {
+  const requestBody: Record<string, unknown> = {
+    model,
+    max_tokens: 8192,
+    stream: true,
+    system,
+    messages: toAnthropicMessages(messages),
+  };
+  if (
+    /^claude-(?:fable|opus|sonnet)-5/.test(model) ||
+    model === "claude-opus-4-8" ||
+    model === "claude-sonnet-4-6"
+  ) {
+    requestBody.output_config = { effort: "low" };
+  }
+
   const upstream = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -261,13 +348,7 @@ async function streamAnthropic(
       "anthropic-version": "2023-06-01",
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      max_tokens: 8192,
-      stream: true,
-      system,
-      messages: toAnthropicMessages(messages),
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!upstream.ok || !upstream.body) {
@@ -299,6 +380,15 @@ async function streamGemini(
       encodeURIComponent(model)
     }:streamGenerateContent?alt=sse`;
 
+  // Keep enough output room for a full module, but cap hidden reasoning so the
+  // first visible token does not take minutes to arrive.
+  const generationConfig: Record<string, unknown> = {
+    maxOutputTokens: 65536,
+  };
+  if (/gemini-(2\.5|3)/.test(model)) {
+    generationConfig.thinkingConfig = { thinkingBudget: 2048 };
+  }
+
   const upstream = await fetch(url, {
     method: "POST",
     headers: {
@@ -306,11 +396,9 @@ async function streamGemini(
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
-      system_instruction: { parts: [{ text: system }] },
+      systemInstruction: { parts: [{ text: system }] },
       contents: toGeminiContents(messages),
-      generationConfig: {
-        maxOutputTokens: 8192,
-      },
+      generationConfig,
     }),
   });
 
@@ -320,15 +408,48 @@ async function streamGemini(
   }
 
   return sseStreamFromUpstream(upstream, (json) => {
-    const candidates = json.candidates as
-      | Array<{ content?: { parts?: Array<{ text?: string }> } }>
+    const promptFeedback = json.promptFeedback as
+      | { blockReason?: string; blockReasonMessage?: string }
       | undefined;
-    const parts = candidates?.[0]?.content?.parts;
-    if (!Array.isArray(parts)) return null;
+    if (promptFeedback?.blockReason) {
+      return {
+        error:
+          promptFeedback.blockReasonMessage ||
+          `Gemini blocked the request (${promptFeedback.blockReason}).`,
+      };
+    }
+    const candidates = json.candidates as
+      | Array<{
+        content?: { parts?: Array<{ text?: string; thought?: boolean }> };
+        finishReason?: string;
+        finishMessage?: string;
+      }>
+      | undefined;
+    const candidate = candidates?.[0];
+    const parts = candidate?.content?.parts;
+    if (!Array.isArray(parts)) {
+      if (candidate?.finishReason) {
+        return {
+          error:
+            candidate.finishMessage ||
+            `Gemini returned no text (${candidate.finishReason}).`,
+        };
+      }
+      return null;
+    }
     const text = parts
+      .filter((part) => !part?.thought)
       .map((part) => (typeof part?.text === "string" ? part.text : ""))
       .join("");
-    return text || null;
+    if (text) return text;
+    if (candidate?.finishReason) {
+      return {
+        error:
+          candidate.finishMessage ||
+          `Gemini returned reasoning but no visible text (${candidate.finishReason}).`,
+      };
+    }
+    return null;
   });
 }
 

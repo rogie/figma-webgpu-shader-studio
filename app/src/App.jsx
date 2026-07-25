@@ -5,6 +5,7 @@ import ClipboardIcon from "./components/ClipboardIcon.jsx";
 import CodePane from "./components/CodePane.jsx";
 import Controls from "./components/Controls.jsx";
 import Preview from "./components/Preview.jsx";
+import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
@@ -22,6 +23,7 @@ import {
   downloadAsset,
   getAssetUrl,
   getShader,
+  getShaderRouteId,
   listShaders,
   makeShareUrl,
   MAX_MEDIA_BYTES,
@@ -39,7 +41,7 @@ const DEFAULT_CODE_WIDTH = 480;
 const MIN_CODE_WIDTH = 320;
 const MIN_PREVIEW_WIDTH = 220;
 const DEFAULT_CHAT_HEIGHT = 260;
-const MIN_CHAT_HEIGHT = 160;
+const MIN_CHAT_HEIGHT = 220;
 const MIN_CODE_EDITOR_HEIGHT = 140;
 const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
 const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
@@ -73,6 +75,10 @@ function mergeValues(definitions, candidate = {}) {
 
 function cloudChoiceId(id) {
   return `cloud:${id}`;
+}
+
+function replaceShaderUrl(id) {
+  window.history.replaceState({}, "", makeShareUrl(id));
 }
 
 function mediaType(file) {
@@ -133,7 +139,7 @@ function measureSpacer(token) {
 }
 
 export default function App() {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
   const [source, setSource] = useState(INITIAL.source);
@@ -172,6 +178,8 @@ export default function App() {
   const canvasRef = useRef(null);
   const viewerRef = useRef(null);
   const sidebarRef = useRef(null);
+  const chatPaneRef = useRef(null);
+  const [canClearChat, setCanClearChat] = useState(false);
   const chooserRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -401,6 +409,7 @@ export default function App() {
       setRuntimeValues(shader.parameter_values || {});
       setCurrentShader(shader);
       setPresetId(cloudChoiceId(shader.id));
+      replaceShaderUrl(shader.id);
       setShaderName(shader.name);
       setSource(shader.source);
       setIsPublic(shader.is_public);
@@ -447,16 +456,6 @@ export default function App() {
     refreshLibrary();
   }, [refreshLibrary]);
 
-  useEffect(() => {
-    if (!runtimeReady || sharedLoadedRef.current) return;
-    const sharedId = new URLSearchParams(window.location.search).get("shader");
-    if (!sharedId) return;
-    sharedLoadedRef.current = true;
-    getShader(sharedId)
-      .then(openCloudShader)
-      .catch(() => setError("This shader is private, missing, or unavailable."));
-  }, [openCloudShader, runtimeReady]);
-
   const choosePreset = useCallback(
     async (id) => {
       const preset = getPreset(id);
@@ -469,7 +468,7 @@ export default function App() {
       setIsPublic(false);
       setPendingMedia(null);
       setDirty(false);
-      window.history.replaceState({}, "", window.location.pathname);
+      replaceShaderUrl(preset.id);
       if (hostRef.current?.ready) {
         if (preset.kind === "effect") await restoreSample();
         else hostRef.current.clearInput();
@@ -477,6 +476,24 @@ export default function App() {
     },
     [restoreSample, setRuntimeValues]
   );
+
+  useEffect(() => {
+    if (!runtimeReady || authLoading || sharedLoadedRef.current) return;
+    sharedLoadedRef.current = true;
+    const routeId = getShaderRouteId();
+    if (!routeId) return;
+    if (PRESETS.some((preset) => preset.id === routeId)) {
+      choosePreset(routeId).catch((presetError) =>
+        setError(presetError.message || String(presetError))
+      );
+    } else {
+      getShader(routeId)
+        .then(openCloudShader)
+        .catch(() =>
+          setError("This shader is private, missing, or unavailable.")
+        );
+    }
+  }, [authLoading, choosePreset, openCloudShader, runtimeReady]);
 
   const chooseItem = useCallback(
     (id) => {
@@ -657,6 +674,7 @@ export default function App() {
 
       setCurrentShader(saved);
       setPresetId(cloudChoiceId(saved.id));
+      replaceShaderUrl(saved.id);
       setPendingMedia(null);
       setDirty(false);
       setCloudShaders((current) => [
@@ -701,6 +719,7 @@ export default function App() {
     }
     setCurrentShader(null);
     setPresetId(`copy:${crypto.randomUUID()}`);
+    replaceShaderUrl();
     setShaderName(`${shaderName} Copy`);
     setIsPublic(false);
     setPendingMedia(mediaFile);
@@ -984,9 +1003,7 @@ export default function App() {
         <div ref={sidebarRef} className="shader-viewer-sidebar">
           <section className="shader-viewer-code">
             <fig-header borderless>
-              <hstack class="code-pane-heading">
-                <h2>{shaderModuleFileName(presetId, shaderName)}</h2>
-              </hstack>
+              <h2>{shaderModuleFileName(presetId, shaderName)}</h2>
               <hstack>
                 <fig-tooltip text="Copy code" delay="0">
                   <fig-button
@@ -1012,7 +1029,7 @@ export default function App() {
                     }
                     onClick={() => setPropertiesOpen((open) => !open)}
                   >
-                    <fig-icon name="adjust" />
+                    <fig-icon class="properties-toggle-icon" name="adjust" />
                   </fig-button>
                 </fig-tooltip>
               </hstack>
@@ -1053,11 +1070,24 @@ export default function App() {
 
           <section className="shader-viewer-chat">
             <fig-header borderless>
-              <hstack class="code-pane-heading">
-                <h2>Chat</h2>
+              <h2>Chat</h2>
+              <hstack>
+                <fig-tooltip text="Clear chat" delay="0">
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Clear chat"
+                    disabled={!canClearChat}
+                    onClick={() => chatPaneRef.current?.clearChat()}
+                  >
+                    <TrashIcon />
+                  </fig-button>
+                </fig-tooltip>
               </hstack>
             </fig-header>
             <ChatPane
+              ref={chatPaneRef}
               source={source}
               kind={kind}
               fileName={shaderModuleFileName(presetId, shaderName)}
@@ -1069,6 +1099,7 @@ export default function App() {
               }}
               onOpenSettings={() => setSettingsOpen(true)}
               onNotice={showNotice}
+              onCanClearChange={setCanClearChat}
             />
           </section>
         </div>

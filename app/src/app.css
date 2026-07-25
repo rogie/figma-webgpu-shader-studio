@@ -132,7 +132,6 @@ body,
       display: flex;
       flex-direction: column;
       min-height: 0;
-      background-color: var(--figma-color-bg-secondary);
 
       &::after {
         content: "";
@@ -140,7 +139,7 @@ body,
         inset: 0;
         pointer-events: none;
         border-radius: var(--viewer-radius);
-        box-shadow: inset 0 0 0 1px var(--figma-color-bordertranslucent);
+        box-shadow: inset 0 0 0 1px var(--figma-color-border);
         z-index: 4;
       }
 
@@ -150,17 +149,12 @@ body,
         justify-content: space-between;
         gap: var(--spacer-2);
 
-        .code-pane-heading {
+        > h2 {
           flex: 1;
           min-width: 0;
-          --hstack-gap: var(--spacer-2);
-
-          > h2 {
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
         }
 
         > hstack:last-child {
@@ -176,15 +170,10 @@ body,
           > :last-child fig-button[icon][variant="ghost"] {
             margin-right: calc(var(--spacer-2) * -1);
           }
-        }
 
-        fig-button svg {
-          display: block;
-          color: var(--figma-color-icon);
-        }
-
-        fig-button fig-icon {
-          color: var(--figma-color-icon);
+          .properties-toggle-icon {
+            transform: rotate(90deg);
+          }
         }
       }
     }
@@ -197,6 +186,9 @@ body,
         flex: 1 1 auto;
         min-height: 0;
         overflow: hidden;
+        /* Match fig-header horizontal inset so the scrollbar isn't flush
+           against the pane border / resizer. */
+        padding-right: var(--spacer-2);
 
         > div,
         .cm-editor {
@@ -207,39 +199,48 @@ body,
         .cm-gutters {
           background-color: transparent;
         }
+
+        .cm-scroller {
+          scrollbar-width: thin;
+        }
+
+        .cm-content {
+          padding-right: var(--spacer-2);
+        }
       }
     }
 
     .shader-viewer-chat {
       flex: 0 0 var(--chat-height, 260px);
-      min-height: 160px;
+      min-height: 220px;
+
+      > .code-chat {
+        flex: 1 1 auto;
+        min-height: 0;
+      }
 
       .code-chat {
         display: flex;
         flex-direction: column;
-        flex: 1 1 auto;
         min-height: 0;
-        height: auto;
+        height: 100%;
+        overflow: hidden;
         padding: 0;
         color: var(--figma-color-text);
 
-        .chat-toolbar {
-          flex: 0 0 auto;
-          display: flex;
-          align-items: center;
-          gap: var(--spacer-2);
-          padding: var(--spacer-2) var(--spacer-3);
-          border-bottom: 1px solid var(--figma-color-border);
-        }
-
         .chat-messages {
-          flex: 1;
+          flex: 1 1 0;
           min-height: 0;
-          overflow: auto;
+          overflow-x: hidden;
+          overflow-y: auto;
+          /* Same as code editor: inset scrollbar from the pane border. */
+          margin-right: var(--spacer-2);
           padding: var(--spacer-3);
+          padding-right: var(--spacer-2);
           display: flex;
           flex-direction: column;
           gap: var(--spacer-3);
+          scrollbar-width: thin;
         }
 
         .chat-empty {
@@ -274,9 +275,9 @@ body,
         }
 
         .chat-bubble-assistant {
-          align-self: stretch;
+          align-self: flex-start;
+          max-width: calc(100% - 4rem);
           background: var(--figma-color-bg-secondary);
-          border: 1px solid var(--figma-color-border);
         }
 
         .chat-bubble-assistant.is-pending {
@@ -288,17 +289,41 @@ body,
         }
 
         .chat-code-note {
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
           margin-top: var(--spacer-2);
           color: var(--figma-color-text-secondary);
           font-size: var(--font-size-small, 12px);
+          white-space: normal;
+        }
+
+        .chat-code-note:first-child {
+          margin-top: 0;
+        }
+
+        .chat-footer {
+          flex: 0 0 auto;
+          flex-shrink: 0;
+          display: flex;
+          flex-direction: column;
+          border-top: 1px solid var(--figma-color-border);
         }
 
         .chat-error {
-          flex: 0 0 auto;
+          flex: 0 1 auto;
+          min-height: 0;
+          max-height: 4.5rem;
           margin: 0;
-          padding: 0 var(--spacer-3) var(--spacer-2);
+          padding: var(--spacer-2) var(--spacer-3);
+          overflow-x: hidden;
+          overflow-y: auto;
           color: var(--figma-color-text-danger, #c00);
           font-size: var(--font-size-small, 12px);
+          line-height: 1.35;
+          white-space: pre-wrap;
+          word-break: break-word;
+          border-bottom: 1px solid var(--figma-color-border);
         }
 
         .chat-link {
@@ -314,11 +339,11 @@ body,
 
         .chat-composer {
           flex: 0 0 auto;
+          flex-shrink: 0;
           display: flex;
           flex-direction: column;
           gap: var(--spacer-2);
           padding: var(--spacer-3);
-          border-top: 1px solid var(--figma-color-border);
         }
 
         .chat-input {

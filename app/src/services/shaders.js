@@ -98,10 +98,24 @@ export async function getAssetUrl(path, expiresIn = 3600) {
   return data.signedUrl;
 }
 
+export function getShaderRouteId() {
+  const basePath = new URL(
+    import.meta.env.BASE_URL,
+    window.location.origin
+  ).pathname;
+  const routePath = window.location.pathname.slice(basePath.length);
+  if (!window.location.pathname.startsWith(basePath) || !routePath) return null;
+  const segment = routePath.replace(/\/$/, "");
+  if (!segment || segment.includes("/")) return null;
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
+}
+
 export function makeShareUrl(id) {
-  const url = new URL(window.location.href);
-  url.search = "";
-  url.hash = "";
-  url.searchParams.set("shader", id);
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  if (id) url.pathname += encodeURIComponent(id);
   return url.toString();
 }

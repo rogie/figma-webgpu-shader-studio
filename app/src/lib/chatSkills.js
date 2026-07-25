@@ -8,13 +8,28 @@ import wgslSkill from "../../../skills/wgsl/SKILL.md?raw";
  * guidance (always relevant in the studio preview).
  */
 function normalizeV3Guide(text) {
-  return text
-    .replace(/\{\{-?\s*if\s+\.animations\s*\}\}/g, "")
-    .replace(/\{\{-?\s*end\s*\}\}/g, "")
-    .replace(/\{\{-?\s*else\s*\}\}[\s\S]*?(?=\{\{-?\s*end\s*\}\})/g, "")
-    .replace(/\{\{[^}]+\}\}/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  const tokenPattern = /\{\{-?\s*([^{}]+?)\s*-?\}\}/g;
+  const parents = [];
+  let active = true;
+  let cursor = 0;
+  let normalized = "";
+  let match;
+
+  while ((match = tokenPattern.exec(text)) !== null) {
+    if (active) normalized += text.slice(cursor, match.index);
+    const directive = match[1].trim();
+    if (/^if\s+\.animations$/.test(directive)) {
+      parents.push(active);
+    } else if (directive === "else") {
+      active = false;
+    } else if (directive === "end") {
+      active = parents.pop() ?? true;
+    }
+    cursor = tokenPattern.lastIndex;
+  }
+  if (active) normalized += text.slice(cursor);
+
+  return normalized.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 let cached = null;

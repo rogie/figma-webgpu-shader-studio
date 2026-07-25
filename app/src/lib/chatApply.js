@@ -51,3 +51,49 @@ export function splitAssistantContent(text) {
     fenceIndex >= 0 ? text.slice(0, fenceIndex).trim() : text.trim();
   return { prose, source };
 }
+
+/**
+ * Turn provider/proxy error blobs into a short UI message.
+ * @param {unknown} raw
+ */
+function summarizeProviderError(text) {
+  if (/quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(text)) {
+    return "API quota or rate limit exceeded. Check your plan/billing (for Gemini: ai.google.dev), or switch model/provider.";
+  }
+  if (/no longer available|not available to new users/i.test(text)) {
+    return "That model is no longer available for your API key. Pick a newer Gemini model from the list.";
+  }
+  if (/API key not valid|API_KEY_INVALID|invalid api key/i.test(text)) {
+    return "API key is invalid. Update it in Settings.";
+  }
+  return null;
+}
+
+export function formatChatError(raw) {
+  const text = String(raw ?? "").trim();
+  if (!text) return "Chat failed.";
+
+  const early = summarizeProviderError(text);
+  if (early) return early;
+
+  let message = text;
+  try {
+    const json = JSON.parse(text);
+    const nested =
+      json?.error?.message ||
+      json?.message ||
+      (typeof json?.error === "string" ? json.error : null);
+    if (nested) message = String(nested);
+  } catch {
+    const messageMatch = text.match(/"message"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (messageMatch?.[1]) {
+      message = messageMatch[1].replace(/\\"/g, '"').replace(/\\n/g, " ");
+    }
+  }
+
+  const summarized = summarizeProviderError(message);
+  if (summarized) return summarized;
+
+  if (message.length > 280) return `${message.slice(0, 277)}…`;
+  return message;
+}
