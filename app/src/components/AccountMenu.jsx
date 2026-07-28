@@ -117,7 +117,7 @@ export default function AccountMenu({
     <>
       {user ? (
         <fig-menu position="top right">
-          <fig-tooltip text={user.email || "Account"} delay="0">
+          <fig-tooltip text={user.email || "Account"}>
             <fig-button
               ref={settingsAnchorRef}
               fig-menu-trigger=""
@@ -144,7 +144,7 @@ export default function AccountMenu({
         </fig-menu>
       ) : (
         <fig-menu position="top right">
-          <fig-tooltip text="Settings" delay="0">
+          <fig-tooltip text="Settings">
             <fig-button
               ref={settingsAnchorRef}
               fig-menu-trigger=""

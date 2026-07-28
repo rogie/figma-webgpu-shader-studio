@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import AccountMenu from "./components/AccountMenu.jsx";
 import ChatPane from "./components/ChatPane.jsx";
-import ClipboardIcon from "./components/ClipboardIcon.jsx";
 import CodePane from "./components/CodePane.jsx";
 import Controls from "./components/Controls.jsx";
 import Preview from "./components/Preview.jsx";
@@ -25,6 +24,7 @@ import {
   getShader,
   getShaderRouteId,
   listShaders,
+  makeHomeUrl,
   makeShareUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
@@ -40,11 +40,17 @@ const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
 const DEFAULT_CODE_WIDTH = 480;
 const MIN_CODE_WIDTH = 320;
 const MIN_PREVIEW_WIDTH = 220;
+const MIN_PREVIEW_HEIGHT = 160;
+const MIN_STACKED_SIDEBAR = 280;
 const DEFAULT_CHAT_HEIGHT = 260;
 const MIN_CHAT_HEIGHT = 220;
 const MIN_CODE_EDITOR_HEIGHT = 140;
+const STACKED_MEDIA_QUERY = "(max-width: 900px)";
 const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
 const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
+const PREVIEW_HEIGHT_STORAGE_KEY = "figma-shader-studio:preview-height";
+const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
+const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const THUMBNAIL_COLORS = [
   ["#1d3557", "#f1fa8c"],
@@ -77,8 +83,76 @@ function cloudChoiceId(id) {
   return `cloud:${id}`;
 }
 
+function isDraftId(id) {
+  return typeof id === "string" && id.startsWith("draft:");
+}
+
+function serializeDraft(draft, thumbnail = null) {
+  return {
+    id: draft.id,
+    name: draft.name,
+    kind: draft.kind,
+    source: draft.source,
+    values: draft.values && typeof draft.values === "object" ? draft.values : {},
+    isPublic: Boolean(draft.isPublic),
+    thumbnail: typeof thumbnail === "string" ? thumbnail : null,
+  };
+}
+
+function savedDrafts() {
+  try {
+    const raw = localStorage.getItem(DRAFTS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter(
+        (draft) =>
+          draft &&
+          isDraftId(draft.id) &&
+          typeof draft.name === "string" &&
+          typeof draft.source === "string" &&
+          (draft.kind === "effect" || draft.kind === "fill")
+      )
+      .map((draft) => ({
+        id: draft.id,
+        name: draft.name,
+        kind: draft.kind,
+        source: draft.source,
+        values:
+          draft.values && typeof draft.values === "object" ? draft.values : {},
+        isPublic: Boolean(draft.isPublic),
+        pendingMedia: null,
+        thumbnail:
+          typeof draft.thumbnail === "string" ? draft.thumbnail : null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function writeDrafts(drafts, thumbnails = {}) {
+  localStorage.setItem(
+    DRAFTS_STORAGE_KEY,
+    JSON.stringify(
+      drafts.map((draft) =>
+        serializeDraft(draft, thumbnails[draft.id] || draft.thumbnail || null)
+      )
+    )
+  );
+}
+
+function savedActiveDraftId() {
+  const id = localStorage.getItem(ACTIVE_DRAFT_STORAGE_KEY);
+  return isDraftId(id) ? id : null;
+}
+
 function replaceShaderUrl(id) {
-  window.history.replaceState({}, "", makeShareUrl(id));
+  window.history.replaceState(
+    {},
+    "",
+    id ? makeShareUrl(id) : makeHomeUrl()
+  );
 }
 
 function mediaType(file) {
@@ -118,6 +192,15 @@ function savedChatHeight() {
     : DEFAULT_CHAT_HEIGHT;
 }
 
+function savedPreviewHeight() {
+  const value = Number(localStorage.getItem(PREVIEW_HEIGHT_STORAGE_KEY));
+  return Number.isFinite(value) && value >= MIN_PREVIEW_HEIGHT ? value : null;
+}
+
+function isStackedLayout() {
+  return window.matchMedia(STACKED_MEDIA_QUERY).matches;
+}
+
 function savedTheme() {
   const stored = localStorage.getItem(THEME_STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
@@ -148,10 +231,16 @@ export default function App() {
   const [error, setError] = useState(null);
   const [fatal, setFatal] = useState(null);
   const [running, setRunning] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const [previewZoomRequest, setPreviewZoomRequest] = useState(null);
+  const requestPreviewZoom = useCallback((zoom) => {
+    setPreviewZoomRequest({ zoom, id: Date.now() });
+  }, []);
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
   const [cloudShaders, setCloudShaders] = useState([]);
+  const [drafts, setDrafts] = useState(savedDrafts);
   const [currentShader, setCurrentShader] = useState(null);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
@@ -164,16 +253,22 @@ export default function App() {
   const [isPublic, setIsPublic] = useState(false);
   const [codeWidth, setCodeWidth] = useState(savedCodeWidth);
   const [chatHeight, setChatHeight] = useState(savedChatHeight);
+  const [previewHeight, setPreviewHeight] = useState(savedPreviewHeight);
+  const [stacked, setStacked] = useState(isStackedLayout);
   const [theme, setTheme] = useState(savedTheme);
   const [propertiesOpen, setPropertiesOpen] = useState(true);
-  const [thumbnails, setThumbnails] = useState(() =>
-    Object.fromEntries(
+  const [thumbnails, setThumbnails] = useState(() => {
+    const initial = Object.fromEntries(
       PRESETS.map((preset, index) => [
         preset.id,
         thumbnailData(index, preset.name),
       ])
-    )
-  );
+    );
+    for (const draft of savedDrafts()) {
+      if (draft.thumbnail) initial[draft.id] = draft.thumbnail;
+    }
+    return initial;
+  });
 
   const canvasRef = useRef(null);
   const viewerRef = useRef(null);
@@ -183,7 +278,6 @@ export default function App() {
   const chooserRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
-  const codeCopyToastRef = useRef(null);
   const propertiesDialogRef = useRef(null);
   const hostRef = useRef(null);
   const initedRef = useRef(false);
@@ -194,9 +288,25 @@ export default function App() {
   const videoRef = useRef(null);
   const mediaUrlRef = useRef(null);
   const sharedLoadedRef = useRef(false);
+  const draftSessionRef = useRef({
+    presetId,
+    shaderName,
+    source,
+    values,
+    isPublic,
+    pendingMedia,
+  });
 
   sourceRef.current = source;
   valuesRef.current = values;
+  draftSessionRef.current = {
+    presetId,
+    shaderName,
+    source,
+    values,
+    isPublic,
+    pendingMedia,
+  };
   const kind = detectKind(source);
   const shaderFeatures = inferFeatures(source);
   const chatShaderKey = currentShader?.id
@@ -210,9 +320,96 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
+    writeDrafts(drafts, thumbnails);
+  }, [drafts, thumbnails]);
+
+  useEffect(() => {
+    if (!isDraftId(presetId)) {
+      localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
+      return;
+    }
+    localStorage.setItem(ACTIVE_DRAFT_STORAGE_KEY, presetId);
+    const timer = window.setTimeout(() => {
+      setDrafts((current) => {
+        const existing = current.find((draft) => draft.id === presetId);
+        if (!existing) return current;
+        if (
+          existing.name === shaderName &&
+          existing.source === source &&
+          existing.isPublic === isPublic &&
+          JSON.stringify(existing.values || {}) === JSON.stringify(values)
+        ) {
+          return current;
+        }
+        return current.map((draft) =>
+          draft.id === presetId
+            ? {
+                ...draft,
+                name: shaderName,
+                source,
+                values,
+                isPublic,
+                pendingMedia,
+              }
+            : draft
+        );
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [isPublic, pendingMedia, presetId, shaderName, source, values]);
+
+  useEffect(() => {
+    const flush = () => {
+      const session = draftSessionRef.current;
+      if (!isDraftId(session.presetId)) return;
+      const current = savedDrafts();
+      const next = current.some((draft) => draft.id === session.presetId)
+        ? current.map((draft) =>
+            draft.id === session.presetId
+              ? {
+                  ...draft,
+                  name: session.shaderName,
+                  source: session.source,
+                  values: session.values,
+                  isPublic: session.isPublic,
+                  pendingMedia: null,
+                }
+              : draft
+          )
+        : [
+            {
+              id: session.presetId,
+              name: session.shaderName,
+              kind: detectKind(session.source),
+              source: session.source,
+              values: session.values,
+              isPublic: session.isPublic,
+              pendingMedia: null,
+              thumbnail: null,
+            },
+            ...current,
+          ];
+      writeDrafts(next);
+      localStorage.setItem(ACTIVE_DRAFT_STORAGE_KEY, session.presetId);
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia(STACKED_MEDIA_QUERY);
+    const sync = () => setStacked(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
     const dialog = propertiesDialogRef.current;
     if (!dialog) return;
-    if (propertiesOpen && !dialog.open) dialog.show();
+    // Use the `open` attribute (not `.show()`) so this panel stays out of the
+    // dialog top layer. `.show()` would stack above fig-fill-picker popups.
+    if (propertiesOpen && !dialog.open) dialog.setAttribute("open", "");
     if (!propertiesOpen && dialog.open) dialog.close();
     if (!propertiesOpen) return;
 
@@ -263,6 +460,7 @@ export default function App() {
     (nextSource) => {
       const host = hostRef.current;
       if (!host?.ready) return;
+      host.stop();
 
       let loaded;
       try {
@@ -403,10 +601,101 @@ export default function App() {
     [applyMediaBlob, clearObjectUrl, restoreSample]
   );
 
+  const persistActiveDraft = useCallback(() => {
+    const session = draftSessionRef.current;
+    if (!isDraftId(session.presetId)) return;
+    setDrafts((current) =>
+      current.map((draft) =>
+        draft.id === session.presetId
+          ? {
+              ...draft,
+              name: session.shaderName,
+              source: session.source,
+              values: session.values,
+              isPublic: session.isPublic,
+              pendingMedia: session.pendingMedia,
+            }
+          : draft
+      )
+    );
+  }, []);
+
+  const openDraft = useCallback(
+    async (draft) => {
+      if (draftSessionRef.current.presetId === draft.id) return;
+      persistActiveDraft();
+      pendingValuesRef.current = draft.values || {};
+      hostRef.current?.stop();
+      setRunning(false);
+      setError(null);
+      setCurrentShader(null);
+      setPresetId(draft.id);
+      replaceShaderUrl();
+      setShaderName(draft.name);
+      setSource(draft.source);
+      setIsPublic(Boolean(draft.isPublic));
+      setPendingMedia(draft.pendingMedia || null);
+      setDirty(true);
+      if (hostRef.current?.ready) {
+        if (draft.kind === "effect") {
+          if (draft.pendingMedia) {
+            await applyMediaBlob(
+              draft.pendingMedia,
+              mediaType(draft.pendingMedia)
+            );
+          } else {
+            await restoreSample();
+          }
+        } else {
+          hostRef.current.clearInput();
+        }
+      }
+    },
+    [applyMediaBlob, persistActiveDraft, restoreSample]
+  );
+
+  const createDraft = useCallback(
+    async (starterId) => {
+      persistActiveDraft();
+      const preset = getPreset(starterId);
+      const id = `draft:${crypto.randomUUID()}`;
+      const draft = {
+        id,
+        name: preset.name,
+        kind: preset.kind,
+        source: preset.source,
+        values: {},
+        isPublic: false,
+        pendingMedia: null,
+      };
+      setDrafts((current) => [draft, ...current]);
+      pendingValuesRef.current = {};
+      hostRef.current?.stop();
+      setRunning(false);
+      setError(null);
+      setCurrentShader(null);
+      setPresetId(id);
+      replaceShaderUrl();
+      setShaderName(draft.name);
+      setSource(draft.source);
+      setIsPublic(false);
+      setPendingMedia(null);
+      setDirty(true);
+      if (hostRef.current?.ready) {
+        if (preset.kind === "effect") await restoreSample();
+        else hostRef.current.clearInput();
+      }
+    },
+    [persistActiveDraft, restoreSample]
+  );
+
   const openCloudShader = useCallback(
     async (shader) => {
+      persistActiveDraft();
       pendingValuesRef.current = shader.parameter_values || {};
-      setRuntimeValues(shader.parameter_values || {});
+      hostRef.current?.stop();
+      setRunning(false);
+      setError(null);
       setCurrentShader(shader);
       setPresetId(cloudChoiceId(shader.id));
       replaceShaderUrl(shader.id);
@@ -424,7 +713,7 @@ export default function App() {
         }
       }
     },
-    [loadMediaForShader, runtimeReady, setRuntimeValues]
+    [loadMediaForShader, persistActiveDraft, runtimeReady]
   );
 
   const refreshLibrary = useCallback(async () => {
@@ -457,10 +746,13 @@ export default function App() {
   }, [refreshLibrary]);
 
   const choosePreset = useCallback(
-    async (id) => {
+    async (id, { syncUrl = true } = {}) => {
+      persistActiveDraft();
       const preset = getPreset(id);
       pendingValuesRef.current = {};
-      setRuntimeValues({});
+      hostRef.current?.stop();
+      setRunning(false);
+      setError(null);
       setCurrentShader(null);
       setPresetId(preset.id);
       setShaderName(preset.name);
@@ -468,36 +760,84 @@ export default function App() {
       setIsPublic(false);
       setPendingMedia(null);
       setDirty(false);
-      replaceShaderUrl(preset.id);
+      if (syncUrl) replaceShaderUrl(preset.id);
       if (hostRef.current?.ready) {
         if (preset.kind === "effect") await restoreSample();
         else hostRef.current.clearInput();
       }
     },
-    [restoreSample, setRuntimeValues]
+    [persistActiveDraft, restoreSample]
+  );
+
+  const removeDraft = useCallback(
+    (draft) => {
+      setDrafts((current) => current.filter((item) => item.id !== draft.id));
+      setThumbnails((current) => {
+        if (!(draft.id in current)) return current;
+        const next = { ...current };
+        delete next[draft.id];
+        return next;
+      });
+      if (presetId === draft.id) {
+        choosePreset("dither").catch((presetError) =>
+          setError(presetError.message || String(presetError))
+        );
+      }
+    },
+    [choosePreset, presetId]
+  );
+
+  const goHome = useCallback(
+    (event) => {
+      event?.preventDefault();
+      replaceShaderUrl();
+      choosePreset(INITIAL.id, { syncUrl: false }).catch((presetError) =>
+        setError(presetError.message || String(presetError))
+      );
+    },
+    [choosePreset]
   );
 
   useEffect(() => {
     if (!runtimeReady || authLoading || sharedLoadedRef.current) return;
     sharedLoadedRef.current = true;
     const routeId = getShaderRouteId();
-    if (!routeId) return;
-    if (PRESETS.some((preset) => preset.id === routeId)) {
-      choosePreset(routeId).catch((presetError) =>
-        setError(presetError.message || String(presetError))
-      );
-    } else {
-      getShader(routeId)
-        .then(openCloudShader)
-        .catch(() =>
-          setError("This shader is private, missing, or unavailable.")
+    if (routeId) {
+      if (getPreset(routeId).id === routeId) {
+        choosePreset(routeId).catch((presetError) =>
+          setError(presetError.message || String(presetError))
         );
+      } else {
+        getShader(routeId)
+          .then(openCloudShader)
+          .catch(() =>
+            setError("This shader is private, missing, or unavailable.")
+          );
+      }
+      return;
     }
-  }, [authLoading, choosePreset, openCloudShader, runtimeReady]);
+    const activeDraftId = savedActiveDraftId();
+    const draft = drafts.find((item) => item.id === activeDraftId);
+    if (draft) {
+      openDraft(draft).catch((draftError) =>
+        setError(draftError.message || String(draftError))
+      );
+    }
+  }, [
+    authLoading,
+    choosePreset,
+    drafts,
+    openCloudShader,
+    openDraft,
+    runtimeReady,
+  ]);
 
   const chooseItem = useCallback(
     (id) => {
-      if (id.startsWith("cloud:")) {
+      if (isDraftId(id)) {
+        const draft = drafts.find((item) => item.id === id);
+        if (draft) openDraft(draft);
+      } else if (id.startsWith("cloud:")) {
         const shader = cloudShaders.find(
           (item) => item.id === id.slice("cloud:".length)
         );
@@ -508,7 +848,7 @@ export default function App() {
         );
       }
     },
-    [choosePreset, cloudShaders, openCloudShader]
+    [choosePreset, cloudShaders, drafts, openCloudShader, openDraft]
   );
 
   useEffect(() => {
@@ -677,6 +1017,17 @@ export default function App() {
       replaceShaderUrl(saved.id);
       setPendingMedia(null);
       setDirty(false);
+      if (isDraftId(presetId)) {
+        setDrafts((current) =>
+          current.filter((item) => item.id !== presetId)
+        );
+        setThumbnails((current) => {
+          if (!(presetId in current)) return current;
+          const next = { ...current };
+          delete next[presetId];
+          return next;
+        });
+      }
       setCloudShaders((current) => [
         saved,
         ...current.filter((item) => item.id !== saved.id),
@@ -704,6 +1055,7 @@ export default function App() {
   ]);
 
   const duplicateShader = useCallback(async () => {
+    persistActiveDraft();
     let mediaFile = pendingMedia;
     if (!mediaFile && currentShader?.input_path) {
       try {
@@ -717,43 +1069,59 @@ export default function App() {
         mediaFile = null;
       }
     }
+    const id = `draft:${crypto.randomUUID()}`;
+    const name = `${shaderName} Copy`;
+    const draft = {
+      id,
+      name,
+      kind: detectKind(sourceRef.current),
+      source: sourceRef.current,
+      values: { ...valuesRef.current },
+      isPublic: false,
+      pendingMedia: mediaFile,
+    };
+    setDrafts((current) => [draft, ...current]);
     setCurrentShader(null);
-    setPresetId(`copy:${crypto.randomUUID()}`);
+    setPresetId(id);
     replaceShaderUrl();
-    setShaderName(`${shaderName} Copy`);
+    setShaderName(name);
     setIsPublic(false);
     setPendingMedia(mediaFile);
     setDirty(true);
     showNotice("Unsaved copy created");
-  }, [currentShader, pendingMedia, shaderName, showNotice]);
+  }, [
+    currentShader,
+    pendingMedia,
+    persistActiveDraft,
+    shaderName,
+    showNotice,
+  ]);
+
+  const removeCloudShader = useCallback(
+    async (shader) => {
+      if (!user || !shader || shader.owner_id !== user.id) return;
+      if (!window.confirm(`Delete “${shader.name}”?`)) return;
+      try {
+        await removeAssets([shader.input_path, shader.thumbnail_path]);
+        await deleteShader(shader.id);
+        setCloudShaders((current) =>
+          current.filter((item) => item.id !== shader.id)
+        );
+        if (currentShader?.id === shader.id) {
+          await choosePreset("dither");
+        }
+        showNotice("Shader deleted");
+      } catch (deleteError) {
+        setError(deleteError.message || String(deleteError));
+      }
+    },
+    [choosePreset, currentShader, showNotice, user]
+  );
 
   const removeCurrentShader = useCallback(async () => {
     if (!isOwner || !currentShader) return;
-    if (!window.confirm(`Delete “${currentShader.name}”?`)) return;
-    try {
-      await removeAssets([
-        currentShader.input_path,
-        currentShader.thumbnail_path,
-      ]);
-      await deleteShader(currentShader.id);
-      setCloudShaders((current) =>
-        current.filter((item) => item.id !== currentShader.id)
-      );
-      await choosePreset("dither");
-      showNotice("Shader deleted");
-    } catch (deleteError) {
-      setError(deleteError.message || String(deleteError));
-    }
-  }, [choosePreset, currentShader, isOwner, showNotice]);
-
-  const copyShaderCode = useCallback(async () => {
-    try {
-      await navigator.clipboard.writeText(source);
-      codeCopyToastRef.current?.showToast();
-    } catch (copyError) {
-      showNotice(copyError.message || "Could not copy code");
-    }
-  }, [showNotice, source]);
+    await removeCloudShader(currentShader);
+  }, [currentShader, isOwner, removeCloudShader]);
 
   const copyShareLink = useCallback(async () => {
     if (!currentShader || dirty) {
@@ -780,51 +1148,112 @@ export default function App() {
     localStorage.setItem(CHAT_HEIGHT_STORAGE_KEY, String(rounded));
   }, []);
 
-  const resizeCodePane = useCallback((event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-
-    const handle = event.currentTarget;
-    const viewer = viewerRef.current;
-    const codePane = handle.previousElementSibling;
-    if (!viewer || !codePane) return;
-
-    const startX = event.clientX;
-    const startWidth = codePane.getBoundingClientRect().width;
-    const available =
-      viewer.getBoundingClientRect().width -
-      handle.getBoundingClientRect().width -
-      MIN_PREVIEW_WIDTH;
-    const maxWidth = Math.max(MIN_CODE_WIDTH, available);
-    let finalWidth = startWidth;
-    handle.setPointerCapture(event.pointerId);
-
-    const onPointerMove = (moveEvent) => {
-      const next = Math.min(
-        maxWidth,
-        Math.max(MIN_CODE_WIDTH, startWidth + moveEvent.clientX - startX)
-      );
-      finalWidth = next;
-      setCodeWidth(Math.round(next));
-    };
-
-    const onPointerUp = (upEvent) => {
-      if (handle.hasPointerCapture(upEvent.pointerId)) {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", onPointerUp);
-      handle.removeEventListener("pointercancel", onPointerUp);
-      localStorage.setItem(
-        CODE_WIDTH_STORAGE_KEY,
-        String(Math.round(finalWidth))
-      );
-    };
-
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerUp);
+  const savePreviewHeight = useCallback((height) => {
+    if (height == null) {
+      setPreviewHeight(null);
+      localStorage.removeItem(PREVIEW_HEIGHT_STORAGE_KEY);
+      return;
+    }
+    const rounded = Math.round(height);
+    setPreviewHeight(rounded);
+    localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(rounded));
   }, []);
+
+  const resizeCodePane = useCallback(
+    (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+
+      const handle = event.currentTarget;
+      const viewer = viewerRef.current;
+      if (!viewer) return;
+
+      if (stacked) {
+        const visualizer = handle.nextElementSibling;
+        if (!visualizer) return;
+
+        const startY = event.clientY;
+        const startHeight = visualizer.getBoundingClientRect().height;
+        const available =
+          viewer.getBoundingClientRect().height -
+          handle.getBoundingClientRect().height -
+          MIN_STACKED_SIDEBAR;
+        const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, available);
+        let finalHeight = startHeight;
+        handle.setPointerCapture(event.pointerId);
+
+        const onPointerMove = (moveEvent) => {
+          const next = Math.min(
+            maxHeight,
+            Math.max(
+              MIN_PREVIEW_HEIGHT,
+              startHeight + moveEvent.clientY - startY
+            )
+          );
+          finalHeight = next;
+          setPreviewHeight(Math.round(next));
+        };
+
+        const onPointerUp = (upEvent) => {
+          if (handle.hasPointerCapture(upEvent.pointerId)) {
+            handle.releasePointerCapture(upEvent.pointerId);
+          }
+          handle.removeEventListener("pointermove", onPointerMove);
+          handle.removeEventListener("pointerup", onPointerUp);
+          handle.removeEventListener("pointercancel", onPointerUp);
+          localStorage.setItem(
+            PREVIEW_HEIGHT_STORAGE_KEY,
+            String(Math.round(finalHeight))
+          );
+        };
+
+        handle.addEventListener("pointermove", onPointerMove);
+        handle.addEventListener("pointerup", onPointerUp);
+        handle.addEventListener("pointercancel", onPointerUp);
+        return;
+      }
+
+      const codePane = handle.previousElementSibling;
+      if (!codePane) return;
+
+      const startX = event.clientX;
+      const startWidth = codePane.getBoundingClientRect().width;
+      const available =
+        viewer.getBoundingClientRect().width -
+        handle.getBoundingClientRect().width -
+        MIN_PREVIEW_WIDTH;
+      const maxWidth = Math.max(MIN_CODE_WIDTH, available);
+      let finalWidth = startWidth;
+      handle.setPointerCapture(event.pointerId);
+
+      const onPointerMove = (moveEvent) => {
+        const next = Math.min(
+          maxWidth,
+          Math.max(MIN_CODE_WIDTH, startWidth + moveEvent.clientX - startX)
+        );
+        finalWidth = next;
+        setCodeWidth(Math.round(next));
+      };
+
+      const onPointerUp = (upEvent) => {
+        if (handle.hasPointerCapture(upEvent.pointerId)) {
+          handle.releasePointerCapture(upEvent.pointerId);
+        }
+        handle.removeEventListener("pointermove", onPointerMove);
+        handle.removeEventListener("pointerup", onPointerUp);
+        handle.removeEventListener("pointercancel", onPointerUp);
+        localStorage.setItem(
+          CODE_WIDTH_STORAGE_KEY,
+          String(Math.round(finalWidth))
+        );
+      };
+
+      handle.addEventListener("pointermove", onPointerMove);
+      handle.addEventListener("pointerup", onPointerUp);
+      handle.addEventListener("pointercancel", onPointerUp);
+    },
+    [stacked]
+  );
 
   const resizeChatPane = useCallback((event) => {
     if (event.button !== 0) return;
@@ -913,7 +1342,9 @@ export default function App() {
   return (
     <>
       <nav className="app-nav">
-        <img className="app-logo" src={logo} alt="Shader Studio" />
+        <a className="app-logo-link" href={makeHomeUrl()} onClick={goHome}>
+          <img className="app-logo" src={logo} alt="Shader Studio" />
+        </a>
         <fig-chooser
           ref={chooserRef}
           value={presetId}
@@ -922,29 +1353,27 @@ export default function App() {
           loop=""
         >
           <fig-menu class="new-shader-menu" position="bottom right">
-            <fig-tooltip text="New Figma shader" delay="0">
-              <span className="new-shader-swatch-wrap">
-                <fig-swatch
-                  fig-menu-trigger=""
-                  class="new-shader-swatch"
-                  size="large"
-                  background="var(--figma-color-bg-secondary)"
-                  role="button"
-                  tabindex="0"
-                  aria-label="New Figma shader"
-                />
+            <fig-tooltip text="New Figma shader">
+              <fig-button
+                fig-menu-trigger=""
+                type="button"
+                variant="secondary"
+                icon="true"
+                size="large"
+                aria-label="New Figma shader"
+              >
                 <fig-icon name="add" />
-              </span>
+              </fig-button>
             </fig-tooltip>
             <fig-menu-item
               value="effect"
-              onClick={() => choosePreset("blank-effect")}
+              onClick={() => createDraft("blank-effect")}
             >
               Shader effect
             </fig-menu-item>
             <fig-menu-item
               value="fill"
-              onClick={() => choosePreset("blank-fill")}
+              onClick={() => createDraft("blank-fill")}
             >
               Shader fill
             </fig-menu-item>
@@ -955,7 +1384,7 @@ export default function App() {
               value={preset.id}
               aria-label={preset.name}
             >
-              <fig-tooltip text={preset.name} delay="0">
+              <fig-tooltip text={preset.name}>
                 <fig-swatch
                   size="large"
                   background={`url("${thumbnails[preset.id] || thumbnailData(index, preset.name)}") center / cover no-repeat`}
@@ -964,19 +1393,65 @@ export default function App() {
               </fig-tooltip>
             </fig-choice>
           ))}
+          {drafts.map((draft, index) => {
+            const name = draft.id === presetId ? shaderName : draft.name;
+            return (
+              <fig-choice
+                key={draft.id}
+                value={draft.id}
+                aria-label={name}
+              >
+                <fig-menu
+                  class="shader-context-menu"
+                  trigger="contextmenu"
+                  position="center right"
+                >
+                  <div fig-menu-trigger="">
+                    <fig-tooltip text={name}>
+                      <fig-swatch
+                        size="large"
+                        background={`url("${thumbnails[draft.id] || thumbnailData(PRESETS.length + index, name)}") center / cover no-repeat`}
+                        aria-label={name}
+                      />
+                    </fig-tooltip>
+                  </div>
+                  <fig-menu-item
+                    value="delete"
+                    onClick={() => removeDraft(draft)}
+                  >
+                    Delete
+                  </fig-menu-item>
+                </fig-menu>
+              </fig-choice>
+            );
+          })}
           {cloudShaders.map((shader, index) => (
             <fig-choice
               key={shader.id}
               value={cloudChoiceId(shader.id)}
               aria-label={shader.name}
             >
-              <fig-tooltip text={shader.name} delay="0">
-                <fig-swatch
-                  size="large"
-                  background={`url("${cloudThumbnails[shader.id] || thumbnailData(PRESETS.length + index, shader.name)}") center / cover no-repeat`}
-                  aria-label={shader.name}
-                />
-              </fig-tooltip>
+              <fig-menu
+                class="shader-context-menu"
+                trigger="contextmenu"
+                position="center right"
+              >
+                <div fig-menu-trigger="">
+                  <fig-tooltip text={shader.name}>
+                    <fig-swatch
+                      size="large"
+                      background={`url("${cloudThumbnails[shader.id] || thumbnailData(PRESETS.length + drafts.length + index, shader.name)}") center / cover no-repeat`}
+                      aria-label={shader.name}
+                    />
+                  </fig-tooltip>
+                </div>
+                <fig-menu-item
+                  value="delete"
+                  onClick={() => removeCloudShader(shader)}
+                >
+                  Delete
+                </fig-menu-item>
+              </fig-menu>
             </fig-choice>
           ))}
         </fig-chooser>
@@ -998,41 +1473,124 @@ export default function App() {
         style={{
           "--code-width": `${codeWidth}px`,
           "--chat-height": `${chatHeight}px`,
+          ...(previewHeight != null
+            ? { "--preview-height": `${previewHeight}px` }
+            : {}),
         }}
       >
         <div ref={sidebarRef} className="shader-viewer-sidebar">
           <section className="shader-viewer-code">
             <fig-header borderless>
-              <h2>{shaderModuleFileName(presetId, shaderName)}</h2>
-              <hstack>
-                <fig-tooltip text="Copy code" delay="0">
+              <div
+                className={
+                  renaming ? "shader-title is-renaming" : "shader-title"
+                }
+              >
+                <fig-input-text
+                  ref={nameInputRef}
+                  name="name"
+                  class="shader-name"
+                  value={shaderName}
+                  variant="editable"
+                  full=""
+                  readonly={!renaming}
+                  onClick={() => {
+                    if (!renaming) startRename();
+                  }}
+                  onBlur={() => {
+                    if (renaming) finishRename();
+                  }}
+                  onInput={(event) => {
+                    setShaderName(event.target.value);
+                    setDirty(true);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      finishRename();
+                    }
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      finishRename();
+                    }
+                  }}
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+                {renaming && (
                   <fig-button
-                    variant="ghost"
+                    variant="primary"
                     icon="true"
-                    aria-label="Copy code"
-                    onClick={copyShaderCode}
+                    aria-label="Finish renaming"
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={finishRename}
                   >
-                    <ClipboardIcon />
+                    <fig-icon name="checkmark" size="small" />
                   </fig-button>
-                </fig-tooltip>
-                <fig-tooltip
-                  text={propertiesOpen ? "Hide properties" : "Show properties"}
-                  delay="0"
-                >
-                  <fig-button
-                    type="toggle"
-                    variant="ghost"
-                    icon="true"
-                    selected={propertiesOpen}
-                    aria-label={
+                )}
+              </div>
+              {!renaming && (
+                <hstack>
+                  <fig-menu position="bottom right">
+                    <fig-tooltip text="More">
+                      <fig-button
+                        fig-menu-trigger=""
+                        variant="ghost"
+                        icon="true"
+                        aria-label="More shader actions"
+                      >
+                        <fig-icon name="more" />
+                      </fig-button>
+                    </fig-tooltip>
+                    <fig-menu-item
+                      value="save"
+                      disabled={saving || Boolean(currentShader && !dirty)}
+                      onClick={saveShader}
+                    >
+                      {saving ? "Saving…" : "Save"}
+                    </fig-menu-item>
+                    <fig-menu-separator />
+                    <fig-menu-item value="duplicate" onClick={duplicateShader}>
+                      Duplicate
+                    </fig-menu-item>
+                    <fig-menu-item value="share" onClick={copyShareLink}>
+                      Copy link
+                    </fig-menu-item>
+                    {isOwner && (
+                      <fig-menu-item
+                        value="delete"
+                        onClick={removeCurrentShader}
+                      >
+                        Delete
+                      </fig-menu-item>
+                    )}
+                    <fig-menu-separator />
+                    <fig-menu-item value="export" onClick={exportFiles}>
+                      Download
+                    </fig-menu-item>
+                  </fig-menu>
+                  <fig-tooltip
+                    text={
                       propertiesOpen ? "Hide properties" : "Show properties"
                     }
-                    onClick={() => setPropertiesOpen((open) => !open)}
                   >
-                    <fig-icon class="properties-toggle-icon" name="adjust" />
-                  </fig-button>
-                </fig-tooltip>
-              </hstack>
+                    <fig-button
+                      type="toggle"
+                      variant="ghost"
+                      icon="true"
+                      selected={propertiesOpen}
+                      aria-label={
+                        propertiesOpen
+                          ? "Hide properties"
+                          : "Show properties"
+                      }
+                      onClick={() => setPropertiesOpen((open) => !open)}
+                    >
+                      <fig-icon class="properties-toggle-icon" name="adjust" />
+                    </fig-button>
+                  </fig-tooltip>
+                </hstack>
+              )}
             </fig-header>
             <div className="code-editor">
               <CodePane
@@ -1070,9 +1628,9 @@ export default function App() {
 
           <section className="shader-viewer-chat">
             <fig-header borderless>
-              <h2>Chat</h2>
+              <h3>AI chat</h3>
               <hstack>
-                <fig-tooltip text="Clear chat" delay="0">
+                <fig-tooltip text="Clear chat">
                   <fig-button
                     type="button"
                     variant="ghost"
@@ -1108,13 +1666,41 @@ export default function App() {
           className="pane-resizer"
           role="separator"
           aria-label="Resize code and preview panes"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_CODE_WIDTH}
-          aria-valuenow={codeWidth}
+          aria-orientation={stacked ? "horizontal" : "vertical"}
+          aria-valuemin={stacked ? MIN_PREVIEW_HEIGHT : MIN_CODE_WIDTH}
+          aria-valuenow={stacked ? previewHeight ?? undefined : codeWidth}
           tabIndex={0}
           onPointerDown={resizeCodePane}
-          onDoubleClick={() => saveCodeWidth(defaultCodeWidth())}
+          onDoubleClick={() =>
+            stacked ? savePreviewHeight(null) : saveCodeWidth(defaultCodeWidth())
+          }
           onKeyDown={(event) => {
+            if (stacked) {
+              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+              event.preventDefault();
+              const viewer = viewerRef.current;
+              const handle = event.currentTarget;
+              const visualizer = handle.nextElementSibling;
+              if (!viewer || !visualizer) return;
+              const current =
+                previewHeight ?? visualizer.getBoundingClientRect().height;
+              const maxHeight = Math.max(
+                MIN_PREVIEW_HEIGHT,
+                viewer.getBoundingClientRect().height -
+                  handle.getBoundingClientRect().height -
+                  MIN_STACKED_SIDEBAR
+              );
+              savePreviewHeight(
+                Math.min(
+                  maxHeight,
+                  Math.max(
+                    MIN_PREVIEW_HEIGHT,
+                    current + (event.key === "ArrowDown" ? 16 : -16)
+                  )
+                )
+              );
+              return;
+            }
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
             saveCodeWidth(
@@ -1136,6 +1722,12 @@ export default function App() {
               canvasRef={canvasRef}
               error={error}
               uploading={uploading}
+              props={props}
+              values={values}
+              onControlInput={previewControl}
+              onControlChange={updateControl}
+              onZoomChange={setPreviewZoom}
+              zoomRequest={previewZoomRequest}
               onPickFile={(file) =>
                 pickFile(file).catch((dropError) =>
                   setError(dropError.message || String(dropError))
@@ -1157,8 +1749,29 @@ export default function App() {
             >
               <fig-icon name={running ? "pause" : "play"} />
             </fig-button>
+            <fig-menu position="top center">
+              <fig-tooltip text="Zoom">
+                <fig-button
+                  fig-menu-trigger=""
+                  variant="ghost"
+                  class="tools-zoom"
+                  aria-label={`Zoom ${Math.round(previewZoom * 100)}%`}
+                >
+                  {Math.round(previewZoom * 100)}%
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item value="50" onClick={() => requestPreviewZoom(0.5)}>
+                50%
+              </fig-menu-item>
+              <fig-menu-item value="100" onClick={() => requestPreviewZoom(1)}>
+                100%
+              </fig-menu-item>
+              <fig-menu-item value="200" onClick={() => requestPreviewZoom(2)}>
+                200%
+              </fig-menu-item>
+            </fig-menu>
             {kind === "effect" && (
-              <fig-tooltip text="Upload input" delay="0">
+              <fig-tooltip text="Upload input">
                 <fig-button
                   variant="ghost"
                   icon="true"
@@ -1183,107 +1796,35 @@ export default function App() {
         autoresize=""
       >
         <fig-header dialog-header>
-          <div
-            className={
-              renaming ? "shader-title is-renaming" : "shader-title"
-            }
-          >
-            <fig-input-text
-              ref={nameInputRef}
-              name="name"
-              class="shader-name"
-              value={shaderName}
-              variant="editable"
-              full=""
-              readonly={!renaming}
-              onBlur={() => {
-                if (renaming) finishRename();
-              }}
-              onInput={(event) => {
-                setShaderName(event.target.value);
-                setDirty(true);
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  finishRename();
-                }
-                if (event.key === "Escape") {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  finishRename();
-                }
-              }}
-              dangerouslySetInnerHTML={{ __html: "" }}
-            />
-            {renaming && (
-              <fig-button
-                variant="primary"
-                icon="true"
-                aria-label="Finish renaming"
-                onMouseDown={(event) => event.preventDefault()}
-                onClick={finishRename}
-              >
-                <fig-icon name="checkmark" size="small" />
-              </fig-button>
-            )}
-          </div>
-          {!renaming && (
-            <hstack>
-              <fig-menu position="bottom right">
-                <fig-tooltip text="More" delay="0">
-                  <fig-button
-                    fig-menu-trigger=""
-                    variant="ghost"
-                    icon="true"
-                    aria-label="More shader actions"
-                  >
-                    <fig-icon name="more" />
-                  </fig-button>
-                </fig-tooltip>
-                <fig-menu-item
-                  value="save"
-                  disabled={saving || Boolean(currentShader && !dirty)}
-                  onClick={saveShader}
-                >
-                  {saving ? "Saving…" : "Save"}
-                </fig-menu-item>
-                <fig-menu-separator />
-                <fig-menu-item value="rename" onClick={startRename}>
-                  Rename
-                </fig-menu-item>
-                <fig-menu-item value="reset" onClick={resetProperties}>
-                  Reset
-                </fig-menu-item>
-                <fig-menu-item value="duplicate" onClick={duplicateShader}>
-                  Duplicate
-                </fig-menu-item>
-                <fig-menu-item value="share" onClick={copyShareLink}>
-                  Copy link
-                </fig-menu-item>
-                {isOwner && (
-                  <fig-menu-item value="delete" onClick={removeCurrentShader}>
-                    Delete
-                  </fig-menu-item>
-                )}
-                <fig-menu-separator />
-                <fig-menu-item value="export" onClick={exportFiles}>
-                  Export
-                </fig-menu-item>
-              </fig-menu>
-              <fig-tooltip text="Close" delay="0">
+          <h3>Properties</h3>
+          <hstack>
+            <fig-menu position="bottom right">
+              <fig-tooltip text="More">
                 <fig-button
+                  fig-menu-trigger=""
                   variant="ghost"
                   icon="true"
-                  aria-label="Close dialog"
-                  close-dialog=""
-                  onClick={() => setPropertiesOpen(false)}
+                  aria-label="More property actions"
                 >
-                  <fig-icon name="close" />
+                  <fig-icon name="more" />
                 </fig-button>
               </fig-tooltip>
-            </hstack>
-          )}
+              <fig-menu-item value="reset" onClick={resetProperties}>
+                Reset
+              </fig-menu-item>
+            </fig-menu>
+            <fig-tooltip text="Close">
+              <fig-button
+                variant="ghost"
+                icon="true"
+                aria-label="Close dialog"
+                close-dialog=""
+                onClick={() => setPropertiesOpen(false)}
+              >
+                <fig-icon name="close" />
+              </fig-button>
+            </fig-tooltip>
+          </hstack>
         </fig-header>
 
         <fig-content>
@@ -1318,14 +1859,6 @@ export default function App() {
       </dialog>
 
       {notice && <div className="status-toast">{notice}</div>}
-      <dialog
-        is="fig-toast"
-        ref={codeCopyToastRef}
-        theme="auto"
-        duration="3000"
-      >
-        Code copied
-      </dialog>
       <input
         ref={fileInputRef}
         type="file"

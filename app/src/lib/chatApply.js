@@ -1,21 +1,43 @@
-const FENCE_RE =
-  /```(?:typescript|ts|javascript|js)?\s*\n([\s\S]*?)```/gi;
+const COMPLETE_FENCE_RE =
+  /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n([\s\S]*?)```/gi;
+const OPEN_FENCE_RE =
+  /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n/gi;
+
+function normalizeModuleSource(body) {
+  return body.replace(/^\uFEFF/, "").replace(/\s+$/, "") + "\n";
+}
 
 /**
  * Extract the last fenced TypeScript/JS module from assistant text.
  * @param {string} text
+ * @param {{ allowIncomplete?: boolean }} [options]
  * @returns {string|null}
  */
-export function extractModuleSource(text) {
+export function extractModuleSource(text, { allowIncomplete = false } = {}) {
   if (!text) return null;
+
   let match;
   let last = null;
-  FENCE_RE.lastIndex = 0;
-  while ((match = FENCE_RE.exec(text)) !== null) {
+  COMPLETE_FENCE_RE.lastIndex = 0;
+  while ((match = COMPLETE_FENCE_RE.exec(text)) !== null) {
     last = match[1];
   }
-  if (last == null) return null;
-  return last.replace(/^\uFEFF/, "").replace(/\s+$/, "") + "\n";
+  if (last != null) {
+    return normalizeModuleSource(last);
+  }
+
+  if (!allowIncomplete) return null;
+
+  let openMatch;
+  let lastOpen = null;
+  OPEN_FENCE_RE.lastIndex = 0;
+  while ((openMatch = OPEN_FENCE_RE.exec(text)) !== null) {
+    lastOpen = openMatch;
+  }
+  if (!lastOpen) return null;
+  const body = text.slice(lastOpen.index + lastOpen[0].length);
+  if (!body.trim()) return null;
+  return normalizeModuleSource(body);
 }
 
 /**
@@ -42,11 +64,13 @@ export function validateModuleSource(source) {
  * @param {string} text
  */
 export function splitAssistantContent(text) {
-  const source = extractModuleSource(text);
+  const source = extractModuleSource(text, { allowIncomplete: true });
   if (!source) {
     return { prose: text.trim(), source: null };
   }
-  const fenceIndex = text.search(/```(?:typescript|ts|javascript|js)?\s*\n/i);
+  OPEN_FENCE_RE.lastIndex = 0;
+  const openMatch = OPEN_FENCE_RE.exec(text);
+  const fenceIndex = openMatch ? openMatch.index : -1;
   const prose =
     fenceIndex >= 0 ? text.slice(0, fenceIndex).trim() : text.trim();
   return { prose, source };

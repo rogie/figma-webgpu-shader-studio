@@ -124,10 +124,13 @@ struct VsOut { @builtin(position) position: vec4f, @location(0) uv: vec2f };
 
 @fragment fn fs_main(in: VsOut) -> @location(0) vec4f {
   let scale = max(u.values.x, 0.001);
-  let p = in.uv * scale;
+  let t = u.values.y;
+  let drift = vec2f(t * 0.12, t * 0.08);
+  let p = in.uv * scale + drift;
   let g = fract(p * 8.0) - 0.5;
   let d = length(g);
-  let ring = smoothstep(0.35, 0.34, d);
+  let pulse = 0.32 + 0.04 * sin(t * 2.0 + p.x * 6.0 + p.y * 4.0);
+  let ring = smoothstep(pulse + 0.01, pulse, d);
   let col = mix(vec3f(0.05, 0.06, 0.1), vec3f(0.2, 0.7, 1.0), ring);
   return vec4f(col, 1.0);
 }
@@ -162,7 +165,12 @@ export function render(device, frame) {
     s.pipelineFormat = frame.output.format
   }
 
-  device.queue.writeBuffer(s.uniformBuf, 0, new Float32Array([frame.params.scale ?? 1, 0, 0, 0]))
+  device.queue.writeBuffer(s.uniformBuf, 0, new Float32Array([
+    frame.params.scale ?? 1,
+    (frame.time ?? 0) * 0.001,
+    0,
+    0,
+  ]))
 
   var bindGroup = device.createBindGroup({
     layout: s.pipeline.getBindGroupLayout(0),
@@ -191,12 +199,18 @@ export const PRESETS = [
   { id: "grain", name: "Grain", kind: "effect", source: grainSrc },
   { id: "pixelate", name: "Pixelate", kind: "effect", source: pixelateSrc },
   { id: "sphere", name: "Sphere", kind: "fill", source: sphereSrc },
+];
+
+/** Starters for “New Figma shader” — not shown in the nav chooser. */
+export const STARTER_PRESETS = [
   { id: "blank-effect", name: "New Effect", kind: "effect", source: blankEffect },
   { id: "blank-fill", name: "New Fill", kind: "fill", source: blankFill },
 ];
 
+const ALL_PRESETS = [...PRESETS, ...STARTER_PRESETS];
+
 export function getPreset(id) {
-  return PRESETS.find((p) => p.id === id) || PRESETS[0];
+  return ALL_PRESETS.find((p) => p.id === id) || PRESETS[0];
 }
 
 const BUILTIN_MODULE_FILES = {

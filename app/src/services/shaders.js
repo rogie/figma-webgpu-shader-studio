@@ -98,17 +98,41 @@ export async function getAssetUrl(path, expiresIn = 3600) {
   return data.signedUrl;
 }
 
+const SHADER_ROUTE_PREFIX = "shader/";
+
+function appBasePathname() {
+  return new URL(import.meta.env.BASE_URL, window.location.origin).pathname;
+}
+
+function shaderPathname(id) {
+  const base = appBasePathname();
+  const normalized = base.endsWith("/") ? base : `${base}/`;
+  return `${normalized}${SHADER_ROUTE_PREFIX}${encodeURIComponent(id)}`;
+}
+
+export function makeHomeUrl() {
+  return new URL(import.meta.env.BASE_URL, window.location.origin).toString();
+}
+
 export function getShaderRouteId() {
-  const basePath = new URL(
-    import.meta.env.BASE_URL,
-    window.location.origin
-  ).pathname;
-  const routePath = window.location.pathname.slice(basePath.length);
-  if (!window.location.pathname.startsWith(basePath) || !routePath) return null;
-  const segment = routePath.replace(/\/$/, "");
-  if (!segment || segment.includes("/")) return null;
+  const basePath = appBasePathname();
+  if (!window.location.pathname.startsWith(basePath)) return null;
+  const routePath = window.location.pathname
+    .slice(basePath.length)
+    .replace(/^\/+/, "")
+    .replace(/\/$/, "");
+  if (!routePath) return null;
+
+  let idSegment = routePath;
+  if (routePath.startsWith(SHADER_ROUTE_PREFIX)) {
+    idSegment = routePath.slice(SHADER_ROUTE_PREFIX.length);
+  } else if (routePath.includes("/")) {
+    return null;
+  }
+
+  if (!idSegment) return null;
   try {
-    return decodeURIComponent(segment);
+    return decodeURIComponent(idSegment);
   } catch {
     return null;
   }
@@ -116,6 +140,6 @@ export function getShaderRouteId() {
 
 export function makeShareUrl(id) {
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);
-  if (id) url.pathname += encodeURIComponent(id);
+  if (id) url.pathname = shaderPathname(id);
   return url.toString();
 }

@@ -34,9 +34,23 @@ body,
     gap: var(--spacer-3);
     margin-right: var(--spacer-3);
 
+    .app-logo-link {
+      display: block;
+      flex: 0 0 auto;
+      line-height: 0;
+      border-radius: var(--radius-medium, 8px);
+      text-decoration: none;
+
+      &:focus-visible {
+        outline: 2px solid var(--figma-color-border-brand-strong);
+        outline-offset: 2px;
+      }
+    }
+
     .app-logo {
       width: 32px;
       height: 32px;
+      display: block;
     }
 
     .app-nav-actions {
@@ -73,24 +87,15 @@ body,
         flex: 0 0 auto;
       }
 
-      .new-shader-swatch-wrap {
+      .shader-context-menu {
         display: block;
-        position: relative;
-        width: 32px;
-        height: 32px;
-        cursor: pointer;
+        width: 100%;
+        height: 100%;
 
-        .new-shader-swatch {
+        > [fig-menu-trigger] {
           display: block;
-        }
-
-        fig-icon {
-          position: absolute;
-          z-index: 2;
-          inset: 50% auto auto 50%;
-          transform: translate(-50%, -50%);
-          pointer-events: none;
-          color: var(--figma-color-icon-secondary);
+          width: 100%;
+          height: 100%;
         }
       }
 
@@ -149,12 +154,66 @@ body,
         justify-content: space-between;
         gap: var(--spacer-2);
 
-        > h2 {
+        > h2,
+        > h3 {
           flex: 1;
           min-width: 0;
           overflow: hidden;
           text-overflow: ellipsis;
           white-space: nowrap;
+        }
+
+        .shader-title {
+          flex: 1;
+          width: 100%;
+          min-width: 0;
+          user-select: none;
+
+          &:has(fig-input-text:not([readonly])) {
+            pointer-events: auto;
+          }
+
+          &.is-renaming {
+            display: flex;
+            align-items: center;
+            gap: var(--spacer-2);
+            pointer-events: auto;
+
+            fig-input-text.shader-name {
+              flex: 1;
+              min-width: 0;
+              width: auto;
+            }
+
+            > fig-button {
+              flex: 0 0 auto;
+              margin-right: calc(var(--spacer-2) * -1);
+            }
+          }
+        }
+
+        fig-input-text.shader-name {
+          width: 100%;
+          margin-left: calc(var(--spacer-2) * -1);
+
+          &[readonly]:not([readonly="false"]) {
+            background-color: transparent;
+            box-shadow: none !important;
+            outline: none !important;
+            cursor: text;
+            user-select: none;
+
+            &:hover,
+            &:has(:is(input, textarea):focus) {
+              background-color: transparent;
+              box-shadow: none !important;
+              outline: none !important;
+            }
+          }
+
+          &:not([readonly]) {
+            user-select: text;
+          }
         }
 
         > hstack:last-child {
@@ -206,218 +265,6 @@ body,
 
         .cm-content {
           padding-right: var(--spacer-2);
-        }
-      }
-    }
-
-    .shader-viewer-chat {
-      flex: 0 0 var(--chat-height, 260px);
-      min-height: 220px;
-
-      > .code-chat {
-        flex: 1 1 auto;
-        min-height: 0;
-      }
-
-      .code-chat {
-        display: flex;
-        flex-direction: column;
-        min-height: 0;
-        height: 100%;
-        overflow: hidden;
-        padding: 0;
-        color: var(--figma-color-text);
-
-        .chat-messages {
-          flex: 1 1 0;
-          min-height: 0;
-          overflow-x: hidden;
-          overflow-y: auto;
-          /* Same as code editor: inset scrollbar from the pane border. */
-          margin-right: var(--spacer-2);
-          padding: var(--spacer-3);
-          padding-right: var(--spacer-2);
-          display: flex;
-          flex-direction: column;
-          gap: var(--spacer-3);
-          scrollbar-width: thin;
-        }
-
-        .chat-empty {
-          margin: auto;
-          max-width: 28rem;
-          text-align: center;
-          color: var(--figma-color-text-secondary);
-          display: flex;
-          flex-direction: column;
-          gap: var(--spacer-2);
-
-          code {
-            font-family: var(--font-family-monospace, ui-monospace, monospace);
-            color: var(--figma-color-text);
-          }
-        }
-
-        .chat-bubble {
-          max-width: 100%;
-          padding: var(--spacer-2) var(--spacer-3);
-          border-radius: var(--radius-medium, 8px);
-          white-space: pre-wrap;
-          word-break: break-word;
-          font-size: var(--font-size-small, 12px);
-          line-height: 1.45;
-        }
-
-        .chat-bubble-user {
-          align-self: flex-end;
-          background: var(--figma-color-bg-brand-tertiary, var(--figma-color-bg-secondary));
-          color: var(--figma-color-text);
-        }
-
-        .chat-bubble-assistant {
-          align-self: flex-start;
-          max-width: calc(100% - 4rem);
-          background: var(--figma-color-bg-secondary);
-        }
-
-        .chat-bubble-assistant.is-pending {
-          opacity: 0.85;
-        }
-
-        .chat-prose {
-          margin: 0;
-        }
-
-        .chat-code-note {
-          display: flex;
-          align-items: center;
-          gap: var(--spacer-2);
-          margin-top: var(--spacer-2);
-          color: var(--figma-color-text-secondary);
-          font-size: var(--font-size-small, 12px);
-          white-space: normal;
-        }
-
-        .chat-code-note:first-child {
-          margin-top: 0;
-        }
-
-        .chat-footer {
-          flex: 0 0 auto;
-          flex-shrink: 0;
-          display: flex;
-          flex-direction: column;
-          border-top: 1px solid var(--figma-color-border);
-        }
-
-        .chat-error {
-          flex: 0 1 auto;
-          min-height: 0;
-          max-height: 4.5rem;
-          margin: 0;
-          padding: var(--spacer-2) var(--spacer-3);
-          overflow-x: hidden;
-          overflow-y: auto;
-          color: var(--figma-color-text-danger, #c00);
-          font-size: var(--font-size-small, 12px);
-          line-height: 1.35;
-          white-space: pre-wrap;
-          word-break: break-word;
-          border-bottom: 1px solid var(--figma-color-border);
-        }
-
-        .chat-link {
-          appearance: none;
-          border: 0;
-          background: none;
-          padding: 0;
-          color: var(--figma-color-text-brand, var(--figma-color-text));
-          text-decoration: underline;
-          cursor: pointer;
-          font: inherit;
-        }
-
-        .chat-composer {
-          flex: 0 0 auto;
-          flex-shrink: 0;
-          display: flex;
-          flex-direction: column;
-          gap: var(--spacer-2);
-          padding: var(--spacer-3);
-        }
-
-        .chat-input {
-          width: 100%;
-          box-sizing: border-box;
-          resize: none;
-          font: inherit;
-        }
-
-        .chat-composer-actions {
-          display: flex;
-          align-items: center;
-          gap: var(--spacer-2);
-
-          fig-dropdown {
-            flex: 0 0 auto;
-            width: max-content;
-            max-width: 16rem;
-          }
-
-          .chat-composer-send,
-          > fig-button {
-            margin-left: auto;
-          }
-
-          .chat-composer-send {
-            display: flex;
-            align-items: center;
-            gap: var(--spacer-1);
-          }
-        }
-
-        .chat-pending-attachment {
-          display: flex;
-          align-items: center;
-          gap: var(--spacer-2);
-          padding: var(--spacer-1) var(--spacer-2);
-          border: 1px solid var(--figma-color-border);
-          border-radius: var(--radius-medium, 8px);
-          background: var(--figma-color-bg-secondary);
-          font-size: var(--font-size-small, 12px);
-
-          img,
-          video {
-            width: 40px;
-            height: 40px;
-            object-fit: cover;
-            border-radius: 4px;
-            background: var(--figma-color-bg);
-          }
-
-          span {
-            flex: 1;
-            min-width: 0;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          }
-        }
-
-        .chat-attachment-preview {
-          display: block;
-          max-width: 100%;
-          max-height: 160px;
-          border-radius: 6px;
-          margin-bottom: var(--spacer-2);
-          object-fit: contain;
-          background: var(--figma-color-bg);
-        }
-
-        .chat-attachment-chip {
-          margin-bottom: var(--spacer-1);
-          color: var(--figma-color-text-secondary);
-          font-size: var(--font-size-small, 12px);
         }
       }
     }
@@ -502,6 +349,20 @@ body,
         display: flex;
         align-items: center;
         justify-content: center;
+        overflow: hidden;
+
+        /* Zoom/pan transform applies to the canvas only — controls stay unscaled. */
+        .canvas-frame {
+          position: relative;
+          flex: 0 1 auto;
+          max-width: 100%;
+          max-height: 100%;
+          min-width: 0;
+          min-height: 0;
+          line-height: 0;
+          transform-origin: center center;
+          will-change: transform;
+        }
 
         .preview-canvas {
           display: block;
@@ -510,6 +371,18 @@ body,
           width: auto;
           height: auto;
           object-fit: contain;
+        }
+
+        /* Sibling overlay sized to the canvas's visual (zoomed) box. */
+        .canvas-controls-overlay {
+          position: absolute;
+          z-index: 3;
+          /* Let mouse reach the canvas except on handles (host tracks mousePosition). */
+          pointer-events: none;
+
+          :is(fig-handle, fig-tooltip, svg) {
+            pointer-events: auto;
+          }
         }
 
         .drop-overlay {
@@ -558,8 +431,10 @@ body,
       .tools {
         position: absolute;
         bottom: var(--spacer-2);
-        left: 50%;
-        transform: translateX(-50%);
+        left: 0;
+        right: 0;
+        width: max-content;
+        margin-inline: auto;
         z-index: 5;
         display: flex;
         align-items: center;
@@ -569,6 +444,11 @@ body,
         background: var(--figma-color-bg);
         border-radius: var(--radius-large);
         box-shadow: var(--figma-elevation-400-menu-panel);
+
+        .tools-zoom {
+          min-width: 2.75rem;
+          font-variant-numeric: tabular-nums;
+        }
       }
 
       .error-overlay {
@@ -649,40 +529,7 @@ body,
   }
 
   > fig-header[dialog-header] {
-    flex: 0 0 auto;
-    justify-content: space-between;
-    gap: var(--spacer-2);
-    overflow: visible;
 
-    .shader-title {
-      flex: 1;
-      width: 100%;
-      min-width: 0;
-      user-select: none;
-      pointer-events: none;
-
-      &:has(fig-input-text:not([readonly])) {
-        pointer-events: auto;
-      }
-
-      &.is-renaming {
-        display: flex;
-        align-items: center;
-        gap: var(--spacer-2);
-        pointer-events: auto;
-
-        fig-input-text.shader-name {
-          flex: 1;
-          min-width: 0;
-          width: auto;
-        }
-
-        > fig-button {
-          flex: 0 0 auto;
-          margin-right: calc(var(--spacer-2) * -1);
-        }
-      }
-    }
 
     hstack {
       flex: 0 0 auto;
@@ -715,31 +562,6 @@ body,
     gap: var(--spacer-2);
     overflow-x: hidden;
     scrollbar-width: thin;
-  }
-
-  fig-input-text.shader-name {
-    width: 100%;
-    margin-left: calc(var(--spacer-2) * -1);
-
-    /* Read-only title: look like plain text; figui border/focus only when editing */
-    &[readonly]:not([readonly="false"]) {
-      background-color: transparent;
-      box-shadow: none !important;
-      outline: none !important;
-      cursor: default;
-      user-select: none;
-
-      &:hover,
-      &:has(:is(input, textarea):focus) {
-        background-color: transparent;
-        box-shadow: none !important;
-        outline: none !important;
-      }
-    }
-
-    &:not([readonly]) {
-      user-select: text;
-    }
   }
 
   .vector-control {
@@ -813,29 +635,48 @@ body,
   #root .shader-viewer {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(280px, 42%);
+    grid-template-rows: auto auto minmax(280px, 1fr);
 
     .shader-viewer-visualizer {
       grid-column: 1;
       grid-row: 1;
+      flex: none;
+      width: 100%;
       min-width: 0;
-      margin-bottom: var(--spacer-3);
+      height: var(--preview-height, auto);
+      aspect-ratio: 16 / 9;
     }
 
     > .pane-resizer:not(.pane-resizer-row) {
-      display: none;
+      grid-column: 1;
+      grid-row: 2;
+      width: 100%;
+      height: var(--spacer-3);
+      min-height: var(--spacer-3);
+      flex: 0 0 var(--spacer-3);
+      cursor: row-resize;
+
+      &::after {
+        top: 50%;
+        bottom: auto;
+        left: 0;
+        right: 0;
+        width: auto;
+        height: 2px;
+        transform: translateY(-50%);
+      }
     }
 
     .shader-viewer-sidebar {
       grid-column: 1;
-      grid-row: 2;
+      grid-row: 3;
       position: relative;
       inset: auto;
       z-index: auto;
       width: auto;
       min-width: 0;
       height: 100%;
-      min-height: 320px;
+      min-height: 280px;
       margin: 0;
     }
   }

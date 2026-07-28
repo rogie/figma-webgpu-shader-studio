@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { showsInPropertyPanel } from "../lib/canvasControls.js";
 
 function toHexByte(value) {
   return Math.max(0, Math.min(255, Math.round((value ?? 0) * 255)))
@@ -30,15 +31,6 @@ function readPropskitSliderNumber(event) {
 // content as opaque prevents React from deleting it on subsequent renders.
 const opaqueContent = { __html: "" };
 
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 function NumberControl({ def, value, onChange }) {
   const current = value ?? def.defaultValue ?? 0;
   return (
@@ -49,6 +41,74 @@ function NumberControl({ def, value, onChange }) {
       step={def.step ?? 0.01}
       units={def.unit || ""}
       onInput={(event) => onChange(readNumber(event))}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitNumberControl({ name, def, value, onChange }) {
+  const numberRef = useRef(null);
+
+  useEffect(() => {
+    const control = numberRef.current;
+    if (!control) return;
+    const handleValue = (event) => {
+      const next = readNumber(event);
+      if (Number.isFinite(next)) onChange(name, next);
+    };
+    control.addEventListener("input", handleValue);
+    control.addEventListener("change", handleValue);
+    return () => {
+      control.removeEventListener("input", handleValue);
+      control.removeEventListener("change", handleValue);
+    };
+  }, [name, onChange]);
+
+  return (
+    <propskit-number
+      ref={numberRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
+      value={value ?? def.defaultValue ?? 0}
+      min={def.min}
+      max={def.max}
+      step={def.step ?? 0.01}
+      units={def.unit || ""}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitTextControl({ name, def, value, onChange }) {
+  const textRef = useRef(null);
+
+  useEffect(() => {
+    const control = textRef.current;
+    if (!control) return;
+    const handleValue = (event) => {
+      const detail = event.detail;
+      const next =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value);
+      onChange(name, String(next ?? ""));
+    };
+    control.addEventListener("input", handleValue);
+    control.addEventListener("change", handleValue);
+    return () => {
+      control.removeEventListener("input", handleValue);
+      control.removeEventListener("change", handleValue);
+    };
+  }, [name, onChange]);
+
+  return (
+    <propskit-text
+      ref={textRef}
+      label={def.label || name}
+      direction="horizontal"
+      size="large"
+      value={value ?? def.defaultValue ?? ""}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -123,23 +183,28 @@ function SwitchControl({ name, def, value, onChange }) {
   );
 }
 
+// Match figui3 /propskit/lab: options attr is comma-separated, newline, or JSON
+// array of strings / { value, label } objects (same as fig-options / fig-select).
+function formatSelectOptions(options) {
+  return JSON.stringify(
+    options.map((option) => ({
+      value: String(option.value),
+      label: String(option.label ?? option.value),
+    }))
+  );
+}
+
 function SelectControl({ name, def, value, onChange }) {
   const selectRef = useRef(null);
   const options = def.options || [];
   const numeric = options.length > 0 && typeof options[0].value === "number";
-  const optionMarkup = options
-    .map(
-      (option) =>
-        `<option value="${escapeHtml(option.value)}">${escapeHtml(
-          option.label ?? option.value
-        )}</option>`
-    )
-    .join("");
+  const current = value ?? def.defaultValue;
 
   useEffect(() => {
     const select = selectRef.current;
     if (!select) return;
     const handleValue = (event) => {
+      // propskit-select forwards fig-select detail as the raw string value.
       const detail = event.detail;
       const raw =
         detail && typeof detail === "object" && "value" in detail
@@ -161,8 +226,9 @@ function SelectControl({ name, def, value, onChange }) {
       label={def.label || name}
       direction="horizontal"
       size="large"
-      value={value ?? def.defaultValue}
-      dangerouslySetInnerHTML={{ __html: optionMarkup }}
+      value={current == null ? "" : String(current)}
+      options={formatSelectOptions(options)}
+      dangerouslySetInnerHTML={opaqueContent}
     />
   );
 }
@@ -324,15 +390,6 @@ function Control({ def, value, onChange }) {
   if (def.type === "number") {
     return <NumberControl def={def} value={value} onChange={onChange} />;
   }
-  if (def.type === "string") {
-    return (
-      <fig-input-text
-        value={value ?? def.defaultValue ?? ""}
-        onInput={(event) => onChange(event.target.value)}
-        dangerouslySetInnerHTML={opaqueContent}
-      />
-    );
-  }
   if (def.type === "point") {
     return (
       <VectorControl
@@ -405,7 +462,9 @@ function Control({ def, value, onChange }) {
 }
 
 export default function Controls({ props, values, onChange, onInput }) {
-  const entries = Object.entries(props || {});
+  const entries = Object.entries(props || {}).filter(([, def]) =>
+    showsInPropertyPanel(def)
+  );
   if (entries.length === 0) {
     return (
       <fig-field>
@@ -443,6 +502,28 @@ export default function Controls({ props, values, onChange, onInput }) {
     if (def.type === "boolean") {
       return (
         <SwitchControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onChange={onChange}
+        />
+      );
+    }
+    if (def.type === "number" && def.control !== "slider") {
+      return (
+        <PropskitNumberControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onChange={onChange}
+        />
+      );
+    }
+    if (def.type === "string") {
+      return (
+        <PropskitTextControl
           key={key}
           name={name}
           def={def}

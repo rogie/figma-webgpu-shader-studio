@@ -38,6 +38,7 @@ import { streamChat } from "../services/chat.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
+import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
 const MAX_UNDO = 12;
@@ -119,10 +120,7 @@ const ChatPane = forwardRef(function ChatPane(
   if (undoCount > 0) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (
-        message.role === "assistant" &&
-        extractModuleSource(message.content)
-      ) {
+      if (message.role === "assistant" && message.applied) {
         undoMessageIndex = index;
         break;
       }
@@ -303,7 +301,11 @@ const ChatPane = forwardRef(function ChatPane(
 
     let assembled = "";
     let sawError = false;
-    const finishAssistant = (content) => {
+    let lastApplied = null;
+    let didPushUndo = false;
+    const baselineSource = source;
+
+    const finishAssistant = (content, { applied = false } = {}) => {
       updateThread((current) => {
         const next = pruneEmptyAssistants([...current]);
         const last = next[next.length - 1];
@@ -316,9 +318,40 @@ const ChatPane = forwardRef(function ChatPane(
           role: "assistant",
           content,
           pending: false,
+          applied: Boolean(applied || last.applied),
         };
         return next;
       });
+    };
+
+    const markAssistantApplied = () => {
+      updateThread((current) => {
+        const next = [...current];
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return next;
+        next[next.length - 1] = { ...last, applied: true };
+        return next;
+      });
+    };
+
+    const tryApplyModule = (text, { allowIncomplete = false } = {}) => {
+      const moduleSource = extractModuleSource(text, { allowIncomplete });
+      if (!moduleSource || moduleSource === lastApplied) return false;
+      if (moduleSource === baselineSource && !didPushUndo) return false;
+      const check = validateModuleSource(moduleSource);
+      if (!check.ok) return false;
+      if (!didPushUndo) {
+        undoStackRef.current.push(baselineSource);
+        if (undoStackRef.current.length > MAX_UNDO) {
+          undoStackRef.current.shift();
+        }
+        setUndoCount(undoStackRef.current.length);
+        didPushUndo = true;
+      }
+      lastApplied = moduleSource;
+      onApplySource(moduleSource);
+      markAssistantApplied();
+      return true;
     };
 
     try {
@@ -327,7 +360,7 @@ const ChatPane = forwardRef(function ChatPane(
         model: model.id,
         apiKey,
         messages: history,
-        source,
+        source: baselineSource,
         kind,
         fileName,
         features,
@@ -345,10 +378,12 @@ const ChatPane = forwardRef(function ChatPane(
                 role: "assistant",
                 content: snapshot,
                 pending: true,
+                applied: Boolean(last.applied),
               };
             }
             return next;
           });
+          tryApplyModule(snapshot, { allowIncomplete: false });
         } else if (event.type === "error") {
           sawError = true;
           setError(event.message || "Chat failed.");
@@ -356,37 +391,38 @@ const ChatPane = forwardRef(function ChatPane(
         }
       }
 
+      const applied =
+        tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo;
+
       if (sawError || !assembled.trim()) {
-        finishAssistant("");
+        finishAssistant(assembled.trim() ? assembled : "", { applied });
         if (!sawError && !controller.signal.aborted) {
           setError(
             `${model.label} returned an empty reply. Try again or choose another model.`
           );
         }
       } else {
-        finishAssistant(assembled);
-      }
-
-      const moduleSource = extractModuleSource(assembled);
-      if (moduleSource) {
-        const check = validateModuleSource(moduleSource);
-        if (!check.ok) {
-          onNotice?.(check.reason);
-        } else {
-          undoStackRef.current.push(source);
-          if (undoStackRef.current.length > MAX_UNDO) {
-            undoStackRef.current.shift();
-          }
-          setUndoCount(undoStackRef.current.length);
-          onApplySource(moduleSource);
+        finishAssistant(assembled, { applied });
+        if (applied) {
           onNotice?.("Code updated from chat.");
+        } else {
+          const candidate = extractModuleSource(assembled, {
+            allowIncomplete: true,
+          });
+          if (candidate) {
+            const check = validateModuleSource(candidate);
+            if (!check.ok) onNotice?.(check.reason);
+          }
         }
       }
     } catch (err) {
       if (err?.name !== "AbortError") {
         setError(err.message || String(err));
       }
-      finishAssistant(assembled);
+      const applied =
+        tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo;
+      finishAssistant(assembled, { applied });
+      if (applied) onNotice?.("Code updated from chat.");
     } finally {
       abortRef.current = null;
       pendingApiAttachmentRef.current = null;
@@ -483,11 +519,15 @@ const ChatPane = forwardRef(function ChatPane(
               className={`chat-bubble chat-bubble-assistant${message.pending ? " is-pending" : ""}`}
             >
               {prose && <div className="chat-prose">{prose}</div>}
-              {code && (
+              {(message.applied || (code && message.pending)) && (
                 <div className="chat-code-note">
-                  <span>Updated module applied to editor.</span>
-                  {index === undoMessageIndex && (
-                    <fig-tooltip text="Undo apply" delay="0">
+                  <span>
+                    {message.applied
+                      ? "Updated module applied to editor."
+                      : "Writing module…"}
+                  </span>
+                  {index === undoMessageIndex && message.applied && (
+                    <fig-tooltip text="Undo apply">
                       <fig-button
                         type="button"
                         variant="ghost"
@@ -565,7 +605,7 @@ const ChatPane = forwardRef(function ChatPane(
             ) : (
               <div className="chat-composer-send">
                 <fig-menu position="top right">
-                  <fig-tooltip text="Attach media" delay="0">
+                  <fig-tooltip text="Attach media">
                     <fig-button
                       fig-menu-trigger=""
                       type="button"
@@ -600,7 +640,7 @@ const ChatPane = forwardRef(function ChatPane(
                   </fig-menu-item>
                 </fig-menu>
                 {streaming ? (
-                  <fig-tooltip text="Stop" delay="0">
+                  <fig-tooltip text="Stop">
                     <fig-button
                       type="button"
                       variant="ghost"
@@ -612,7 +652,7 @@ const ChatPane = forwardRef(function ChatPane(
                     </fig-button>
                   </fig-tooltip>
                 ) : (
-                  <fig-tooltip text="Send" delay="0">
+                  <fig-tooltip text="Send">
                     <fig-button
                       type="button"
                       variant="primary"

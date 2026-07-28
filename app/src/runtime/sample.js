@@ -1,6 +1,6 @@
 import defaultInputUrl from "../assets/default-input.png";
 
-// Load the bundled portrait so effect shaders have a useful photographic input
+// Load the bundled photo so effect shaders have a useful photographic input
 // immediately. createImageBitmap preserves the source dimensions and alpha.
 export async function makeSampleBitmap() {
   const response = await fetch(defaultInputUrl);

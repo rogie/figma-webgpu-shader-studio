@@ -23,6 +23,16 @@ export default defineConfig({
       ? "/figma-webgpu-shader-studio/"
       : "/",
   plugins: [preserveFiguiRegistrations, react()],
+  // FigUI3 registers custom elements as import side effects; keep it out of
+  // Vite's dependency optimizer so upgrades aren't served from a stale prebundle.
+  optimizeDeps: {
+    exclude: [
+      "@rogieking/figui3/fig.js",
+      "@rogieking/figui3/fig-lab.js",
+      "@rogieking/figui3/fig-editor.js",
+      "@rogieking/figui3/fig-layer.js",
+    ],
+  },
   build: {
     target: "esnext",
     cssTarget: "esnext",

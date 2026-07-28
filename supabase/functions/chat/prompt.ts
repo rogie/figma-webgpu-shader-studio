@@ -31,6 +31,7 @@ Studio context:
 Response format (required):
 1. Brief prose explaining what you changed (or answering if no code change is needed).
 2. If you update the module, end with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
+3. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.
 ${skillsBlock}
 Current module source:
 \`\`\`typescript
