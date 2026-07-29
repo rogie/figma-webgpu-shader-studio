@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import CanvasControlsOverlay from "./CanvasControlsOverlay.jsx";
+import DefaultHtmlInput from "./DefaultHtmlInput.jsx";
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
@@ -20,6 +21,9 @@ export default function Preview({
   zoomRequest,
   onPickFile,
   onDropError,
+  onStageSize,
+  inputSource = "image",
+  htmlInputRef,
 }) {
   const stageRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -28,6 +32,8 @@ export default function Preview({
   const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
   const onZoomChangeRef = useRef(onZoomChange);
   onZoomChangeRef.current = onZoomChange;
+  const onStageSizeRef = useRef(onStageSize);
+  onStageSizeRef.current = onStageSize;
   const lastZoomRequestId = useRef(null);
 
   useEffect(() => {
@@ -39,6 +45,56 @@ export default function Preview({
     lastZoomRequestId.current = zoomRequest.id;
     setView({ zoom: clampZoom(zoomRequest.zoom), x: 0, y: 0 });
   }, [zoomRequest]);
+
+  useEffect(() => {
+    const canvas = canvasRef?.current;
+    if (!canvas) return;
+    if (inputSource === "html") {
+      canvas.setAttribute("layoutsubtree", "");
+      canvas.layoutSubtree = true;
+    } else {
+      canvas.removeAttribute("layoutsubtree");
+      if ("layoutSubtree" in canvas) canvas.layoutSubtree = false;
+    }
+  }, [canvasRef, inputSource]);
+
+  useEffect(() => {
+    const stage = stageRef.current;
+    if (!stage) return;
+
+    const report = () => {
+      const rect = stage.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        onStageSizeRef.current?.(rect.width, rect.height);
+      }
+    };
+
+    report();
+    const resizeObserver = new ResizeObserver(report);
+    resizeObserver.observe(stage);
+    window.addEventListener("resize", report);
+
+    // devicePixelRatio can change when moving between displays.
+    let dprQuery = null;
+    const onDprChange = () => {
+      report();
+      watchDpr();
+    };
+    const watchDpr = () => {
+      dprQuery?.removeEventListener?.("change", onDprChange);
+      dprQuery = window.matchMedia(
+        `(resolution: ${window.devicePixelRatio || 1}dppx)`
+      );
+      dprQuery.addEventListener?.("change", onDprChange);
+    };
+    watchDpr();
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", report);
+      dprQuery?.removeEventListener?.("change", onDprChange);
+    };
+  }, []);
 
   useEffect(() => {
     const canvas = canvasRef?.current;
@@ -110,21 +166,13 @@ export default function Preview({
 
     const onWheel = (event) => {
       event.preventDefault();
-      const rect = stage.getBoundingClientRect();
-      const mx = event.clientX - rect.left - rect.width / 2;
-      const my = event.clientY - rect.top - rect.height / 2;
-
       setView((current) => {
         const nextZoom = clampZoom(
           current.zoom * Math.exp(-event.deltaY * 0.0015)
         );
         if (nextZoom === current.zoom) return current;
-        const ratio = nextZoom / current.zoom;
-        return {
-          zoom: nextZoom,
-          x: mx - (mx - current.x) * ratio,
-          y: my - (my - current.y) * ratio,
-        };
+        // Zoom from canvas center only (no cursor-anchored pan).
+        return { zoom: nextZoom, x: 0, y: 0 };
       });
     };
 
@@ -181,7 +229,13 @@ export default function Preview({
           transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
         }}
       >
-        <canvas ref={canvasRef} className="preview-canvas" />
+        <canvas ref={canvasRef} className="preview-canvas">
+          {inputSource === "html" ? (
+            <div ref={htmlInputRef} className="preview-html-input">
+              <DefaultHtmlInput />
+            </div>
+          ) : null}
+        </canvas>
       </div>
       {overlayBox && (
         <div

@@ -15,7 +15,14 @@ import {
   detectKind,
   inferFeatures,
 } from "./runtime/params.js";
-import { makeSampleBitmap } from "./runtime/sample.js";
+import {
+  HTML_IN_CANVAS_SETUP,
+  HTML_INPUT_HEIGHT,
+  HTML_INPUT_WIDTH,
+  supportsCopyElementImageToTexture,
+  supportsHtmlInCanvas,
+} from "./runtime/htmlInCanvas.js";
+import { makeSampleBitmap, makeSampleVideoBlob } from "./runtime/sample.js";
 import {
   createShader,
   deleteShader,
@@ -230,12 +237,13 @@ export default function App() {
   const [values, setValues] = useState(INITIAL_VALUES);
   const [error, setError] = useState(null);
   const [fatal, setFatal] = useState(null);
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(true);
   const [previewZoom, setPreviewZoom] = useState(1);
   const [previewZoomRequest, setPreviewZoomRequest] = useState(null);
   const requestPreviewZoom = useCallback((zoom) => {
     setPreviewZoomRequest({ zoom, id: Date.now() });
   }, []);
+  const [inputSource, setInputSource] = useState("image");
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
@@ -271,6 +279,8 @@ export default function App() {
   });
 
   const canvasRef = useRef(null);
+  const htmlInputRef = useRef(null);
+  const inputSelectRef = useRef(null);
   const viewerRef = useRef(null);
   const sidebarRef = useRef(null);
   const chatPaneRef = useRef(null);
@@ -280,9 +290,16 @@ export default function App() {
   const fileInputRef = useRef(null);
   const propertiesDialogRef = useRef(null);
   const hostRef = useRef(null);
+  const onStageSize = useCallback((width, height) => {
+    hostRef.current?.setStageCssSize?.(width, height);
+  }, []);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const valuesRef = useRef(values);
+  const runningRef = useRef(running);
+  const inputSourceRef = useRef(inputSource);
+  runningRef.current = running;
+  inputSourceRef.current = inputSource;
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const videoRef = useRef(null);
@@ -486,11 +503,18 @@ export default function App() {
         )
         .then((ok) => {
           if (!ok) {
+            runningRef.current = false;
             setRunning(false);
             return;
           }
-          host.start();
-          setRunning(true);
+          // Preserve play/pause across shader switches and recompiles.
+          if (runningRef.current) {
+            host.start();
+            setRunning(true);
+          } else {
+            host.stop();
+            setRunning(false);
+          }
         });
     },
     [setRuntimeValues]
@@ -502,7 +526,11 @@ export default function App() {
       mediaUrlRef.current = null;
     }
     if (videoRef.current) {
-      videoRef.current.pause();
+      const video = videoRef.current;
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      video.remove();
       videoRef.current = null;
     }
   }, []);
@@ -515,22 +543,70 @@ export default function App() {
 
       if (mimeType.startsWith("video/")) {
         const video = document.createElement("video");
+        // WebGPU can only import frames from a video that is in the document
+        // and has a decoded backing resource.
+        video.muted = true;
+        video.defaultMuted = true;
+        video.loop = true;
+        video.playsInline = true;
+        video.preload = "auto";
+        video.setAttribute("playsinline", "");
+        video.setAttribute("webkit-playsinline", "");
+        video.setAttribute("muted", "");
+        Object.assign(video.style, {
+          position: "fixed",
+          left: "-9999px",
+          top: "0",
+          width: "1px",
+          height: "1px",
+          opacity: "0",
+          pointerEvents: "none",
+        });
+        document.body.appendChild(video);
+
         const url = URL.createObjectURL(blob);
         mediaUrlRef.current = url;
         video.src = url;
-        video.loop = true;
-        video.muted = true;
-        video.playsInline = true;
+
         await new Promise((resolve, reject) => {
-          video.addEventListener("loadedmetadata", resolve, { once: true });
-          video.addEventListener("error", reject, { once: true });
+          video.addEventListener("loadeddata", resolve, { once: true });
+          video.addEventListener(
+            "error",
+            () => reject(new Error("Failed to load video input.")),
+            { once: true }
+          );
         });
         await video.play();
+
+        if (typeof video.requestVideoFrameCallback === "function") {
+          await new Promise((resolve) => {
+            video.requestVideoFrameCallback(() => resolve());
+          });
+        } else if (!video.videoWidth) {
+          await new Promise((resolve) => {
+            const start = performance.now();
+            const tick = () => {
+              if (video.videoWidth > 0 || performance.now() - start > 2000) {
+                resolve();
+                return;
+              }
+              requestAnimationFrame(tick);
+            };
+            tick();
+          });
+        }
+
+        if (!video.videoWidth || !video.videoHeight) {
+          throw new Error("Video input has no decoded frames yet.");
+        }
+
         videoRef.current = video;
         host.setVideoInput(video);
+        setInputSource("video");
       } else {
         const bitmap = await createImageBitmap(blob);
         host.setImageInput(bitmap);
+        setInputSource("image");
       }
       setPreviewRevision((revision) => revision + 1);
     },
@@ -543,8 +619,169 @@ export default function App() {
     clearObjectUrl();
     const bitmap = await makeSampleBitmap();
     host.setImageInput(bitmap);
+    setInputSource("image");
     setPreviewRevision((revision) => revision + 1);
   }, [clearObjectUrl]);
+
+  // Re-apply the toolbar input preference when switching shaders.
+  // Keeps Image/Video/HTML across effects; no-ops capability falls back safely.
+  const reapplyPreferredInput = useCallback(async () => {
+    const host = hostRef.current;
+    if (!host?.ready) return;
+    const preferred = inputSourceRef.current;
+
+    if (preferred === "html") {
+      if (
+        !supportsHtmlInCanvas() ||
+        !supportsCopyElementImageToTexture(host.device)
+      ) {
+        setError(HTML_IN_CANVAS_SETUP);
+        clearObjectUrl();
+        const bitmap = await makeSampleBitmap();
+        host.setImageInput(bitmap);
+        setPreviewRevision((revision) => revision + 1);
+        return;
+      }
+      clearObjectUrl();
+      setPendingMedia(null);
+      setError(null);
+      setInputSource("html");
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve))
+      );
+      const element = htmlInputRef.current;
+      if (!element) return;
+      host.setHtmlInput(element, HTML_INPUT_WIDTH, HTML_INPUT_HEIGHT);
+      setPreviewRevision((revision) => revision + 1);
+      return;
+    }
+
+    if (preferred === "video") {
+      setUploading(true);
+      try {
+        setPendingMedia(null);
+        const blob = await makeSampleVideoBlob();
+        await applyMediaBlob(blob, blob.type || "video/mp4");
+      } catch (videoError) {
+        setError(videoError.message || String(videoError));
+      } finally {
+        setUploading(false);
+      }
+      return;
+    }
+
+    clearObjectUrl();
+    setPendingMedia(null);
+    const bitmap = await makeSampleBitmap();
+    host.setImageInput(bitmap);
+    setInputSource("image");
+    setPreviewRevision((revision) => revision + 1);
+  }, [applyMediaBlob, clearObjectUrl]);
+
+  const applyInputSource = useCallback(
+    async (next) => {
+      const host = hostRef.current;
+      if (!host?.ready) return;
+      if (next === inputSourceRef.current) return;
+
+      if (next === "image") {
+        setPendingMedia(null);
+        await restoreSample();
+        return;
+      }
+
+      if (next === "video") {
+        setUploading(true);
+        try {
+          setPendingMedia(null);
+          const blob = await makeSampleVideoBlob();
+          await applyMediaBlob(blob, blob.type || "video/mp4");
+        } catch (videoError) {
+          setError(videoError.message || String(videoError));
+        } finally {
+          setUploading(false);
+        }
+        return;
+      }
+
+      if (next === "html") {
+        if (
+          !supportsHtmlInCanvas() ||
+          !supportsCopyElementImageToTexture(host.device)
+        ) {
+          setError(HTML_IN_CANVAS_SETUP);
+          return;
+        }
+        clearObjectUrl();
+        setPendingMedia(null);
+        setError(null);
+        setInputSource("html");
+      }
+    },
+    [applyMediaBlob, clearObjectUrl, restoreSample]
+  );
+
+  // Bind HTML-in-Canvas input after the canvas child mounts.
+  useEffect(() => {
+    if (inputSource !== "html" || !runtimeReady) return;
+    const host = hostRef.current;
+    const element = htmlInputRef.current;
+    if (!host?.ready || !element) return;
+    try {
+      if (
+        !supportsHtmlInCanvas() ||
+        !supportsCopyElementImageToTexture(host.device)
+      ) {
+        setError(HTML_IN_CANVAS_SETUP);
+        return;
+      }
+      host.setHtmlInput(element, HTML_INPUT_WIDTH, HTML_INPUT_HEIGHT);
+      setPreviewRevision((revision) => revision + 1);
+    } catch (htmlError) {
+      setError(htmlError.message || String(htmlError));
+    }
+  }, [inputSource, runtimeReady]);
+
+  useEffect(() => {
+    const select = inputSelectRef.current;
+    if (!select) return;
+    const onValue = (event) => {
+      const detail = event.detail;
+      const raw =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value);
+      const next = String(raw || "");
+      if (next === "image" || next === "video" || next === "html") {
+        applyInputSource(next).catch((sourceError) =>
+          setError(sourceError.message || String(sourceError))
+        );
+      }
+    };
+    select.addEventListener("input", onValue);
+    select.addEventListener("change", onValue);
+    return () => {
+      select.removeEventListener("input", onValue);
+      select.removeEventListener("change", onValue);
+    };
+  }, [applyInputSource, kind]);
+
+  // When live-editing toggles effect ↔ fill, keep the input preference but
+  // clear/reapply the host input as needed.
+  const previousKindRef = useRef(kind);
+  useEffect(() => {
+    const previous = previousKindRef.current;
+    previousKindRef.current = kind;
+    if (!runtimeReady || !hostRef.current?.ready || previous === kind) return;
+    if (kind === "fill") {
+      clearObjectUrl();
+      hostRef.current.clearInput();
+      return;
+    }
+    reapplyPreferredInput().catch((inputError) =>
+      setError(inputError.message || String(inputError))
+    );
+  }, [kind, runtimeReady, clearObjectUrl, reapplyPreferredInput]);
 
   useEffect(() => {
     if (initedRef.current || !canvasRef.current) return;
@@ -587,7 +824,7 @@ export default function App() {
         return;
       }
       if (!shader.input_path) {
-        await restoreSample();
+        await reapplyPreferredInput();
         return;
       }
       setUploading(true);
@@ -598,7 +835,7 @@ export default function App() {
         setUploading(false);
       }
     },
-    [applyMediaBlob, clearObjectUrl, restoreSample]
+    [applyMediaBlob, clearObjectUrl, reapplyPreferredInput]
   );
 
   const persistActiveDraft = useCallback(() => {
@@ -626,7 +863,6 @@ export default function App() {
       persistActiveDraft();
       pendingValuesRef.current = draft.values || {};
       hostRef.current?.stop();
-      setRunning(false);
       setError(null);
       setCurrentShader(null);
       setPresetId(draft.id);
@@ -644,14 +880,20 @@ export default function App() {
               mediaType(draft.pendingMedia)
             );
           } else {
-            await restoreSample();
+            await reapplyPreferredInput();
           }
         } else {
+          clearObjectUrl();
           hostRef.current.clearInput();
         }
       }
     },
-    [applyMediaBlob, persistActiveDraft, restoreSample]
+    [
+      applyMediaBlob,
+      clearObjectUrl,
+      persistActiveDraft,
+      reapplyPreferredInput,
+    ]
   );
 
   const createDraft = useCallback(
@@ -671,7 +913,6 @@ export default function App() {
       setDrafts((current) => [draft, ...current]);
       pendingValuesRef.current = {};
       hostRef.current?.stop();
-      setRunning(false);
       setError(null);
       setCurrentShader(null);
       setPresetId(id);
@@ -682,11 +923,14 @@ export default function App() {
       setPendingMedia(null);
       setDirty(true);
       if (hostRef.current?.ready) {
-        if (preset.kind === "effect") await restoreSample();
-        else hostRef.current.clearInput();
+        if (preset.kind === "effect") await reapplyPreferredInput();
+        else {
+          clearObjectUrl();
+          hostRef.current.clearInput();
+        }
       }
     },
-    [persistActiveDraft, restoreSample]
+    [clearObjectUrl, persistActiveDraft, reapplyPreferredInput]
   );
 
   const openCloudShader = useCallback(
@@ -694,7 +938,6 @@ export default function App() {
       persistActiveDraft();
       pendingValuesRef.current = shader.parameter_values || {};
       hostRef.current?.stop();
-      setRunning(false);
       setError(null);
       setCurrentShader(shader);
       setPresetId(cloudChoiceId(shader.id));
@@ -751,7 +994,6 @@ export default function App() {
       const preset = getPreset(id);
       pendingValuesRef.current = {};
       hostRef.current?.stop();
-      setRunning(false);
       setError(null);
       setCurrentShader(null);
       setPresetId(preset.id);
@@ -762,11 +1004,14 @@ export default function App() {
       setDirty(false);
       if (syncUrl) replaceShaderUrl(preset.id);
       if (hostRef.current?.ready) {
-        if (preset.kind === "effect") await restoreSample();
-        else hostRef.current.clearInput();
+        if (preset.kind === "effect") await reapplyPreferredInput();
+        else {
+          clearObjectUrl();
+          hostRef.current.clearInput();
+        }
       }
     },
-    [persistActiveDraft, restoreSample]
+    [clearObjectUrl, persistActiveDraft, reapplyPreferredInput]
   );
 
   const removeDraft = useCallback(
@@ -1728,6 +1973,9 @@ export default function App() {
               onControlChange={updateControl}
               onZoomChange={setPreviewZoom}
               zoomRequest={previewZoomRequest}
+              inputSource={kind === "effect" ? inputSource : "image"}
+              htmlInputRef={htmlInputRef}
+              onStageSize={onStageSize}
               onPickFile={(file) =>
                 pickFile(file).catch((dropError) =>
                   setError(dropError.message || String(dropError))
@@ -1771,16 +2019,31 @@ export default function App() {
               </fig-menu-item>
             </fig-menu>
             {kind === "effect" && (
-              <fig-tooltip text="Upload input">
-                <fig-button
-                  variant="ghost"
-                  icon="true"
-                  disabled={uploading}
-                  onClick={() => fileInputRef.current?.click()}
-                >
-                  <fig-icon name="upload" />
-                </fig-button>
-              </fig-tooltip>
+              <>
+                <fig-select
+                  ref={inputSelectRef}
+                  class="tools-input-source"
+                  position="top left"
+                  value={inputSource}
+                  options={JSON.stringify([
+                    { value: "image", label: "Image" },
+                    { value: "video", label: "Video" },
+                    { value: "html", label: "HTML" },
+                  ])}
+                  aria-label="Input source"
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+                <fig-tooltip text="Upload input">
+                  <fig-button
+                    variant="ghost"
+                    icon="true"
+                    disabled={uploading || inputSource === "html"}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <fig-icon name="upload" />
+                  </fig-button>
+                </fig-tooltip>
+              </>
             )}
           </div>
         </section>

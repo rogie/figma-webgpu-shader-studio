@@ -2,7 +2,10 @@
 // module contract (`setup(device, frame)` once, `render(device, frame)` per
 // animation frame). See skills/v3.md.tmpl for the frame field semantics.
 
+import { cssSizeToDevicePixels } from "./dpi.js";
+
 const MAX_DIM = 2048;
+const DEFAULT_FILL_CSS = 512;
 
 export class ShaderHost {
   constructor(canvas, { onError, onStatus } = {}) {
@@ -16,9 +19,14 @@ export class ShaderHost {
 
     this.setupFn = null;
     this.renderFn = null;
+    this.isFill = false;
 
     this.inputTexture = null;
     this.video = null; // HTMLVideoElement when the input is a video
+    this.htmlElement = null; // canvas child Element for HTML-in-Canvas input
+    this.htmlCssSize = null; // logical CSS size of the HTML subject
+    this.stageCssSize = { width: DEFAULT_FILL_CSS, height: DEFAULT_FILL_CSS };
+    this._onHtmlPaint = this._onHtmlPaint.bind(this);
 
     this.frame = {
       input: null,
@@ -83,11 +91,95 @@ export class ShaderHost {
     };
   }
 
-  setSize(w, h) {
+  /**
+   * Set the canvas buffer size in device pixels.
+   * Optionally set CSS display size so backing store matches devicePixelRatio
+   * (fills / HTML). Image/video effects leave CSS unset (1 buffer px ≈ 1 CSS px
+   * before object-fit), matching Figma's input-sized effect targets.
+   */
+  setSize(w, h, { cssWidth, cssHeight, clearCssSize = false } = {}) {
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
+    const changed = this.canvas.width !== w || this.canvas.height !== h;
     if (this.canvas.width !== w) this.canvas.width = w;
     if (this.canvas.height !== h) this.canvas.height = h;
+
+    if (cssWidth != null && cssHeight != null) {
+      this.canvas.style.width = `${cssWidth}px`;
+      this.canvas.style.height = `${cssHeight}px`;
+    } else if (clearCssSize) {
+      this.canvas.style.removeProperty("width");
+      this.canvas.style.removeProperty("height");
+    }
+    return changed;
+  }
+
+  setStageCssSize(cssWidth, cssHeight) {
+    const width = Math.max(1, cssWidth || DEFAULT_FILL_CSS);
+    const height = Math.max(1, cssHeight || DEFAULT_FILL_CSS);
+    this.stageCssSize = { width, height };
+    if (!this.ready) return;
+    if (this.isFill) {
+      this.resizeFill(width, height);
+      return;
+    }
+    // HTML subjects stay at a fixed CSS size; re-sync when DPR changes.
+    if (this.htmlElement && this.htmlCssSize) {
+      this._syncHtmlDpi();
+    }
+  }
+
+  _syncHtmlDpi() {
+    if (!this.htmlElement || !this.htmlCssSize) return false;
+    const size = cssSizeToDevicePixels(
+      this.htmlCssSize.width,
+      this.htmlCssSize.height,
+      MAX_DIM
+    );
+    if (
+      this.inputTexture &&
+      this.inputTexture.width === size.width &&
+      this.inputTexture.height === size.height &&
+      this.canvas.width === size.width &&
+      this.canvas.height === size.height
+    ) {
+      return false;
+    }
+    this._ensureInputTexture(size.width, size.height, {
+      width: size.cssWidth,
+      height: size.cssHeight,
+    });
+    this.canvas.requestPaint?.();
+    try {
+      this._uploadHtmlFrame();
+    } catch {
+      /* wait for paint */
+    }
+    return true;
+  }
+
+  setFillSize(cssWidth, cssHeight) {
+    const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
+    return this.setSize(size.width, size.height, {
+      cssWidth: size.cssWidth,
+      cssHeight: size.cssHeight,
+    });
+  }
+
+  resizeFill(cssWidth, cssHeight) {
+    if (!this.ready || !this.isFill) return false;
+    const changed = this.setFillSize(cssWidth, cssHeight);
+    if (!changed || !this.renderFn) return changed;
+    this._teardownState();
+    try {
+      this.frame.output = this.context.getCurrentTexture();
+      if (this.setupFn) this.setupFn(this.device, this.frame);
+      this.frame.output = this.context.getCurrentTexture();
+      this.renderFn(this.device, this.frame);
+    } catch (err) {
+      this.onError(err && err.message ? err.message : String(err));
+    }
+    return true;
   }
 
   _teardownState() {
@@ -105,76 +197,197 @@ export class ShaderHost {
     this.frame.state = {};
   }
 
-  // Replace the input from an ImageBitmap / VideoFrame source (static).
-  setImageInput(source, width, height) {
+  _clearInputResources() {
+    this._unbindHtmlPaint();
     if (this.inputTexture) {
       this.inputTexture.destroy();
       this.inputTexture = null;
     }
     this.video = null;
-    if (!source) {
-      this.frame.input = null;
-      return;
+    this.htmlElement = null;
+    this.htmlCssSize = null;
+    this.frame.input = null;
+  }
+
+  _ensureInputTexture(w, h, displayCss = null) {
+    w = Math.max(1, Math.round(w));
+    h = Math.max(1, Math.round(h));
+    if (
+      !this.inputTexture ||
+      this.inputTexture.width !== w ||
+      this.inputTexture.height !== h
+    ) {
+      if (this.inputTexture) {
+        this.inputTexture.destroy();
+        this.inputTexture = null;
+      }
+      this.inputTexture = this.device.createTexture({
+        size: [w, h],
+        format: "rgba8unorm",
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
     }
+    this.frame.input = this.inputTexture;
+    if (displayCss) {
+      this.setSize(w, h, {
+        cssWidth: displayCss.width,
+        cssHeight: displayCss.height,
+      });
+    } else {
+      this.setSize(w, h, { clearCssSize: true });
+    }
+  }
+
+  // Replace the input from an ImageBitmap / VideoFrame source (static).
+  setImageInput(source, width, height) {
+    this._clearInputResources();
+    if (!source) return;
     let w = width || source.width;
     let h = height || source.height;
     const scale = Math.min(1, MAX_DIM / Math.max(w, h));
     w = Math.max(1, Math.round(w * scale));
     h = Math.max(1, Math.round(h * scale));
 
-    this.inputTexture = this.device.createTexture({
-      size: [w, h],
-      format: "rgba8unorm",
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    this._ensureInputTexture(w, h);
     this.device.queue.copyExternalImageToTexture(
       { source, flipY: false },
       { texture: this.inputTexture, premultipliedAlpha: true },
       [w, h]
     );
-    this.frame.input = this.inputTexture;
-    this.setSize(w, h);
   }
 
   setVideoInput(video) {
-    if (this.inputTexture) {
-      this.inputTexture.destroy();
-      this.inputTexture = null;
-    }
+    this._clearInputResources();
     this.video = video;
     const w = Math.min(MAX_DIM, video.videoWidth || 1024);
     const h = Math.min(MAX_DIM, video.videoHeight || 1024);
-    this.inputTexture = this.device.createTexture({
-      size: [w, h],
-      format: "rgba8unorm",
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.RENDER_ATTACHMENT,
+    this._ensureInputTexture(w, h);
+    this._uploadVideoFrame();
+  }
+
+  // HTML-in-Canvas: `element` must be a direct child of this.canvas with
+  // layoutsubtree enabled. Copied into frame.input each paint / frame.
+  // Logical CSS size × devicePixelRatio → texture / canvas buffer.
+  setHtmlInput(element, width, height) {
+    if (!element) {
+      this._clearInputResources();
+      return;
+    }
+    if (typeof this.device.queue.copyElementImageToTexture !== "function") {
+      throw new Error(
+        "copyElementImageToTexture is unavailable. Enable chrome://flags/#canvas-draw-element."
+      );
+    }
+    this._clearInputResources();
+    this.htmlElement = element;
+    const cssWidth =
+      width ||
+      Math.max(1, Math.round(element.offsetWidth || element.clientWidth || 960));
+    const cssHeight =
+      height ||
+      Math.max(
+        1,
+        Math.round(element.offsetHeight || element.clientHeight || 720)
+      );
+    this.htmlCssSize = { width: cssWidth, height: cssHeight };
+    const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
+    this._ensureInputTexture(size.width, size.height, {
+      width: size.cssWidth,
+      height: size.cssHeight,
     });
-    this.frame.input = this.inputTexture;
-    this.setSize(w, h);
+    this._bindHtmlPaint();
+    this.canvas.requestPaint?.();
+    try {
+      this._uploadHtmlFrame();
+    } catch {
+      // First snapshot may not exist until the next paint event.
+    }
+  }
+
+  _bindHtmlPaint() {
+    this.canvas.addEventListener("paint", this._onHtmlPaint);
+  }
+
+  _unbindHtmlPaint() {
+    this.canvas.removeEventListener("paint", this._onHtmlPaint);
+    if (this.canvas.onpaint === this._onHtmlPaint) {
+      this.canvas.onpaint = null;
+    }
+  }
+
+  _onHtmlPaint() {
+    try {
+      this._uploadHtmlFrame();
+      if (!this.running && this.renderFn) {
+        this.frame.output = this.context.getCurrentTexture();
+        this.renderFn(this.device, this.frame);
+      }
+    } catch (err) {
+      this.onError(err && err.message ? err.message : String(err));
+    }
   }
 
   _uploadVideoFrame() {
-    if (!this.video || this.video.readyState < 2) return;
-    this.device.queue.copyExternalImageToTexture(
-      { source: this.video, flipY: false },
-      { texture: this.inputTexture, premultipliedAlpha: true },
-      [this.inputTexture.width, this.inputTexture.height]
-    );
+    const video = this.video;
+    if (!video || !this.inputTexture) return;
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
+    if (!video.videoWidth || !video.videoHeight) return;
+    try {
+      this.device.queue.copyExternalImageToTexture(
+        { source: video, flipY: false },
+        { texture: this.inputTexture, premultipliedAlpha: true },
+        [this.inputTexture.width, this.inputTexture.height]
+      );
+    } catch {
+      // Skip frames that aren't importable yet (no backing resource).
+    }
+  }
+
+  _uploadHtmlFrame() {
+    if (!this.htmlElement || !this.inputTexture) return;
+    const queue = this.device.queue;
+    const texture = this.inputTexture;
+    const width = texture.width;
+    const height = texture.height;
+    // Chrome 150+: dictionary form with nested destination.texture.
+    // Older builds accepted (element, { texture }) or (element, w, h, { texture }).
+    try {
+      queue.copyElementImageToTexture(
+        { source: this.htmlElement },
+        {
+          destination: { texture, premultipliedAlpha: true },
+          width,
+          height,
+        }
+      );
+      return;
+    } catch {
+      /* try legacy signatures below */
+    }
+    try {
+      queue.copyElementImageToTexture(this.htmlElement, {
+        texture,
+        premultipliedAlpha: true,
+      });
+      return;
+    } catch {
+      /* try older 4-arg form */
+    }
+    try {
+      queue.copyElementImageToTexture(this.htmlElement, width, height, {
+        texture,
+        premultipliedAlpha: true,
+      });
+    } catch {
+      // Skip until a paint snapshot exists / API is available.
+    }
   }
 
   clearInput() {
-    if (this.inputTexture) {
-      this.inputTexture.destroy();
-      this.inputTexture = null;
-    }
-    this.video = null;
-    this.frame.input = null;
+    this._clearInputResources();
   }
 
   setParams(params) {
@@ -185,14 +398,15 @@ export class ShaderHost {
   async setModule({ setup, render }, { isFill } = {}) {
     this.setupFn = setup;
     this.renderFn = render;
+    this.isFill = Boolean(isFill);
     this._teardownState();
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
 
-    // Fills have no input; keep the canvas at a sensible default when no media.
-    if (isFill && !this.frame.input) {
-      this.setSize(1024, 1024);
+    // Fills have no input — size the target to the preview stage at device DPI.
+    if (this.isFill && !this.frame.input) {
+      this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
     }
 
     this.device.pushErrorScope("validation");
@@ -241,6 +455,7 @@ export class ShaderHost {
 
     try {
       if (this.video) this._uploadVideoFrame();
+      if (this.htmlElement) this._uploadHtmlFrame();
       this.frame.output = this.context.getCurrentTexture();
       this.renderFn(this.device, this.frame);
     } catch (err) {
