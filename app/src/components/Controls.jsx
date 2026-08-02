@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { showsInPropertyPanel } from "../lib/canvasControls.js";
 
 function toHexByte(value) {
@@ -118,6 +118,7 @@ function PropskitTextControl({ name, def, value, onChange }) {
 
 function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   const sliderRef = useRef(null);
+  const latestValue = value ?? def.defaultValue ?? 0;
 
   useEffect(() => {
     const slider = sliderRef.current;
@@ -136,13 +137,23 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
     };
   }, [name, onCommit, onInputValue]);
 
+  // Keep value off the React props path. Rewriting `value` after every commit
+  // retriggers propskit/fig-slider attribute sync and drops focus.
+  useLayoutEffect(() => {
+    const slider = sliderRef.current;
+    if (!slider) return;
+    const next = String(latestValue);
+    if (slider.getAttribute("value") === next) return;
+    if (slider.matches(":focus-within")) return;
+    slider.setAttribute("value", next);
+  }, [latestValue]);
+
   return (
     <propskit-slider
       ref={sliderRef}
       label={def.label || name}
       direction="horizontal"
       size="large"
-      value={value ?? def.defaultValue ?? 0}
       default={def.defaultValue}
       min={def.min ?? 0}
       max={def.max ?? 1}

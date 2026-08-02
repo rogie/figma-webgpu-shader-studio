@@ -232,6 +232,7 @@ export default function AccountMenu({
         position="top right"
         offset="8 0"
         variant="popover"
+        theme="menu"
         closedby="any"
         onClose={() => setSettingsOpen(false)}
         onCancel={() => setSettingsOpen(false)}
@@ -251,23 +252,20 @@ export default function AccountMenu({
               <fig-segment
                 value="light"
                 selected={theme === "light"}
-                aria-label="Light theme"
               >
-                <fig-icon name="sun" />
+                Light
               </fig-segment>
               <fig-segment
                 value="dark"
                 selected={theme === "dark"}
-                aria-label="Dark theme"
               >
-                <fig-icon name="moon" />
+                Dark
               </fig-segment>
             </fig-segmented-control>
           </fig-field>
 
-          <div className="settings-keys">
-            <h4>AI API keys</h4>
-            <p className="settings-keys-note">
+          <fig-group name="AI API keys">
+            <p>
               Keys stay on this device and are sent only to the chat proxy when
               you message. They are never stored in Supabase.
             </p>
@@ -307,7 +305,7 @@ export default function AccountMenu({
                 dangerouslySetInnerHTML={{ __html: "" }}
               />
             </fig-field>
-          </div>
+          </fig-group>
         </fig-content>
         <fig-footer>
           <fig-button

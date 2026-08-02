@@ -527,11 +527,13 @@ const ChatPane = forwardRef(function ChatPane(
               {prose && <div className="chat-prose">{prose}</div>}
               {(message.applied || (code && message.pending)) && (
                 <div className="chat-code-note">
-                  <span>
-                    {message.applied
-                      ? "Updated module applied to editor."
-                      : "Writing module…"}
-                  </span>
+                  {message.applied ? (
+                    <span>Updated module applied to editor.</span>
+                  ) : (
+                    <fig-shimmer aria-label="Writing module">
+                      <span>Writing module…</span>
+                    </fig-shimmer>
+                  )}
                   {index === undoMessageIndex && message.applied && (
                     <fig-tooltip text="Undo apply">
                       <fig-button
