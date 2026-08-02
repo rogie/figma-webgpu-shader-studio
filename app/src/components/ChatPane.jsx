@@ -1,4 +1,5 @@
 import {
+  Fragment,
   forwardRef,
   useEffect,
   useImperativeHandle,
@@ -168,20 +169,21 @@ const ChatPane = forwardRef(function ChatPane(
   useEffect(() => {
     const control = modelControlRef.current;
     if (!control) return;
-    const onInput = (event) => {
-      const target = event.target?.closest?.("fig-dropdown") || event.target;
-      const value = target?.value ?? event.detail ?? event.target?.value;
-      const next = CHAT_MODELS.find((entry) => entry.id === value);
+    const onChange = (event) => {
+      const detail = event.detail;
+      const value =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target?.value);
+      const next = CHAT_MODELS.find((entry) => entry.id === String(value || ""));
       if (next) {
         setModel(next);
         setError("");
       }
     };
-    control.addEventListener("input", onInput);
-    control.addEventListener("change", onInput);
+    control.addEventListener("change", onChange);
     return () => {
-      control.removeEventListener("input", onInput);
-      control.removeEventListener("change", onInput);
+      control.removeEventListener("change", onChange);
     };
   }, []);
 
@@ -437,24 +439,28 @@ const ChatPane = forwardRef(function ChatPane(
     }
   };
 
-  const modelDropdown = (
-    <fig-dropdown
+  const modelSelect = (
+    <fig-select
       ref={modelControlRef}
+      class="chat-model-select"
       label="Model"
-      experimental="modern"
+      position="top left"
       value={model.id}
       disabled={streaming ? "" : undefined}
     >
-      {CHAT_MODEL_GROUPS.map((group) => (
-        <optgroup key={group.label} label={group.label}>
-          {group.models.map((entry) => (
-            <option key={entry.id} value={entry.id}>
-              {entry.label}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </fig-dropdown>
+      <fig-select-options>
+        {CHAT_MODEL_GROUPS.map((group) => (
+          <Fragment key={group.label}>
+            <fig-menu-separator label={group.label} />
+            {group.models.map((entry) => (
+              <fig-select-option key={entry.id} value={entry.id}>
+                {entry.label}
+              </fig-select-option>
+            ))}
+          </Fragment>
+        ))}
+      </fig-select-options>
+    </fig-select>
   );
 
   return (
@@ -593,7 +599,7 @@ const ChatPane = forwardRef(function ChatPane(
             </>
           ) : null}
           <div className="chat-composer-actions">
-            {modelDropdown}
+            {modelSelect}
             {!hasKey ? (
               <fig-button
                 type="button"

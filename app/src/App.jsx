@@ -22,7 +22,11 @@ import {
   supportsCopyElementImageToTexture,
   supportsHtmlInCanvas,
 } from "./runtime/htmlInCanvas.js";
-import { makeSampleBitmap, makeSampleVideoBlob } from "./runtime/sample.js";
+import {
+  makeSampleBitmap,
+  makeSampleVectorBitmap,
+  makeSampleVideoBlob,
+} from "./runtime/sample.js";
 import {
   createShader,
   deleteShader,
@@ -40,6 +44,10 @@ import {
 } from "./services/shaders.js";
 
 import logo from "./assets/logo.svg";
+
+// FigUI3 builds light-DOM internals; a stable opaque marker keeps React from
+// wiping those nodes when the parent re-renders.
+const opaqueContent = { __html: "" };
 
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
@@ -68,12 +76,58 @@ const THUMBNAIL_COLORS = [
   ["#3c096c", "#ff9e00"],
 ];
 
-function thumbnailData(index, label) {
+// Display thumbnails as blob: object URLs. Placeholders are cached; captures are
+// revoked when replaced. localStorage still needs data: URLs (see persist map).
+const placeholderThumbnailUrls = new Map();
+
+function placeholderThumbnailUrl(index, label) {
+  const key = `${index}\0${label}`;
+  let url = placeholderThumbnailUrls.get(key);
+  if (url) return url;
   const [from, to] = THUMBNAIL_COLORS[index % THUMBNAIL_COLORS.length];
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs><rect width="64" height="64" rx="8" fill="url(#g)"/><circle cx="${18 + (index % 3) * 12}" cy="${20 + (index % 2) * 22}" r="${8 + index}" fill="rgba(255,255,255,.38)"/><text x="32" y="37" text-anchor="middle" font-family="system-ui" font-size="10" font-weight="700" fill="white">${label
     .slice(0, 2)
     .toUpperCase()}</text></svg>`;
-  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+  url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+  placeholderThumbnailUrls.set(key, url);
+  return url;
+}
+
+function dataUrlToObjectUrl(dataUrl) {
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) return null;
+  const header = dataUrl.slice(0, comma);
+  const data = dataUrl.slice(comma + 1);
+  const mime = /data:(.*?);/.exec(header)?.[1] || "application/octet-stream";
+  let bytes;
+  if (header.includes(";base64")) {
+    const binary = atob(data);
+    bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  } else {
+    bytes = new TextEncoder().encode(decodeURIComponent(data));
+  }
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
+    reader.readAsDataURL(blob);
+  });
+}
+
+function revokeThumbnailUrl(url) {
+  if (
+    typeof url === "string" &&
+    url.startsWith("blob:") &&
+    ![...placeholderThumbnailUrls.values()].includes(url)
+  ) {
+    URL.revokeObjectURL(url);
+  }
 }
 
 function mergeValues(definitions, candidate = {}) {
@@ -138,13 +192,22 @@ function savedDrafts() {
   }
 }
 
-function writeDrafts(drafts, thumbnails = {}) {
+/** Persist only serializable data: URLs (blob: URLs die on reload). */
+function writeDrafts(drafts, thumbnailDataUrls = {}) {
   localStorage.setItem(
     DRAFTS_STORAGE_KEY,
     JSON.stringify(
-      drafts.map((draft) =>
-        serializeDraft(draft, thumbnails[draft.id] || draft.thumbnail || null)
-      )
+      drafts.map((draft) => {
+        const stored = thumbnailDataUrls[draft.id];
+        const thumbnail =
+          typeof stored === "string" && stored.startsWith("data:")
+            ? stored
+            : typeof draft.thumbnail === "string" &&
+                draft.thumbnail.startsWith("data:")
+              ? draft.thumbnail
+              : null;
+        return serializeDraft(draft, thumbnail);
+      })
     )
   );
 }
@@ -244,6 +307,7 @@ export default function App() {
     setPreviewZoomRequest({ zoom, id: Date.now() });
   }, []);
   const [inputSource, setInputSource] = useState("image");
+  const [effectVisible, setEffectVisible] = useState(true);
   const [runtimeReady, setRuntimeReady] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
@@ -269,14 +333,29 @@ export default function App() {
     const initial = Object.fromEntries(
       PRESETS.map((preset, index) => [
         preset.id,
-        thumbnailData(index, preset.name),
+        placeholderThumbnailUrl(index, preset.name),
       ])
     );
     for (const draft of savedDrafts()) {
-      if (draft.thumbnail) initial[draft.id] = draft.thumbnail;
+      if (draft.thumbnail?.startsWith("data:")) {
+        const url = dataUrlToObjectUrl(draft.thumbnail);
+        if (url) initial[draft.id] = url;
+      }
     }
     return initial;
   });
+  // data: mirrors of capture blobs for localStorage / upload (blob: is display-only).
+  const thumbnailDataUrlsRef = useRef(null);
+  if (thumbnailDataUrlsRef.current === null) {
+    const initial = {};
+    for (const draft of savedDrafts()) {
+      if (draft.thumbnail?.startsWith("data:")) {
+        initial[draft.id] = draft.thumbnail;
+      }
+    }
+    thumbnailDataUrlsRef.current = initial;
+  }
+  const thumbnailCaptureGenRef = useRef(0);
 
   const canvasRef = useRef(null);
   const htmlInputRef = useRef(null);
@@ -298,6 +377,7 @@ export default function App() {
   const valuesRef = useRef(values);
   const runningRef = useRef(running);
   const inputSourceRef = useRef(inputSource);
+  const inputApplyGenRef = useRef(0);
   runningRef.current = running;
   inputSourceRef.current = inputSource;
   const pendingValuesRef = useRef(null);
@@ -337,7 +417,7 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    writeDrafts(drafts, thumbnails);
+    writeDrafts(drafts, thumbnailDataUrlsRef.current);
   }, [drafts, thumbnails]);
 
   useEffect(() => {
@@ -406,7 +486,7 @@ export default function App() {
             },
             ...current,
           ];
-      writeDrafts(next);
+      writeDrafts(next, thumbnailDataUrlsRef.current);
       localStorage.setItem(ACTIVE_DRAFT_STORAGE_KEY, session.presetId);
     };
     window.addEventListener("beforeunload", flush);
@@ -535,10 +615,17 @@ export default function App() {
     }
   }, []);
 
+  const isInputApplyCurrent = useCallback(
+    (generation) =>
+      generation == null || generation === inputApplyGenRef.current,
+    []
+  );
+
   const applyMediaBlob = useCallback(
-    async (blob, mimeType = blob.type) => {
+    async (blob, mimeType = blob.type, generation = null) => {
       const host = hostRef.current;
-      if (!host?.ready) return;
+      if (!host?.ready) return false;
+      if (!isInputApplyCurrent(generation)) return false;
       clearObjectUrl();
 
       if (mimeType.startsWith("video/")) {
@@ -576,6 +663,17 @@ export default function App() {
             { once: true }
           );
         });
+        if (!isInputApplyCurrent(generation)) {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+          if (mediaUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            mediaUrlRef.current = null;
+          }
+          return false;
+        }
         await video.play();
 
         if (typeof video.requestVideoFrameCallback === "function") {
@@ -596,6 +694,18 @@ export default function App() {
           });
         }
 
+        if (!isInputApplyCurrent(generation)) {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+          if (mediaUrlRef.current === url) {
+            URL.revokeObjectURL(url);
+            mediaUrlRef.current = null;
+          }
+          return false;
+        }
+
         if (!video.videoWidth || !video.videoHeight) {
           throw new Error("Video input has no decoded frames yet.");
         }
@@ -605,26 +715,60 @@ export default function App() {
         setInputSource("video");
       } else {
         const bitmap = await createImageBitmap(blob);
+        if (!isInputApplyCurrent(generation)) {
+          bitmap.close?.();
+          return false;
+        }
         host.setImageInput(bitmap);
         setInputSource("image");
       }
       setPreviewRevision((revision) => revision + 1);
+      return true;
     },
-    [clearObjectUrl]
+    [clearObjectUrl, isInputApplyCurrent]
   );
 
-  const restoreSample = useCallback(async () => {
-    const host = hostRef.current;
-    if (!host?.ready) return;
-    clearObjectUrl();
-    const bitmap = await makeSampleBitmap();
-    host.setImageInput(bitmap);
-    setInputSource("image");
-    setPreviewRevision((revision) => revision + 1);
-  }, [clearObjectUrl]);
+  const restoreSample = useCallback(
+    async (generation = null) => {
+      const host = hostRef.current;
+      if (!host?.ready) return false;
+      if (!isInputApplyCurrent(generation)) return false;
+      clearObjectUrl();
+      const bitmap = await makeSampleBitmap();
+      if (!isInputApplyCurrent(generation)) {
+        bitmap.close?.();
+        return false;
+      }
+      host.setImageInput(bitmap);
+      setInputSource("image");
+      setPreviewRevision((revision) => revision + 1);
+      return true;
+    },
+    [clearObjectUrl, isInputApplyCurrent]
+  );
+
+  const applyVectorSample = useCallback(
+    async (generation = null) => {
+      const host = hostRef.current;
+      if (!host?.ready) return false;
+      if (!isInputApplyCurrent(generation)) return false;
+      clearObjectUrl();
+      setPendingMedia(null);
+      const bitmap = await makeSampleVectorBitmap();
+      if (!isInputApplyCurrent(generation)) {
+        bitmap.close?.();
+        return false;
+      }
+      host.setImageInput(bitmap);
+      setInputSource("vector");
+      setPreviewRevision((revision) => revision + 1);
+      return true;
+    },
+    [clearObjectUrl, isInputApplyCurrent]
+  );
 
   // Re-apply the toolbar input preference when switching shaders.
-  // Keeps Image/Video/HTML across effects; no-ops capability falls back safely.
+  // Keeps Image/Video/HTML/Vector across effects; no-ops fall back safely.
   const reapplyPreferredInput = useCallback(async () => {
     const host = hostRef.current;
     if (!host?.ready) return;
@@ -639,6 +783,7 @@ export default function App() {
         clearObjectUrl();
         const bitmap = await makeSampleBitmap();
         host.setImageInput(bitmap);
+        setInputSource("image");
         setPreviewRevision((revision) => revision + 1);
         return;
       }
@@ -657,15 +802,30 @@ export default function App() {
     }
 
     if (preferred === "video") {
+      const generation = ++inputApplyGenRef.current;
       setUploading(true);
       try {
         setPendingMedia(null);
         const blob = await makeSampleVideoBlob();
-        await applyMediaBlob(blob, blob.type || "video/mp4");
+        await applyMediaBlob(blob, blob.type || "video/mp4", generation);
       } catch (videoError) {
-        setError(videoError.message || String(videoError));
+        if (isInputApplyCurrent(generation)) {
+          setError(videoError.message || String(videoError));
+        }
       } finally {
-        setUploading(false);
+        if (isInputApplyCurrent(generation)) setUploading(false);
+      }
+      return;
+    }
+
+    if (preferred === "vector") {
+      const generation = ++inputApplyGenRef.current;
+      try {
+        await applyVectorSample(generation);
+      } catch (vectorError) {
+        if (isInputApplyCurrent(generation)) {
+          setError(vectorError.message || String(vectorError));
+        }
       }
       return;
     }
@@ -676,17 +836,61 @@ export default function App() {
     host.setImageInput(bitmap);
     setInputSource("image");
     setPreviewRevision((revision) => revision + 1);
-  }, [applyMediaBlob, clearObjectUrl]);
+  }, [applyMediaBlob, applyVectorSample, clearObjectUrl, isInputApplyCurrent]);
 
   const applyInputSource = useCallback(
     async (next) => {
       const host = hostRef.current;
       if (!host?.ready) return;
-      if (next === inputSourceRef.current) return;
+
+      const syncSelect = (value) => {
+        const select = inputSelectRef.current;
+        if (select && select.value !== value) select.value = value;
+      };
+
+      // HTML unsupported: keep the current source. Snap the select back —
+      // React won't re-set `value` if state never changed, so the control
+      // would otherwise stay on HTML and block switching "back" to video.
+      if (next === "html") {
+        if (
+          !supportsHtmlInCanvas() ||
+          !supportsCopyElementImageToTexture(host.device)
+        ) {
+          setError(HTML_IN_CANVAS_SETUP);
+          syncSelect(inputSourceRef.current);
+          return;
+        }
+        ++inputApplyGenRef.current;
+        clearObjectUrl();
+        setPendingMedia(null);
+        setError(null);
+        setInputSource("html");
+        return;
+      }
+
+      const generation = ++inputApplyGenRef.current;
+      // Keep the controlled select in sync during async loads so React does
+      // not snap the value back to the previous source mid-switch.
+      setInputSource(next);
+      setError(null);
 
       if (next === "image") {
         setPendingMedia(null);
-        await restoreSample();
+        await restoreSample(generation);
+        return;
+      }
+
+      if (next === "vector") {
+        setUploading(true);
+        try {
+          await applyVectorSample(generation);
+        } catch (vectorError) {
+          if (isInputApplyCurrent(generation)) {
+            setError(vectorError.message || String(vectorError));
+          }
+        } finally {
+          if (isInputApplyCurrent(generation)) setUploading(false);
+        }
         return;
       }
 
@@ -695,30 +899,24 @@ export default function App() {
         try {
           setPendingMedia(null);
           const blob = await makeSampleVideoBlob();
-          await applyMediaBlob(blob, blob.type || "video/mp4");
+          if (!isInputApplyCurrent(generation)) return;
+          await applyMediaBlob(blob, blob.type || "video/mp4", generation);
         } catch (videoError) {
-          setError(videoError.message || String(videoError));
+          if (isInputApplyCurrent(generation)) {
+            setError(videoError.message || String(videoError));
+          }
         } finally {
-          setUploading(false);
+          if (isInputApplyCurrent(generation)) setUploading(false);
         }
-        return;
-      }
-
-      if (next === "html") {
-        if (
-          !supportsHtmlInCanvas() ||
-          !supportsCopyElementImageToTexture(host.device)
-        ) {
-          setError(HTML_IN_CANVAS_SETUP);
-          return;
-        }
-        clearObjectUrl();
-        setPendingMedia(null);
-        setError(null);
-        setInputSource("html");
       }
     },
-    [applyMediaBlob, clearObjectUrl, restoreSample]
+    [
+      applyMediaBlob,
+      applyVectorSample,
+      clearObjectUrl,
+      isInputApplyCurrent,
+      restoreSample,
+    ]
   );
 
   // Bind HTML-in-Canvas input after the canvas child mounts.
@@ -752,16 +950,20 @@ export default function App() {
           ? detail.value
           : (detail ?? event.target.value);
       const next = String(raw || "");
-      if (next === "image" || next === "video" || next === "html") {
+      if (
+        next === "image" ||
+        next === "vector" ||
+        next === "video" ||
+        next === "html"
+      ) {
         applyInputSource(next).catch((sourceError) =>
           setError(sourceError.message || String(sourceError))
         );
       }
     };
-    select.addEventListener("input", onValue);
+    // fig-select emits both input and change; listen once to avoid stacked loads.
     select.addEventListener("change", onValue);
     return () => {
-      select.removeEventListener("input", onValue);
       select.removeEventListener("change", onValue);
     };
   }, [applyInputSource, kind]);
@@ -786,7 +988,16 @@ export default function App() {
   useEffect(() => {
     if (initedRef.current || !canvasRef.current) return;
     initedRef.current = true;
-    const host = new ShaderHost(canvasRef.current, { onError: setError });
+    const host = new ShaderHost(canvasRef.current, {
+      onError: (message) => {
+        setError(message);
+        // Host stops its RAF loop on render errors — keep the play toggle in sync.
+        if (message) {
+          runningRef.current = false;
+          setRunning(false);
+        }
+      },
+    });
     hostRef.current = host;
 
     (async () => {
@@ -827,15 +1038,25 @@ export default function App() {
         await reapplyPreferredInput();
         return;
       }
+      const generation = ++inputApplyGenRef.current;
       setUploading(true);
       try {
         const blob = await downloadAsset(shader.input_path);
-        await applyMediaBlob(blob, shader.input_mime_type || blob.type);
+        await applyMediaBlob(
+          blob,
+          shader.input_mime_type || blob.type,
+          generation
+        );
       } finally {
-        setUploading(false);
+        if (isInputApplyCurrent(generation)) setUploading(false);
       }
     },
-    [applyMediaBlob, clearObjectUrl, reapplyPreferredInput]
+    [
+      applyMediaBlob,
+      clearObjectUrl,
+      isInputApplyCurrent,
+      reapplyPreferredInput,
+    ]
   );
 
   const persistActiveDraft = useCallback(() => {
@@ -1019,10 +1240,12 @@ export default function App() {
       setDrafts((current) => current.filter((item) => item.id !== draft.id));
       setThumbnails((current) => {
         if (!(draft.id in current)) return current;
+        revokeThumbnailUrl(current[draft.id]);
         const next = { ...current };
         delete next[draft.id];
         return next;
       });
+      delete thumbnailDataUrlsRef.current[draft.id];
       if (presetId === draft.id) {
         choosePreset("dither").catch((presetError) =>
           setError(presetError.message || String(presetError))
@@ -1168,16 +1391,18 @@ export default function App() {
       if (!mimeType) {
         throw new Error("Choose a supported image or video file.");
       }
+      const generation = ++inputApplyGenRef.current;
       setUploading(true);
       try {
-        await applyMediaBlob(file, mimeType);
+        const applied = await applyMediaBlob(file, mimeType, generation);
+        if (!applied) return;
         setPendingMedia(file);
         setDirty(true);
       } finally {
-        setUploading(false);
+        if (isInputApplyCurrent(generation)) setUploading(false);
       }
     },
-    [applyMediaBlob]
+    [applyMediaBlob, isInputApplyCurrent]
   );
 
   const onFileInput = useCallback(
@@ -1239,18 +1464,23 @@ export default function App() {
       }
 
       const thumbnail = thumbnails[presetId];
-      if (thumbnail?.startsWith("data:image/webp")) {
+      const thumbnailIsCapture =
+        thumbnail?.startsWith("blob:") ||
+        thumbnail?.startsWith("data:image/webp");
+      if (thumbnailIsCapture) {
         const thumbnailBlob = await fetch(thumbnail).then((response) =>
           response.blob()
         );
-        assetChanges.thumbnail_path = await uploadAsset({
-          ownerId: user.id,
-          shaderId: saved.id,
-          role: "thumbnail",
-          blob: thumbnailBlob,
-          fileName: "thumbnail.webp",
-          contentType: "image/webp",
-        });
+        if (thumbnailBlob.type !== "image/svg+xml") {
+          assetChanges.thumbnail_path = await uploadAsset({
+            ownerId: user.id,
+            shaderId: saved.id,
+            role: "thumbnail",
+            blob: thumbnailBlob,
+            fileName: "thumbnail.webp",
+            contentType: thumbnailBlob.type || "image/webp",
+          });
+        }
       }
 
       if (Object.keys(assetChanges).length) {
@@ -1268,10 +1498,12 @@ export default function App() {
         );
         setThumbnails((current) => {
           if (!(presetId in current)) return current;
+          revokeThumbnailUrl(current[presetId]);
           const next = { ...current };
           delete next[presetId];
           return next;
         });
+        delete thumbnailDataUrlsRef.current[presetId];
       }
       setCloudShaders((current) => [
         saved,
@@ -1548,48 +1780,51 @@ export default function App() {
   }, [chatHeight]);
 
   useEffect(() => {
-    let frameId = 0;
+    const host = hostRef.current;
+    if (!host?.ready) return undefined;
+
+    const gen = ++thumbnailCaptureGenRef.current;
+    const targetId = presetId;
+
     const timer = window.setTimeout(() => {
-      frameId = requestAnimationFrame(() => {
-        const canvas = canvasRef.current;
-        if (!canvas?.width || !canvas?.height) return;
-        try {
-          const thumbnail = document.createElement("canvas");
-          thumbnail.width = 64;
-          thumbnail.height = 64;
-          const context = thumbnail.getContext("2d");
-          if (!context) return;
-          context.fillStyle = "#d9d9d9";
-          context.fillRect(0, 0, 64, 64);
-          const scale = Math.max(64 / canvas.width, 64 / canvas.height);
-          const width = canvas.width * scale;
-          const height = canvas.height * scale;
-          context.drawImage(
-            canvas,
-            (64 - width) / 2,
-            (64 - height) / 2,
-            width,
-            height
-          );
-          const dataUrl = thumbnail.toDataURL("image/webp", 0.82);
-          setThumbnails((current) => ({ ...current, [presetId]: dataUrl }));
-        } catch {
-          // Keep the previous thumbnail if this browser cannot capture WebGPU.
-        }
-      });
-    }, 600);
+      host
+        .captureThumbnailBlob({ width: 80, height: 60 })
+        .then(async (blob) => {
+          if (!blob || gen !== thumbnailCaptureGenRef.current) return;
+          const url = URL.createObjectURL(blob);
+          try {
+            const dataUrl = await blobToDataUrl(blob);
+            if (gen !== thumbnailCaptureGenRef.current) {
+              URL.revokeObjectURL(url);
+              return;
+            }
+            thumbnailDataUrlsRef.current[targetId] = dataUrl;
+            setThumbnails((current) => {
+              revokeThumbnailUrl(current[targetId]);
+              return { ...current, [targetId]: url };
+            });
+          } catch {
+            URL.revokeObjectURL(url);
+          }
+        })
+        .catch(() => {
+          // Keep the previous thumbnail if WebGPU capture fails.
+        });
+    }, 450);
+
     return () => {
       window.clearTimeout(timer);
-      if (frameId) cancelAnimationFrame(frameId);
     };
-  }, [source, values, presetId, previewRevision]);
+  }, [source, values, presetId, previewRevision, runtimeReady]);
 
   return (
     <>
       <nav className="app-nav">
-        <a className="app-logo-link" href={makeHomeUrl()} onClick={goHome}>
-          <img className="app-logo" src={logo} alt="Shader Studio" />
-        </a>
+        <fig-header class="app-nav-header" borderless>
+          <a className="app-logo-link" href={makeHomeUrl()} onClick={goHome}>
+            <img className="app-logo" src={logo} alt="Shader Studio" />
+          </a>
+        </fig-header>
         <fig-chooser
           ref={chooserRef}
           value={presetId}
@@ -1597,12 +1832,122 @@ export default function App() {
           drag="true"
           loop=""
         >
-          <fig-menu class="new-shader-menu" position="bottom right">
+          {PRESETS.map((preset, index) => {
+            const selected = presetId === preset.id;
+            return (
+              <fig-choice
+                key={preset.id}
+                value={preset.id}
+                aria-label={preset.name}
+              >
+                <fig-card
+                  class="shader-nav-card"
+                  src={
+                    thumbnails[preset.id] ||
+                    placeholderThumbnailUrl(index, preset.name)
+                  }
+                  label={preset.name}
+                  alt={preset.name}
+                  fit="cover"
+                  aspect-ratio="4/3"
+                  full=""
+                  {...(selected ? { selected: "" } : {})}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+              </fig-choice>
+            );
+          })}
+          {drafts.map((draft, index) => {
+            const name = draft.id === presetId ? shaderName : draft.name;
+            const selected = draft.id === presetId;
+            return (
+              <fig-choice
+                key={draft.id}
+                value={draft.id}
+                aria-label={name}
+              >
+                <fig-menu
+                  class="shader-context-menu"
+                  trigger="contextmenu"
+                  position="center right"
+                >
+                  <div fig-menu-trigger="">
+                    <fig-card
+                      class="shader-nav-card"
+                      src={
+                        thumbnails[draft.id] ||
+                        placeholderThumbnailUrl(PRESETS.length + index, name)
+                      }
+                      label={name}
+                      alt={name}
+                      fit="cover"
+                      aspect-ratio="4/3"
+                      full=""
+                      {...(selected ? { selected: "" } : {})}
+                      dangerouslySetInnerHTML={opaqueContent}
+                    />
+                  </div>
+                  <fig-menu-item
+                    value="delete"
+                    onClick={() => removeDraft(draft)}
+                  >
+                    Delete
+                  </fig-menu-item>
+                </fig-menu>
+              </fig-choice>
+            );
+          })}
+          {cloudShaders.map((shader, index) => {
+            const choiceId = cloudChoiceId(shader.id);
+            const selected = presetId === choiceId;
+            return (
+              <fig-choice
+                key={shader.id}
+                value={choiceId}
+                aria-label={shader.name}
+              >
+                <fig-menu
+                  class="shader-context-menu"
+                  trigger="contextmenu"
+                  position="center right"
+                >
+                  <div fig-menu-trigger="">
+                    <fig-card
+                      class="shader-nav-card"
+                      src={
+                        cloudThumbnails[shader.id] ||
+                        placeholderThumbnailUrl(
+                          PRESETS.length + drafts.length + index,
+                          shader.name
+                        )
+                      }
+                      label={shader.name}
+                      alt={shader.name}
+                      fit="cover"
+                      aspect-ratio="4/3"
+                      full=""
+                      {...(selected ? { selected: "" } : {})}
+                      dangerouslySetInnerHTML={opaqueContent}
+                    />
+                  </div>
+                  <fig-menu-item
+                    value="delete"
+                    onClick={() => removeCloudShader(shader)}
+                  >
+                    Delete
+                  </fig-menu-item>
+                </fig-menu>
+              </fig-choice>
+            );
+          })}
+        </fig-chooser>
+        <fig-footer class="app-nav-actions" sticky="">
+          <fig-menu class="new-shader-menu" position="top right">
             <fig-tooltip text="New Figma shader">
               <fig-button
                 fig-menu-trigger=""
                 type="button"
-                variant="secondary"
+                variant="ghost"
                 icon="true"
                 size="large"
                 aria-label="New Figma shader"
@@ -1623,84 +1968,6 @@ export default function App() {
               Shader fill
             </fig-menu-item>
           </fig-menu>
-          {PRESETS.map((preset, index) => (
-            <fig-choice
-              key={preset.id}
-              value={preset.id}
-              aria-label={preset.name}
-            >
-              <fig-tooltip text={preset.name}>
-                <fig-swatch
-                  size="large"
-                  background={`url("${thumbnails[preset.id] || thumbnailData(index, preset.name)}") center / cover no-repeat`}
-                  aria-label={preset.name}
-                />
-              </fig-tooltip>
-            </fig-choice>
-          ))}
-          {drafts.map((draft, index) => {
-            const name = draft.id === presetId ? shaderName : draft.name;
-            return (
-              <fig-choice
-                key={draft.id}
-                value={draft.id}
-                aria-label={name}
-              >
-                <fig-menu
-                  class="shader-context-menu"
-                  trigger="contextmenu"
-                  position="center right"
-                >
-                  <div fig-menu-trigger="">
-                    <fig-tooltip text={name}>
-                      <fig-swatch
-                        size="large"
-                        background={`url("${thumbnails[draft.id] || thumbnailData(PRESETS.length + index, name)}") center / cover no-repeat`}
-                        aria-label={name}
-                      />
-                    </fig-tooltip>
-                  </div>
-                  <fig-menu-item
-                    value="delete"
-                    onClick={() => removeDraft(draft)}
-                  >
-                    Delete
-                  </fig-menu-item>
-                </fig-menu>
-              </fig-choice>
-            );
-          })}
-          {cloudShaders.map((shader, index) => (
-            <fig-choice
-              key={shader.id}
-              value={cloudChoiceId(shader.id)}
-              aria-label={shader.name}
-            >
-              <fig-menu
-                class="shader-context-menu"
-                trigger="contextmenu"
-                position="center right"
-              >
-                <div fig-menu-trigger="">
-                  <fig-tooltip text={shader.name}>
-                    <fig-swatch
-                      size="large"
-                      background={`url("${cloudThumbnails[shader.id] || thumbnailData(PRESETS.length + drafts.length + index, shader.name)}") center / cover no-repeat`}
-                      aria-label={shader.name}
-                    />
-                  </fig-tooltip>
-                </div>
-                <fig-menu-item
-                  value="delete"
-                  onClick={() => removeCloudShader(shader)}
-                >
-                  Delete
-                </fig-menu-item>
-              </fig-menu>
-            </fig-choice>
-          ))}
-        </fig-chooser>
-        <footer className="app-nav-actions">
           <AccountMenu
             open={authOpen}
             onOpenChange={setAuthOpen}
@@ -1709,7 +1976,7 @@ export default function App() {
             settingsOpen={settingsOpen}
             onSettingsOpenChange={setSettingsOpen}
           />
-        </footer>
+        </fig-footer>
       </nav>
 
       <main
@@ -2027,11 +2294,12 @@ export default function App() {
                   value={inputSource}
                   options={JSON.stringify([
                     { value: "image", label: "Image" },
+                    { value: "vector", label: "Vector" },
                     { value: "video", label: "Video" },
                     { value: "html", label: "HTML" },
                   ])}
                   aria-label="Input source"
-                  dangerouslySetInnerHTML={{ __html: "" }}
+                  dangerouslySetInnerHTML={opaqueContent}
                 />
                 <fig-tooltip text="Upload input">
                   <fig-button
@@ -2061,6 +2329,24 @@ export default function App() {
         <fig-header dialog-header>
           <h3>Properties</h3>
           <hstack>
+            <fig-tooltip text={effectVisible ? "Hide effect" : "Show effect"}>
+              <fig-button
+                type="toggle"
+                variant="ghost"
+                icon="true"
+                selected={effectVisible}
+                aria-label={effectVisible ? "Hide effect" : "Show effect"}
+                onClick={() => {
+                  setEffectVisible((visible) => {
+                    const next = !visible;
+                    hostRef.current?.setEffectVisible?.(next);
+                    return next;
+                  });
+                }}
+              >
+                <fig-icon name={effectVisible ? "visible" : "hidden"} />
+              </fig-button>
+            </fig-tooltip>
             <fig-menu position="bottom right">
               <fig-tooltip text="More">
                 <fig-button
@@ -2090,8 +2376,7 @@ export default function App() {
           </hstack>
         </fig-header>
 
-        <fig-content>
-          <div className="shader-properties-dialog-content">
+        <fig-content class="shader-properties-dialog-content">
           <Controls
             props={props}
             values={values}
@@ -2117,7 +2402,6 @@ export default function App() {
               </p>
             </div>
           )}
-          </div>
         </fig-content>
       </dialog>
 

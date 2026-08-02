@@ -26,6 +26,7 @@ export default function Preview({
   htmlInputRef,
 }) {
   const stageRef = useRef(null);
+  const errorToastRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [overlayBox, setOverlayBox] = useState(null);
@@ -39,6 +40,16 @@ export default function Preview({
   useEffect(() => {
     onZoomChangeRef.current?.(view.zoom);
   }, [view.zoom]);
+
+  useEffect(() => {
+    const toast = errorToastRef.current;
+    if (!toast) return;
+    if (error) {
+      toast.showToast?.();
+    } else {
+      toast.hideToast?.();
+    }
+  }, [error]);
 
   useEffect(() => {
     if (!zoomRequest || zoomRequest.id === lastZoomRequestId.current) return;
@@ -270,12 +281,15 @@ export default function Preview({
           <span>Loading input…</span>
         </div>
       )}
-      {error && (
-        <div className="error-overlay">
-          <div className="error-title">Shader error</div>
-          <pre className="error-body">{error}</pre>
-        </div>
-      )}
+      <dialog
+        is="fig-toast"
+        ref={errorToastRef}
+        theme="danger"
+        live="assertive"
+        duration="5000"
+      >
+        {error}
+      </dialog>
     </div>
   );
 }

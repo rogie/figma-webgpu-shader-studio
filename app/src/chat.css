@@ -151,10 +151,11 @@
       align-items: center;
       gap: var(--spacer-2);
 
-      fig-dropdown {
+      .chat-model-select {
         flex: 0 0 auto;
         width: max-content;
         max-width: 16rem;
+        --fig-select-trigger-width: max-content;
       }
 
       .chat-composer-send,

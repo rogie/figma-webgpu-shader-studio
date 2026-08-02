@@ -71,6 +71,7 @@ function PropskitNumberControl({ name, def, value, onChange }) {
       direction="horizontal"
       size="large"
       value={value ?? def.defaultValue ?? 0}
+      default={def.defaultValue ?? 0}
       min={def.min}
       max={def.max}
       step={def.step ?? 0.01}
@@ -109,6 +110,7 @@ function PropskitTextControl({ name, def, value, onChange }) {
       direction="horizontal"
       size="large"
       value={value ?? def.defaultValue ?? ""}
+      default={def.defaultValue ?? ""}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -171,6 +173,7 @@ function SwitchControl({ name, def, value, onChange }) {
     };
   }, [name, onChange]);
 
+  const defaultChecked = Boolean(def.defaultValue);
   return (
     <propskit-switch
       ref={switchRef}
@@ -178,6 +181,7 @@ function SwitchControl({ name, def, value, onChange }) {
       direction="horizontal"
       size="large"
       {...(checked ? { checked: "" } : {})}
+      {...(defaultChecked ? { default: "" } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -220,6 +224,8 @@ function SelectControl({ name, def, value, onChange }) {
     };
   }, [name, numeric, onChange]);
 
+  const defaultValue =
+    def.defaultValue == null ? "" : String(def.defaultValue);
   return (
     <propskit-select
       ref={selectRef}
@@ -227,6 +233,7 @@ function SelectControl({ name, def, value, onChange }) {
       direction="horizontal"
       size="large"
       value={current == null ? "" : String(current)}
+      default={defaultValue}
       options={formatSelectOptions(options)}
       dangerouslySetInnerHTML={opaqueContent}
     />
@@ -285,6 +292,8 @@ function PropskitColorControl({ name, def, value, onChange }) {
     };
   }, [name, onChange]);
 
+  const defaultColor =
+    def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
   return (
     <propskit-color
       ref={colorRef}
@@ -292,6 +301,7 @@ function PropskitColorControl({ name, def, value, onChange }) {
       direction="horizontal"
       size="large"
       value={colorToHex(current)}
+      default={colorToHex(defaultColor)}
       alpha="true"
       dangerouslySetInnerHTML={opaqueContent}
     />

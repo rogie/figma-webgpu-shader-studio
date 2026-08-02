@@ -20,6 +20,7 @@ export class ShaderHost {
     this.setupFn = null;
     this.renderFn = null;
     this.isFill = false;
+    this.effectVisible = true;
 
     this.inputTexture = null;
     this.video = null; // HTMLVideoElement when the input is a video
@@ -27,6 +28,11 @@ export class ShaderHost {
     this.htmlCssSize = null; // logical CSS size of the HTML subject
     this.stageCssSize = { width: DEFAULT_FILL_CSS, height: DEFAULT_FILL_CSS };
     this._onHtmlPaint = this._onHtmlPaint.bind(this);
+
+    this._passthroughPipeline = null;
+    this._passthroughFormat = null;
+    this._passthroughSampler = null;
+    this._passthroughBindLayout = null;
 
     this.frame = {
       input: null,
@@ -174,8 +180,7 @@ export class ShaderHost {
     try {
       this.frame.output = this.context.getCurrentTexture();
       if (this.setupFn) this.setupFn(this.device, this.frame);
-      this.frame.output = this.context.getCurrentTexture();
-      this.renderFn(this.device, this.frame);
+      this._present();
     } catch (err) {
       this.onError(err && err.message ? err.message : String(err));
     }
@@ -212,6 +217,7 @@ export class ShaderHost {
   _ensureInputTexture(w, h, displayCss = null) {
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
+    let textureChanged = false;
     if (
       !this.inputTexture ||
       this.inputTexture.width !== w ||
@@ -229,16 +235,36 @@ export class ShaderHost {
           GPUTextureUsage.COPY_DST |
           GPUTextureUsage.RENDER_ATTACHMENT,
       });
+      textureChanged = true;
     }
     this.frame.input = this.inputTexture;
+    let sizeChanged = false;
     if (displayCss) {
-      this.setSize(w, h, {
+      sizeChanged = this.setSize(w, h, {
         cssWidth: displayCss.width,
         cssHeight: displayCss.height,
       });
     } else {
-      this.setSize(w, h, { clearCssSize: true });
+      sizeChanged = this.setSize(w, h, { clearCssSize: true });
     }
+    return textureChanged || sizeChanged;
+  }
+
+  // After input size changes, rebuild shader state (many effects size
+  // resources from setup) and present immediately — including when paused.
+  _rebindAfterInputChange(sizeChanged) {
+    if (!this.ready || !this.renderFn) return;
+    if (sizeChanged) {
+      this._teardownState();
+      try {
+        this.frame.output = this.context.getCurrentTexture();
+        if (this.setupFn) this.setupFn(this.device, this.frame);
+      } catch (err) {
+        this.onError(err && err.message ? err.message : String(err));
+        return;
+      }
+    }
+    this.redraw();
   }
 
   // Replace the input from an ImageBitmap / VideoFrame source (static).
@@ -251,12 +277,13 @@ export class ShaderHost {
     w = Math.max(1, Math.round(w * scale));
     h = Math.max(1, Math.round(h * scale));
 
-    this._ensureInputTexture(w, h);
+    const sizeChanged = this._ensureInputTexture(w, h);
     this.device.queue.copyExternalImageToTexture(
       { source, flipY: false },
       { texture: this.inputTexture, premultipliedAlpha: true },
       [w, h]
     );
+    this._rebindAfterInputChange(sizeChanged);
   }
 
   setVideoInput(video) {
@@ -264,8 +291,9 @@ export class ShaderHost {
     this.video = video;
     const w = Math.min(MAX_DIM, video.videoWidth || 1024);
     const h = Math.min(MAX_DIM, video.videoHeight || 1024);
-    this._ensureInputTexture(w, h);
+    const sizeChanged = this._ensureInputTexture(w, h);
     this._uploadVideoFrame();
+    this._rebindAfterInputChange(sizeChanged);
   }
 
   // HTML-in-Canvas: `element` must be a direct child of this.canvas with
@@ -294,7 +322,7 @@ export class ShaderHost {
       );
     this.htmlCssSize = { width: cssWidth, height: cssHeight };
     const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
-    this._ensureInputTexture(size.width, size.height, {
+    const sizeChanged = this._ensureInputTexture(size.width, size.height, {
       width: size.cssWidth,
       height: size.cssHeight,
     });
@@ -305,6 +333,7 @@ export class ShaderHost {
     } catch {
       // First snapshot may not exist until the next paint event.
     }
+    this._rebindAfterInputChange(sizeChanged);
   }
 
   _bindHtmlPaint() {
@@ -320,10 +349,10 @@ export class ShaderHost {
 
   _onHtmlPaint() {
     try {
-      this._uploadHtmlFrame();
       if (!this.running && this.renderFn) {
-        this.frame.output = this.context.getCurrentTexture();
-        this.renderFn(this.device, this.frame);
+        this._present();
+      } else {
+        this._uploadHtmlFrame();
       }
     } catch (err) {
       this.onError(err && err.message ? err.message : String(err));
@@ -392,6 +421,207 @@ export class ShaderHost {
 
   setParams(params) {
     this.frame.params = params || {};
+    // Live-update the preview on slider/input changes even when paused, or
+    // if the RAF loop stopped without syncing UI play state.
+    this.redraw();
+  }
+
+  setEffectVisible(visible) {
+    this.effectVisible = Boolean(visible);
+    this.redraw();
+  }
+
+  redraw() {
+    if (!this.ready || !this.renderFn) return;
+    try {
+      this._present();
+    } catch (err) {
+      this.onError(err && err.message ? err.message : String(err));
+    }
+  }
+
+  /**
+   * Snapshot the current preview into a small image blob.
+   * WebGPU canvases discard their drawing buffer after composite, so we
+   * present, wait for GPU work, then read immediately (no deferred rAF).
+   */
+  async captureThumbnailBlob({
+    width = 80,
+    height = 60,
+    type = "image/webp",
+    quality = 0.82,
+  } = {}) {
+    if (!this.ready || !this.canvas?.width || !this.canvas?.height) return null;
+
+    try {
+      if (this.renderFn) this._present();
+      if (typeof this.device?.queue?.onSubmittedWorkDone === "function") {
+        await this.device.queue.onSubmittedWorkDone();
+      }
+
+      const thumb = document.createElement("canvas");
+      thumb.width = width;
+      thumb.height = height;
+      const ctx = thumb.getContext("2d");
+      if (!ctx) return null;
+      ctx.fillStyle = "#d9d9d9";
+      ctx.fillRect(0, 0, width, height);
+
+      // Read the WebGPU canvas synchronously while the submitted frame is still
+      // in the drawing buffer. Async convertToBlob can miss it after composite.
+      const scale = Math.max(
+        width / this.canvas.width,
+        height / this.canvas.height
+      );
+      const dw = this.canvas.width * scale;
+      const dh = this.canvas.height * scale;
+      ctx.drawImage(
+        this.canvas,
+        (width - dw) / 2,
+        (height - dh) / 2,
+        dw,
+        dh
+      );
+
+      return await new Promise((resolve) => {
+        thumb.toBlob((blob) => resolve(blob || null), type, quality);
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  _ensurePassthroughPipeline(format) {
+    if (
+      this._passthroughPipeline &&
+      this._passthroughFormat === format &&
+      this._passthroughSampler &&
+      this._passthroughBindLayout
+    ) {
+      return;
+    }
+
+    const module = this.device.createShaderModule({
+      code: `
+struct VsOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
+  var pos = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0),
+  );
+  var result: VsOut;
+  let p = pos[vi];
+  result.position = vec4f(p, 0.0, 1.0);
+  result.uv = vec2f(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+  return result;
+}
+
+@group(0) @binding(0) var srcSampler: sampler;
+@group(0) @binding(1) var srcTexture: texture_2d<f32>;
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4f {
+  return textureSample(srcTexture, srcSampler, in.uv);
+}
+`,
+    });
+
+    this._passthroughBindLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.FRAGMENT,
+          sampler: { type: "filtering" },
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float" },
+        },
+      ],
+    });
+
+    this._passthroughSampler = this.device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
+    });
+
+    this._passthroughPipeline = this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this._passthroughBindLayout],
+      }),
+      vertex: { module, entryPoint: "vs_main" },
+      fragment: {
+        module,
+        entryPoint: "fs_main",
+        targets: [{ format }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    this._passthroughFormat = format;
+  }
+
+  _presentPassthrough() {
+    const output = this.context.getCurrentTexture();
+    this.frame.output = output;
+    const encoder = this.device.createCommandEncoder();
+
+    if (!this.frame.input) {
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: output.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
+      });
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+      return;
+    }
+
+    this._ensurePassthroughPipeline(output.format);
+    const bindGroup = this.device.createBindGroup({
+      layout: this._passthroughBindLayout,
+      entries: [
+        { binding: 0, resource: this._passthroughSampler },
+        { binding: 1, resource: this.frame.input.createView() },
+      ],
+    });
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: output.createView(),
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        },
+      ],
+    });
+    pass.setPipeline(this._passthroughPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(3);
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  _present() {
+    if (this.video) this._uploadVideoFrame();
+    if (this.htmlElement) this._uploadHtmlFrame();
+    this.frame.output = this.context.getCurrentTexture();
+    if (!this.effectVisible) {
+      this._presentPassthrough();
+      return;
+    }
+    this.renderFn(this.device, this.frame);
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
@@ -414,8 +644,7 @@ export class ShaderHost {
     try {
       this.frame.output = this.context.getCurrentTexture();
       if (this.setupFn) this.setupFn(this.device, this.frame);
-      this.frame.output = this.context.getCurrentTexture();
-      this.renderFn(this.device, this.frame);
+      this._present();
     } catch (err) {
       jsError = err && err.message ? err.message : String(err);
     }
@@ -454,10 +683,7 @@ export class ShaderHost {
     this.frame.frame += 1;
 
     try {
-      if (this.video) this._uploadVideoFrame();
-      if (this.htmlElement) this._uploadHtmlFrame();
-      this.frame.output = this.context.getCurrentTexture();
-      this.renderFn(this.device, this.frame);
+      this._present();
     } catch (err) {
       this.onError(err && err.message ? err.message : String(err));
       this.stop();

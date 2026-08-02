@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <!-- Black / white / gray geometric emblem for shader effect input -->
+  <rect width="512" height="512" fill="#F4F4F4"/>
+  <!-- Outer disc -->
+  <circle cx="256" cy="256" r="192" fill="#111111"/>
+  <circle cx="256" cy="256" r="164" fill="#FFFFFF"/>
+  <!-- Petal compass -->
+  <g fill="#111111">
+    <path d="M256 108c14 44 14 96 0 140-14-44-14-96 0-140Z"/>
+    <path d="M256 264c14 44 14 96 0 140-14-44-14-96 0-140Z"/>
+    <path d="M108 256c44-14 96-14 140 0-44 14-96 14-140 0Z"/>
+    <path d="M264 256c44-14 96-14 140 0-44 14-96 14-140 0Z"/>
+  </g>
+  <g fill="#888888">
+    <path d="M148 148c38 22 70 54 92 92-38-22-70-54-92-92Z"/>
+    <path d="M272 272c38 22 70 54 92 92-38-22-70-54-92-92Z"/>
+    <path d="M364 148c-22 38-54 70-92 92 22-38 54-70 92-92Z"/>
+    <path d="M240 272c-22 38-54 70-92 92 22-38 54-70 92-92Z"/>
+  </g>
+  <!-- Core -->
+  <circle cx="256" cy="256" r="42" fill="#111111"/>
+  <circle cx="256" cy="256" r="18" fill="#FFFFFF"/>
+  <!-- Accent dots -->
+  <g fill="#111111">
+    <circle cx="256" cy="96" r="12"/>
+    <circle cx="256" cy="416" r="12"/>
+    <circle cx="96" cy="256" r="12"/>
+    <circle cx="416" cy="256" r="12"/>
+  </g>
+  <g fill="#FFFFFF">
+    <circle cx="155" cy="155" r="9"/>
+    <circle cx="357" cy="357" r="9"/>
+    <circle cx="357" cy="155" r="9"/>
+    <circle cx="155" cy="357" r="9"/>
+  </g>
+</svg>

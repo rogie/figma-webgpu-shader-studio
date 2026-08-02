@@ -1,7 +1,7 @@
 export const HTML_IN_CANVAS_FLAG = "chrome://flags/#canvas-draw-element";
 
 export const HTML_IN_CANVAS_SETUP =
-  "HTML input needs Chromium 147+ with chrome://flags/#canvas-draw-element enabled (Chrome Canary or Brave).";
+  "Enable chrome://flags/#canvas-draw-element (Canary or Brave).";
 
 export const HTML_INPUT_WIDTH = 960;
 export const HTML_INPUT_HEIGHT = 720;
