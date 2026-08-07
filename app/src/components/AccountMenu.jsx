@@ -15,13 +15,22 @@ export default function AccountMenu({
   settingsOpen = false,
   onSettingsOpenChange,
 }) {
-  const { user, loading, configured, sendMagicLink, signOut } = useAuth();
+  const {
+    user,
+    loading,
+    configured,
+    sendMagicLink,
+    signInWithGitHub,
+    signOut,
+  } = useAuth();
   const authPopupRef = useRef(null);
+  const authMethodRef = useRef(null);
   const settingsDialogRef = useRef(null);
   const settingsAnchorRef = useRef(null);
   const themeControlRef = useRef(null);
   const toastRef = useRef(null);
   const [email, setEmail] = useState("");
+  const [authMethod, setAuthMethod] = useState("magic");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [openaiKey, setOpenaiKey] = useState(() => getProviderKeys().openai);
@@ -77,6 +86,20 @@ export default function AccountMenu({
     return () => control.removeEventListener("input", updateTheme);
   }, [onThemeChange]);
 
+  useEffect(() => {
+    const control = authMethodRef.current;
+    if (!control) return;
+    const updateMethod = (event) => {
+      const value = event.detail ?? event.target.value;
+      if (value === "magic" || value === "github") {
+        setAuthMethod(value);
+        setError("");
+      }
+    };
+    control.addEventListener("input", updateMethod);
+    return () => control.removeEventListener("input", updateMethod);
+  }, []);
+
   const close = () => {
     onOpenChange(false);
     setError("");
@@ -87,8 +110,12 @@ export default function AccountMenu({
     setSending(true);
     setError("");
     try {
-      await sendMagicLink(email.trim());
-      toastRef.current?.showToast();
+      if (authMethod === "github") {
+        await signInWithGitHub();
+      } else {
+        await sendMagicLink(email.trim());
+        toastRef.current?.showToast();
+      }
     } catch (authError) {
       setError(authError.message || String(authError));
     } finally {
@@ -177,6 +204,7 @@ export default function AccountMenu({
         position="top right"
         offset="8 0"
         variant="popover"
+        theme="menu"
         closedby="any"
         onClose={() => onOpenChange(false)}
         onCancel={close}
@@ -186,18 +214,43 @@ export default function AccountMenu({
         </fig-header>
         <form onSubmit={submit}>
           <fig-content>
-            <fig-field direction="horizontal">
-              <label>Email</label>
-              <fig-input-text
-                type="email"
-                full=""
-                value={email}
-                placeholder="you@example.com"
-                required
-                onInput={(event) => setEmail(event.target.value)}
-                dangerouslySetInnerHTML={{ __html: "" }}
-              />
-            </fig-field>
+            <fig-tabs
+              ref={authMethodRef}
+              value={authMethod}
+              name="sign-in-method"
+            >
+              <fig-tab
+                value="magic"
+                content="#sign-in-magic-panel"
+              >
+                Magic link
+              </fig-tab>
+              <fig-tab
+                value="github"
+                content="#sign-in-github-panel"
+              >
+                GitHub
+              </fig-tab>
+            </fig-tabs>
+            <div id="sign-in-magic-panel">
+              <fig-field direction="horizontal">
+                <label>Email</label>
+                <fig-input-text
+                  type="email"
+                  full=""
+                  value={email}
+                  placeholder="you@example.com"
+                  {...(authMethod === "magic" ? { required: "" } : {})}
+                  onInput={(event) => setEmail(event.target.value)}
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+              </fig-field>
+            </div>
+            <div id="sign-in-github-panel">
+              <fig-field>
+                <p>Sign in using your GitHub account.</p>
+              </fig-field>
+            </div>
             {error && <p className="form-message error">{error}</p>}
           </fig-content>
           <fig-footer>
@@ -207,9 +260,19 @@ export default function AccountMenu({
             <fig-button
               type="submit"
               variant="primary"
-              disabled={sending || !email.trim()}
+              disabled={
+                sending ||
+                !configured ||
+                (authMethod === "magic" && !email.trim())
+              }
             >
-              {sending ? "Sending…" : "Send magic link"}
+              {sending
+                ? authMethod === "github"
+                  ? "Connecting…"
+                  : "Sending…"
+                : authMethod === "github"
+                  ? "Continue with GitHub"
+                  : "Send magic link"}
             </fig-button>
           </fig-footer>
         </form>

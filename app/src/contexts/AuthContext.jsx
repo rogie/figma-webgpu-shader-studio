@@ -49,6 +49,17 @@ export function AuthProvider({ children }) {
     if (error) throw error;
   }, []);
 
+  const signInWithGitHub = useCallback(async () => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "github",
+      options: {
+        redirectTo: `${window.location.origin}${import.meta.env.BASE_URL}`,
+      },
+    });
+    if (error) throw error;
+  }, []);
+
   const signOut = useCallback(async () => {
     if (!supabase) return;
     const { error } = await supabase.auth.signOut();
@@ -62,9 +73,10 @@ export function AuthProvider({ children }) {
       loading,
       configured: isSupabaseConfigured,
       sendMagicLink,
+      signInWithGitHub,
       signOut,
     }),
-    [session, loading, sendMagicLink, signOut]
+    [session, loading, sendMagicLink, signInWithGitHub, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
