@@ -113,65 +113,62 @@ export default function AccountMenu({
     window.setTimeout(() => setKeysSaved(false), 2000);
   };
 
+  // fig-menu relocates items into its popup. Remount on auth changes so React
+  // never tries to reconcile nodes that FigUI has already moved.
+  const menuKey = user ? "signed-in" : "signed-out";
+
   return (
     <>
-      {user ? (
-        <fig-menu position="top right">
-          <fig-tooltip text={user.email || "Account"}>
-            <fig-button
-              ref={settingsAnchorRef}
-              fig-menu-trigger=""
-              variant="ghost"
-              icon="true"
-              size="large"
-              aria-label="Account"
-            >
+      <fig-menu key={menuKey} position="top right">
+        <fig-tooltip text={user ? user.email || "Account" : "Settings"}>
+          <fig-button
+            ref={settingsAnchorRef}
+            fig-menu-trigger=""
+            variant="ghost"
+            icon="true"
+            size="large"
+            aria-label={user ? "Account" : "Settings"}
+            disabled={!user && loading ? "" : undefined}
+          >
+            {user ? (
               <span className="account-avatar">
                 {(user.email || "?").slice(0, 1).toUpperCase()}
               </span>
-            </fig-button>
-          </fig-tooltip>
-          <fig-menu-label>{user.email}</fig-menu-label>
-          <fig-menu-item
-            value="settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            Settings
-          </fig-menu-item>
-          <fig-menu-item value="sign-out" onClick={logout}>
-            Sign out
-          </fig-menu-item>
-        </fig-menu>
-      ) : (
-        <fig-menu position="top right">
-          <fig-tooltip text="Settings">
-            <fig-button
-              ref={settingsAnchorRef}
-              fig-menu-trigger=""
-              variant="ghost"
-              icon="true"
-              size="large"
-              aria-label="Settings"
-              disabled={loading}
-            >
+            ) : (
               <fig-icon name="settings" />
-            </fig-button>
-          </fig-tooltip>
-          <fig-menu-item
-            value="settings"
-            onClick={() => setSettingsOpen(true)}
-          >
-            Settings
-          </fig-menu-item>
-          <fig-menu-item
-            value="login"
-            disabled={!configured}
-            onClick={() => onOpenChange(true)}
-          >
-            Login
-          </fig-menu-item>
-        </fig-menu>
-      )}
+            )}
+          </fig-button>
+        </fig-tooltip>
+        {user ? (
+          <>
+            <fig-menu-item
+              value="settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Settings
+            </fig-menu-item>
+            <fig-menu-item value="sign-out" onClick={logout}>
+              Sign out
+            </fig-menu-item>
+          </>
+        ) : (
+          <>
+            <fig-menu-item
+              value="settings"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Settings
+            </fig-menu-item>
+            <fig-menu-item
+              value="login"
+              disabled={!configured ? "" : undefined}
+              onClick={() => onOpenChange(true)}
+            >
+              Login
+            </fig-menu-item>
+          </>
+        )}
+      </fig-menu>
 
       <dialog
         is="fig-popup"

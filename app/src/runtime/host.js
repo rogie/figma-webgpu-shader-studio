@@ -69,6 +69,9 @@ export class ShaderHost {
       device: this.device,
       format: this.format,
       alphaMode: "premultiplied",
+      // COPY_SRC lets thumbnails read back the swapchain texture. Without it,
+      // canvas 2D drawImage often captures cleared/black frames after composite.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
 
     this.device.addEventListener("uncapturederror", (e) => {
@@ -421,9 +424,10 @@ export class ShaderHost {
 
   setParams(params) {
     this.frame.params = params || {};
-    // Live-update the preview on slider/input changes even when paused, or
-    // if the RAF loop stopped without syncing UI play state.
-    this.redraw();
+    // When the RAF loop is already presenting, the next frame picks up params.
+    // Forcing an extra synchronous present here hitchs the main thread and
+    // cancels native range-slider drags in the properties panel.
+    if (!this.running) this.redraw();
   }
 
   setEffectVisible(visible) {
@@ -441,54 +445,116 @@ export class ShaderHost {
   }
 
   /**
-   * Snapshot the current preview into a small image blob.
-   * WebGPU canvases discard their drawing buffer after composite, so we
-   * present, wait for GPU work, then read immediately (no deferred rAF).
+   * Snapshot the current preview into a square image blob (default 512²).
+   * Reads pixels via copyTextureToBuffer — WebGPU canvas 2D drawImage often
+   * returns a cleared/black frame once the browser has composited.
    */
   async captureThumbnailBlob({
-    width = 80,
-    height = 60,
+    width = 512,
+    height = 512,
     type = "image/webp",
-    quality = 0.82,
+    quality = 0.85,
   } = {}) {
     if (!this.ready || !this.canvas?.width || !this.canvas?.height) return null;
+    if (!this.renderFn) return null;
 
+    const wasRunning = this.running;
+    let readbackBuffer = null;
     try {
-      if (this.renderFn) this._present();
-      if (typeof this.device?.queue?.onSubmittedWorkDone === "function") {
-        await this.device.queue.onSubmittedWorkDone();
-      }
+      if (wasRunning) this.stop();
+
+      const texture = this._present();
+      if (!texture) return null;
+
+      const srcW = texture.width;
+      const srcH = texture.height;
+      const bytesPerPixel = 4;
+      const bytesPerRow = Math.ceil((srcW * bytesPerPixel) / 256) * 256;
+      readbackBuffer = this.device.createBuffer({
+        size: bytesPerRow * srcH,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+      });
+
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture },
+        { buffer: readbackBuffer, bytesPerRow },
+        { width: srcW, height: srcH }
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await readbackBuffer.mapAsync(GPUMapMode.READ);
+
+      const packed = this._packTextureReadback(
+        new Uint8Array(readbackBuffer.getMappedRange()),
+        srcW,
+        srcH,
+        bytesPerRow
+      );
+      readbackBuffer.unmap();
+      readbackBuffer.destroy();
+      readbackBuffer = null;
+
+      const source = document.createElement("canvas");
+      source.width = srcW;
+      source.height = srcH;
+      source.getContext("2d").putImageData(new ImageData(packed, srcW, srcH), 0, 0);
 
       const thumb = document.createElement("canvas");
       thumb.width = width;
       thumb.height = height;
       const ctx = thumb.getContext("2d");
       if (!ctx) return null;
-      ctx.fillStyle = "#d9d9d9";
-      ctx.fillRect(0, 0, width, height);
 
-      // Read the WebGPU canvas synchronously while the submitted frame is still
-      // in the drawing buffer. Async convertToBlob can miss it after composite.
-      const scale = Math.max(
-        width / this.canvas.width,
-        height / this.canvas.height
-      );
-      const dw = this.canvas.width * scale;
-      const dh = this.canvas.height * scale;
-      ctx.drawImage(
-        this.canvas,
-        (width - dw) / 2,
-        (height - dh) / 2,
-        dw,
-        dh
-      );
+      const scale = Math.max(width / srcW, height / srcH);
+      const dw = srcW * scale;
+      const dh = srcH * scale;
+      ctx.drawImage(source, (width - dw) / 2, (height - dh) / 2, dw, dh);
 
       return await new Promise((resolve) => {
         thumb.toBlob((blob) => resolve(blob || null), type, quality);
       });
     } catch {
       return null;
+    } finally {
+      if (readbackBuffer) {
+        try {
+          readbackBuffer.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+      if (wasRunning) this.start();
     }
+  }
+
+  _packTextureReadback(data, width, height, bytesPerRow) {
+    const packed = new Uint8ClampedArray(width * height * 4);
+    const bgra = this.format.startsWith("bgra");
+    for (let y = 0; y < height; y++) {
+      const srcRow = y * bytesPerRow;
+      const dstRow = y * width * 4;
+      for (let x = 0; x < width; x++) {
+        const i = srcRow + x * 4;
+        const o = dstRow + x * 4;
+        const r = bgra ? data[i + 2] : data[i];
+        const g = data[i + 1];
+        const b = bgra ? data[i] : data[i + 2];
+        const a = data[i + 3];
+        // Canvas is configured premultiplied; ImageData wants straight alpha.
+        if (a > 0 && a < 255) {
+          const inv = 255 / a;
+          packed[o] = Math.min(255, Math.round(r * inv));
+          packed[o + 1] = Math.min(255, Math.round(g * inv));
+          packed[o + 2] = Math.min(255, Math.round(b * inv));
+        } else {
+          packed[o] = r;
+          packed[o + 1] = g;
+          packed[o + 2] = b;
+        }
+        packed[o + 3] = a;
+      }
+    }
+    return packed;
   }
 
   _ensurePassthroughPipeline(format) {
@@ -568,7 +634,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   _presentPassthrough() {
-    const output = this.context.getCurrentTexture();
+    const output = this.frame.output || this.context.getCurrentTexture();
     this.frame.output = output;
     const encoder = this.device.createCommandEncoder();
 
@@ -585,7 +651,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       });
       pass.end();
       this.device.queue.submit([encoder.finish()]);
-      return;
+      return output;
     }
 
     this._ensurePassthroughPipeline(output.format);
@@ -611,6 +677,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     pass.draw(3);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
+    return output;
   }
 
   _present() {
@@ -618,10 +685,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (this.htmlElement) this._uploadHtmlFrame();
     this.frame.output = this.context.getCurrentTexture();
     if (!this.effectVisible) {
-      this._presentPassthrough();
-      return;
+      return this._presentPassthrough();
     }
     this.renderFn(this.device, this.frame);
+    return this.frame.output;
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.

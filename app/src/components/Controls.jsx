@@ -118,33 +118,52 @@ function PropskitTextControl({ name, def, value, onChange }) {
 
 function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   const sliderRef = useRef(null);
+  const draggingRef = useRef(false);
   const latestValue = value ?? def.defaultValue ?? 0;
 
   useEffect(() => {
     const slider = sliderRef.current;
     if (!slider) return;
-    const handleValue = (callback) => (event) => {
+    const readNext = (event) => {
       const next = readPropskitSliderNumber(event);
-      if (Number.isFinite(next)) callback(name, next);
+      return Number.isFinite(next) ? next : null;
     };
-    const handleInput = handleValue(onInputValue);
-    const handleChange = handleValue(onCommit);
+    const handleInput = (event) => {
+      draggingRef.current = true;
+      const next = readNext(event);
+      if (next != null) onInputValue(name, next);
+    };
+    const handleChange = (event) => {
+      draggingRef.current = false;
+      const next = readNext(event);
+      if (next != null) onCommit(name, next);
+    };
+    const endDrag = () => {
+      draggingRef.current = false;
+    };
     slider.addEventListener("input", handleInput);
     slider.addEventListener("change", handleChange);
+    slider.addEventListener("pointerup", endDrag);
+    slider.addEventListener("pointercancel", endDrag);
     return () => {
       slider.removeEventListener("input", handleInput);
       slider.removeEventListener("change", handleChange);
+      slider.removeEventListener("pointerup", endDrag);
+      slider.removeEventListener("pointercancel", endDrag);
     };
   }, [name, onCommit, onInputValue]);
 
-  // Keep value off the React props path. Rewriting `value` after every commit
-  // retriggers propskit/fig-slider attribute sync and drops focus.
+  // Keep `value` off the React props path. Rewriting the attribute from React
+  // while scrubbing re-enters propskit's attr sync / fig-slider value path.
   useLayoutEffect(() => {
     const slider = sliderRef.current;
-    if (!slider) return;
+    if (!slider || draggingRef.current) return;
+    if (slider.matches(":focus-within")) return;
+    if (slider.hasAttribute("data-elastic-dragging")) return;
+    const current = Number(slider.getAttribute("value"));
+    if (Number.isFinite(current) && current === Number(latestValue)) return;
     const next = String(latestValue);
     if (slider.getAttribute("value") === next) return;
-    if (slider.matches(":focus-within")) return;
     slider.setAttribute("value", next);
   }, [latestValue]);
 

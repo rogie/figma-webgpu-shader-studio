@@ -104,8 +104,8 @@ using (
   and exists (
     select 1
     from public.shaders
-    where shaders.id::text = (storage.foldername(name))[2]
-      and shaders.owner_id::text = (storage.foldername(name))[1]
+    where shaders.id::text = (storage.foldername(storage.objects.name))[2]
+      and shaders.owner_id::text = (storage.foldername(storage.objects.name))[1]
       and (
         shaders.is_public
         or shaders.owner_id = (select auth.uid())
@@ -119,11 +119,11 @@ on storage.objects for insert
 to authenticated
 with check (
   bucket_id = 'shader-assets'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
+  and (storage.foldername(storage.objects.name))[1] = (select auth.uid())::text
   and exists (
     select 1
     from public.shaders
-    where shaders.id::text = (storage.foldername(name))[2]
+    where shaders.id::text = (storage.foldername(storage.objects.name))[2]
       and shaders.owner_id = (select auth.uid())
   )
 );
