@@ -397,9 +397,6 @@ body,
             margin-right: calc(var(--spacer-2) * -1);
           }
 
-          .properties-toggle-icon {
-            transform: rotate(90deg);
-          }
         }
       }
     }
@@ -891,7 +888,7 @@ dialog[is="fig-toast"].publish-toast {
   }
 
   > fig-header[dialog-header] {
-
+    cursor: pointer;
 
     hstack {
       flex: 0 0 auto;
@@ -906,6 +903,14 @@ dialog[is="fig-toast"].publish-toast {
       > :last-child fig-button[icon][variant="ghost"],
       > fig-button[icon][variant="ghost"]:last-child {
         margin-right: calc(var(--spacer-2) * -1);
+      }
+    }
+
+    .properties-chevron {
+      transition: transform 120ms ease;
+
+      &.is-collapsed {
+        transform: rotate(-90deg);
       }
     }
   }

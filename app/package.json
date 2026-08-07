@@ -13,7 +13,7 @@
     "@codemirror/lang-javascript": "^6.2.2",
     "@codemirror/view": "^6.38.6",
     "@replit/codemirror-interact": "^6.3.1",
-    "@rogieking/figui3": "^6.24.4",
+    "@rogieking/figui3": "^6.24.5",
     "@supabase/supabase-js": "^2.110.7",
     "@uiw/codemirror-theme-xcode": "^4.25.2",
     "@uiw/react-codemirror": "^4.23.7",
