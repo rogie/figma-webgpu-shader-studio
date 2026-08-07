@@ -83,8 +83,8 @@ export class ShaderHost {
       }
     });
 
-    this.canvas.addEventListener("pointermove", this._onMouse);
-    this.canvas.addEventListener("pointerleave", () => {
+    this.canvas.addEventListener?.("pointermove", this._onMouse);
+    this.canvas.addEventListener?.("pointerleave", () => {
       this.frame.mousePosition = { x: 0, y: 0 };
     });
     this.ready = true;
@@ -113,10 +113,10 @@ export class ShaderHost {
     if (this.canvas.width !== w) this.canvas.width = w;
     if (this.canvas.height !== h) this.canvas.height = h;
 
-    if (cssWidth != null && cssHeight != null) {
+    if (cssWidth != null && cssHeight != null && this.canvas.style) {
       this.canvas.style.width = `${cssWidth}px`;
       this.canvas.style.height = `${cssHeight}px`;
-    } else if (clearCssSize) {
+    } else if (clearCssSize && this.canvas.style) {
       this.canvas.style.removeProperty("width");
       this.canvas.style.removeProperty("height");
     }
@@ -236,6 +236,7 @@ export class ShaderHost {
         usage:
           GPUTextureUsage.TEXTURE_BINDING |
           GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.COPY_SRC |
           GPUTextureUsage.RENDER_ATTACHMENT,
       });
       textureChanged = true;
@@ -340,11 +341,11 @@ export class ShaderHost {
   }
 
   _bindHtmlPaint() {
-    this.canvas.addEventListener("paint", this._onHtmlPaint);
+    this.canvas.addEventListener?.("paint", this._onHtmlPaint);
   }
 
   _unbindHtmlPaint() {
-    this.canvas.removeEventListener("paint", this._onHtmlPaint);
+    this.canvas.removeEventListener?.("paint", this._onHtmlPaint);
     if (this.canvas.onpaint === this._onHtmlPaint) {
       this.canvas.onpaint = null;
     }
@@ -444,6 +445,60 @@ export class ShaderHost {
     }
   }
 
+  async captureInputBitmap({ width, height } = {}) {
+    if (!this.ready || !this.inputTexture) return null;
+    if (this.video) this._uploadVideoFrame();
+    if (this.htmlElement) this._uploadHtmlFrame();
+
+    const texture = this.inputTexture;
+    const srcW = texture.width;
+    const srcH = texture.height;
+    const bytesPerRow = Math.ceil((srcW * 4) / 256) * 256;
+    const readbackBuffer = this.device.createBuffer({
+      size: bytesPerRow * srcH,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture },
+        { buffer: readbackBuffer, bytesPerRow },
+        { width: srcW, height: srcH }
+      );
+      this.device.queue.submit([encoder.finish()]);
+      await readbackBuffer.mapAsync(GPUMapMode.READ);
+      const packed = this._packTextureReadback(
+        new Uint8Array(readbackBuffer.getMappedRange()),
+        srcW,
+        srcH,
+        bytesPerRow,
+        "rgba8unorm"
+      );
+      readbackBuffer.unmap();
+
+      const targetW = Math.max(1, Math.round(width || srcW));
+      const targetH = Math.max(1, Math.round(height || srcH));
+      const scale = Math.max(targetW / srcW, targetH / srcH);
+      const cropW = Math.max(1, targetW / scale);
+      const cropH = Math.max(1, targetH / scale);
+      return await createImageBitmap(
+        new ImageData(packed, srcW, srcH),
+        Math.max(0, (srcW - cropW) / 2),
+        Math.max(0, (srcH - cropH) / 2),
+        cropW,
+        cropH,
+        {
+          resizeWidth: targetW,
+          resizeHeight: targetH,
+          resizeQuality: "high",
+        }
+      );
+    } finally {
+      readbackBuffer.destroy();
+    }
+  }
+
   /**
    * Snapshot the current preview into a square image blob (default 512²).
    * Reads pixels via copyTextureToBuffer — WebGPU canvas 2D drawImage often
@@ -527,9 +582,15 @@ export class ShaderHost {
     }
   }
 
-  _packTextureReadback(data, width, height, bytesPerRow) {
+  _packTextureReadback(
+    data,
+    width,
+    height,
+    bytesPerRow,
+    format = this.format
+  ) {
     const packed = new Uint8ClampedArray(width * height * 4);
-    const bgra = this.format.startsWith("bgra");
+    const bgra = format.startsWith("bgra");
     for (let y = 0; y < height; y++) {
       const srcRow = y * bytesPerRow;
       const dstRow = y * width * 4;
@@ -736,6 +797,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.rafId = requestAnimationFrame(this._loopBound);
   }
 
+  renderFrame(time, deltaTime, frameNumber) {
+    if (!this.ready || !this.renderFn) return null;
+    this.frame.time = time;
+    this.frame.deltaTime = deltaTime;
+    this.frame.frame = frameNumber;
+    return this._present();
+  }
+
   stop() {
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
@@ -763,7 +832,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.stop();
     this._teardownState();
     this.clearInput();
-    this.canvas.removeEventListener("pointermove", this._onMouse);
+    this.canvas.removeEventListener?.("pointermove", this._onMouse);
     if (this.device) {
       try {
         this.device.destroy();

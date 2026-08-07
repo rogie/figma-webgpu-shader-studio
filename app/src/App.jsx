@@ -3,11 +3,17 @@ import AccountMenu from "./components/AccountMenu.jsx";
 import ChatPane from "./components/ChatPane.jsx";
 import CodePane from "./components/CodePane.jsx";
 import Controls from "./components/Controls.jsx";
+import ExportIcon from "./components/ExportIcon.jsx";
 import Preview from "./components/Preview.jsx";
 import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
+import {
+  renderVideoInWorker,
+  resolveVideoDimensions,
+  VIDEO_DIMENSION_OPTIONS,
+} from "./runtime/exportVideo.js";
 import { ShaderHost } from "./runtime/host.js";
 import { loadModule } from "./runtime/loader.js";
 import {
@@ -374,6 +380,14 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishToast, setPublishToast] = useState(null);
+  const [videoExportOpen, setVideoExportOpen] = useState(false);
+  const [videoExportSettings, setVideoExportSettings] = useState({
+    dimensions: "current",
+    duration: 5,
+    frameRate: 30,
+    bitrate: 8,
+  });
+  const [videoExportProgress, setVideoExportProgress] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
@@ -446,6 +460,12 @@ export default function App() {
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
+  const videoExportDialogRef = useRef(null);
+  const videoExportToastRef = useRef(null);
+  const videoExportedToastRef = useRef(null);
+  const videoDimensionsRef = useRef(null);
+  const videoFrameRateRef = useRef(null);
+  const videoBitrateRef = useRef(null);
   const deleteDialogRef = useRef(null);
   const propertiesDialogRef = useRef(null);
   const hostRef = useRef(null);
@@ -635,6 +655,66 @@ export default function App() {
       popup.open = false;
     }
   }, [publishOpen]);
+
+  useEffect(() => {
+    const dialog = videoExportDialogRef.current;
+    if (!dialog) return;
+    if (videoExportOpen) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [videoExportOpen]);
+
+  useEffect(() => {
+    const toast = videoExportToastRef.current;
+    if (!toast) return;
+    if (videoExportProgress) {
+      toast.showToast?.();
+    } else {
+      toast.hideToast?.();
+    }
+  }, [videoExportProgress]);
+
+  useEffect(() => {
+    const dimensionsSelect = videoDimensionsRef.current;
+    const frameRateSelect = videoFrameRateRef.current;
+    const bitrateSelect = videoBitrateRef.current;
+    const readValue = (event) => {
+      const detail = event.detail;
+      return String(
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value)
+      );
+    };
+    const onFrameRate = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        frameRate: Number(readValue(event)),
+      }));
+    };
+    const onDimensions = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        dimensions: readValue(event),
+      }));
+    };
+    const onBitrate = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        bitrate: Number(readValue(event)),
+      }));
+    };
+    dimensionsSelect?.addEventListener("change", onDimensions);
+    frameRateSelect?.addEventListener("change", onFrameRate);
+    bitrateSelect?.addEventListener("change", onBitrate);
+    return () => {
+      dimensionsSelect?.removeEventListener("change", onDimensions);
+      frameRateSelect?.removeEventListener("change", onFrameRate);
+      bitrateSelect?.removeEventListener("change", onBitrate);
+    };
+  }, []);
 
   useEffect(() => {
     const dialog = deleteDialogRef.current;
@@ -1875,6 +1955,80 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }, [shaderName]);
 
+  const exportPreviewVideo = useCallback(async () => {
+    const host = hostRef.current;
+    const canvas = host?.canvas;
+    if (!host?.ready || !canvas?.width || !canvas?.height) {
+      setError("Preview video is not ready to export.");
+      return;
+    }
+
+    const duration = Math.min(
+      30,
+      Math.max(1, Number(videoExportSettings.duration) || 5)
+    );
+    const frameRate = Math.min(
+      60,
+      Math.max(12, Number(videoExportSettings.frameRate) || 30)
+    );
+    const bitrate = Math.min(
+      32,
+      Math.max(1, Number(videoExportSettings.bitrate) || 8)
+    );
+    const { width, height } = resolveVideoDimensions(
+      videoExportSettings.dimensions,
+      canvas.width,
+      canvas.height
+    );
+
+    setVideoExportOpen(false);
+    setVideoExportProgress({ progress: 0 });
+
+    try {
+      const inputBitmap =
+        kind === "effect"
+          ? await host.captureInputBitmap({ width, height })
+          : null;
+      if (kind === "effect" && !inputBitmap) {
+        throw new Error("Could not snapshot the current shader input.");
+      }
+      const blob = await renderVideoInWorker({
+        source: sourceRef.current,
+        values: valuesRef.current,
+        isFill: kind === "fill",
+        inputBitmap,
+        width,
+        height,
+        duration,
+        frameRate,
+        bitrate,
+        onProgress: (progress) =>
+          setVideoExportProgress({ progress }),
+      });
+
+      setVideoExportProgress({ progress: 1 });
+      const baseName =
+        (shaderName || "shader")
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-+|-+$/g, "") || "shader";
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${baseName}.webm`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 0);
+      videoExportedToastRef.current?.showToast?.();
+    } catch (videoError) {
+      setError(videoError.message || String(videoError));
+    } finally {
+      setVideoExportProgress(null);
+    }
+  }, [kind, shaderName, videoExportSettings]);
+
   const saveShader = useCallback(
     async (options = {}) => {
       if (!user) {
@@ -3073,21 +3227,36 @@ export default function App() {
                 200%
               </fig-menu-item>
             </fig-menu>
-            <fig-tooltip text="Download WebP">
-              <fig-button
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label="Download full preview as WebP"
+            <fig-menu position="top right">
+              <fig-tooltip text="Export">
+                <fig-button
+                  fig-menu-trigger=""
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Export preview"
+                  disabled={videoExportProgress ? "" : undefined}
+                >
+                  <ExportIcon />
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item
+                value="image"
                 onClick={() => {
                   downloadPreviewImage().catch((downloadError) => {
                     setError(downloadError.message || String(downloadError));
                   });
                 }}
               >
-                <fig-icon name="download" />
-              </fig-button>
-            </fig-tooltip>
+                Image
+              </fig-menu-item>
+              <fig-menu-item
+                value="video"
+                onClick={() => setVideoExportOpen(true)}
+              >
+                Video…
+              </fig-menu-item>
+            </fig-menu>
             {kind === "effect" && (
               <>
                 <fig-select
@@ -3119,6 +3288,127 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      <dialog
+        is="fig-dialog"
+        ref={videoExportDialogRef}
+        class="video-export-dialog"
+        title="Export video"
+        modal=""
+        closedby="closerequest"
+        position="center center"
+        autoresize=""
+        onClose={() => setVideoExportOpen(false)}
+        onCancel={() => setVideoExportOpen(false)}
+      >
+        <fig-content>
+          <fig-field direction="horizontal" columns="thirds">
+            <label>Dimensions</label>
+            <fig-select
+              ref={videoDimensionsRef}
+              value={videoExportSettings.dimensions}
+              position="bottom right"
+              full=""
+              options={JSON.stringify(VIDEO_DIMENSION_OPTIONS)}
+              dangerouslySetInnerHTML={opaqueContent}
+            />
+          </fig-field>
+          <fig-field direction="horizontal" columns="thirds">
+            <label>Duration</label>
+            <fig-slider
+              value={videoExportSettings.duration}
+              min="1"
+              max="30"
+              step="1"
+              units="s"
+              full=""
+              onInput={(event) =>
+                setVideoExportSettings((settings) => ({
+                  ...settings,
+                  duration: Number(event.target.value ?? event.detail),
+                }))
+              }
+              dangerouslySetInnerHTML={opaqueContent}
+            />
+          </fig-field>
+          <fig-field direction="horizontal" columns="thirds">
+            <label>Frame rate</label>
+            <fig-select
+              ref={videoFrameRateRef}
+              value={videoExportSettings.frameRate}
+              position="bottom right"
+              full=""
+              options={JSON.stringify([
+                { value: "24", label: "24 fps" },
+                { value: "30", label: "30 fps" },
+                { value: "60", label: "60 fps" },
+              ])}
+              dangerouslySetInnerHTML={opaqueContent}
+            />
+          </fig-field>
+          <fig-field direction="horizontal" columns="thirds">
+            <label>Bitrate</label>
+            <fig-select
+              ref={videoBitrateRef}
+              value={videoExportSettings.bitrate}
+              position="bottom right"
+              full=""
+              options={JSON.stringify([
+                { value: "4", label: "4 Mbps" },
+                { value: "8", label: "8 Mbps" },
+                { value: "16", label: "16 Mbps" },
+                { value: "32", label: "32 Mbps" },
+              ])}
+              dangerouslySetInnerHTML={opaqueContent}
+            />
+          </fig-field>
+        </fig-content>
+        <fig-footer>
+          <fig-button
+            type="button"
+            variant="primary"
+            onClick={() => {
+              exportPreviewVideo().catch((videoError) => {
+                setVideoExportProgress(null);
+                setError(videoError.message || String(videoError));
+              });
+            }}
+          >
+            Export
+          </fig-button>
+        </fig-footer>
+      </dialog>
+
+      <dialog
+        is="fig-toast"
+        ref={videoExportToastRef}
+        class="video-export-toast"
+        theme="dark"
+        live="polite"
+        duration="0"
+      >
+        <span className="video-export-progress">
+          <fig-spinner aria-label="Exporting video" />
+          <span>
+            Exporting video…{" "}
+            {Math.round((videoExportProgress?.progress || 0) * 100)}%
+          </span>
+        </span>
+      </dialog>
+
+      <dialog
+        is="fig-toast"
+        ref={videoExportedToastRef}
+        class="video-exported-toast"
+        theme="brand"
+        live="polite"
+        duration="3200"
+      >
+        <span className="video-export-toast-body">
+          <fig-icon name="checkmark" size="small" />
+          <span>Video exported</span>
+        </span>
+      </dialog>
 
       <dialog
         is="fig-dialog"
