@@ -462,6 +462,7 @@ export default function App() {
   inputSourceRef.current = inputSource;
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
+  const lastCompiledPresetRef = useRef(presetId);
   const previewParamsRafRef = useRef(0);
   const videoRef = useRef(null);
   const mediaUrlRef = useRef(null);
@@ -1146,9 +1147,15 @@ export default function App() {
   useEffect(() => {
     if (!hostRef.current?.ready) return;
     clearTimeout(compileTimer.current);
+    const switchedShader = lastCompiledPresetRef.current !== presetId;
+    lastCompiledPresetRef.current = presetId;
+    if (switchedShader) {
+      compile(source);
+      return;
+    }
     compileTimer.current = setTimeout(() => compile(source), 350);
     return () => clearTimeout(compileTimer.current);
-  }, [source, compile]);
+  }, [source, presetId, compile]);
 
   useEffect(
     () => () => {
@@ -2527,33 +2534,6 @@ export default function App() {
         <div className="app-nav-headers">
           <fig-header class="app-nav-header">
             <h2 className="app-title">Shader studio</h2>
-            {viewMode === "editor" && (
-              <fig-menu class="new-shader-menu" position="bottom right">
-                <fig-tooltip text="New Figma shader">
-                  <fig-button
-                    fig-menu-trigger=""
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="New Figma shader"
-                  >
-                    <fig-icon name="add" />
-                  </fig-button>
-                </fig-tooltip>
-                <fig-menu-item
-                  value="effect"
-                  onClick={() => createDraft("blank-effect")}
-                >
-                  Shader effect
-                </fig-menu-item>
-                <fig-menu-item
-                  value="fill"
-                  onClick={() => createDraft("blank-fill")}
-                >
-                  Shader fill
-                </fig-menu-item>
-              </fig-menu>
-            )}
             {viewMode === "home" && (
               <div className="app-nav-home-tools">
                 <fig-input-text
@@ -2591,6 +2571,43 @@ export default function App() {
                 />
               </div>
             )}
+            <hstack class="app-nav-header-actions">
+              {viewMode === "editor" && (
+                <fig-menu class="new-shader-menu" position="bottom right">
+                  <fig-tooltip text="New Figma shader">
+                    <fig-button
+                      fig-menu-trigger=""
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="New Figma shader"
+                    >
+                      <fig-icon name="add" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item
+                    value="effect"
+                    onClick={() => createDraft("blank-effect")}
+                  >
+                    Shader effect
+                  </fig-menu-item>
+                  <fig-menu-item
+                    value="fill"
+                    onClick={() => createDraft("blank-fill")}
+                  >
+                    Shader fill
+                  </fig-menu-item>
+                </fig-menu>
+              )}
+              <AccountMenu
+                open={authOpen}
+                onOpenChange={setAuthOpen}
+                theme={theme}
+                onThemeChange={setTheme}
+                settingsOpen={settingsOpen}
+                onSettingsOpenChange={setSettingsOpen}
+              />
+            </hstack>
           </fig-header>
           {viewMode === "editor" && (
             <>
@@ -2708,16 +2725,6 @@ export default function App() {
             );
           })}
         </fig-chooser>
-        <fig-footer class="app-nav-actions" sticky="">
-          <AccountMenu
-            open={authOpen}
-            onOpenChange={setAuthOpen}
-            theme={theme}
-            onThemeChange={setTheme}
-            settingsOpen={settingsOpen}
-            onSettingsOpenChange={setSettingsOpen}
-          />
-        </fig-footer>
       </nav>
 
       {viewMode === "editor" && (

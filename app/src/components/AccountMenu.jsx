@@ -146,14 +146,13 @@ export default function AccountMenu({
 
   return (
     <>
-      <fig-menu key={menuKey} position="top right">
+      <fig-menu key={menuKey} position="bottom right">
         <fig-tooltip text={user ? user.email || "Account" : "Settings"}>
           <fig-button
             ref={settingsAnchorRef}
             fig-menu-trigger=""
             variant="ghost"
             icon="true"
-            size="large"
             aria-label={user ? "Account" : "Settings"}
             disabled={!user && loading ? "" : undefined}
           >
@@ -201,7 +200,7 @@ export default function AccountMenu({
         is="fig-popup"
         ref={authPopupRef}
         class="auth-popup"
-        position="top right"
+        position="bottom right"
         offset="8 0"
         variant="popover"
         theme="menu"
@@ -289,7 +288,7 @@ export default function AccountMenu({
         is="fig-popup"
         ref={settingsDialogRef}
         class="settings-popup"
-        position="top right"
+        position="bottom right"
         offset="8 0"
         variant="popover"
         theme="menu"

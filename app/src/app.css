@@ -30,7 +30,7 @@ body,
     padding: 0;
     display: flex;
     flex-direction: column;
-    justify-content: space-between;
+    justify-content: flex-start;
     align-items: stretch;
     min-width: 0;
     min-height: 0;
@@ -76,15 +76,6 @@ body,
     .app-nav-filter {
       flex: 0 0 auto;
       width: 9.5rem;
-    }
-
-    fig-footer.app-nav-actions {
-      flex-direction: row;
-      align-items: center;
-      justify-content: center;
-      gap: var(--spacer-1);
-      width: 100%;
-      box-sizing: border-box;
     }
 
     .account-avatar {
@@ -190,12 +181,6 @@ body,
         .shader-nav-card {
           min-height: 10rem;
         }
-      }
-
-      fig-footer.app-nav-actions {
-        justify-content: flex-end;
-        padding-inline: 0;
-        box-shadow: none;
       }
 
       @media (max-width: 1100px) {
