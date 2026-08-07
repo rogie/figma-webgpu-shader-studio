@@ -43,11 +43,11 @@ import {
   makeShareUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
+  upsertShader,
   updateShader,
   uploadAsset,
 } from "./services/shaders.js";
 
-import logo from "./assets/logo.svg";
 
 // FigUI3 builds light-DOM internals; a stable opaque marker keeps React from
 // wiping those nodes when the parent re-renders.
@@ -56,6 +56,9 @@ const opaqueContent = { __html: "" };
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
 const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
+const DEFAULT_APP_NAV_WIDTH = 180;
+const MIN_APP_NAV_WIDTH = 112;
+const MAX_APP_NAV_WIDTH = 400;
 const DEFAULT_CODE_WIDTH = 480;
 const MIN_CODE_WIDTH = 320;
 const MIN_PREVIEW_WIDTH = 220;
@@ -65,6 +68,7 @@ const DEFAULT_CHAT_HEIGHT = 260;
 const MIN_CHAT_HEIGHT = 220;
 const MIN_CODE_EDITOR_HEIGHT = 140;
 const STACKED_MEDIA_QUERY = "(max-width: 900px)";
+const APP_NAV_WIDTH_STORAGE_KEY = "figma-shader-studio:app-nav-width";
 const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
 const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
 const PREVIEW_HEIGHT_STORAGE_KEY = "figma-shader-studio:preview-height";
@@ -152,6 +156,10 @@ function cloudChoiceId(id) {
 
 function isDraftId(id) {
   return typeof id === "string" && id.startsWith("draft:");
+}
+
+function cloudIdForDraft(id) {
+  return isDraftId(id) ? id.slice("draft:".length) : id;
 }
 
 function serializeDraft(draft, thumbnail = null) {
@@ -249,6 +257,15 @@ function defaultCodeWidth() {
   return window.innerWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
 }
 
+function savedAppNavWidth() {
+  const value = Number(localStorage.getItem(APP_NAV_WIDTH_STORAGE_KEY));
+  return Number.isFinite(value) &&
+    value >= MIN_APP_NAV_WIDTH &&
+    value <= MAX_APP_NAV_WIDTH
+    ? value
+    : DEFAULT_APP_NAV_WIDTH;
+}
+
 function savedCodeWidth() {
   const value = Number(localStorage.getItem(CODE_WIDTH_STORAGE_KEY));
   return Number.isFinite(value) && value >= MIN_CODE_WIDTH
@@ -300,7 +317,11 @@ function measureSpacer(token) {
 }
 
 export default function App() {
-  const { user, loading: authLoading } = useAuth();
+  const {
+    user,
+    loading: authLoading,
+    configured: authConfigured,
+  } = useAuth();
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
   const [source, setSource] = useState(INITIAL.source);
@@ -333,6 +354,7 @@ export default function App() {
   const [publishToast, setPublishToast] = useState(null);
   const [notice, setNotice] = useState("");
   const [isPublic, setIsPublic] = useState(false);
+  const [appNavWidth, setAppNavWidth] = useState(savedAppNavWidth);
   const [codeWidth, setCodeWidth] = useState(savedCodeWidth);
   const [chatHeight, setChatHeight] = useState(savedChatHeight);
   const [previewHeight, setPreviewHeight] = useState(savedPreviewHeight);
@@ -340,6 +362,7 @@ export default function App() {
   const [theme, setTheme] = useState(savedTheme);
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [homeQuery, setHomeQuery] = useState("");
+  const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
   const [homeOrigin, setHomeOrigin] = useState("all");
   const [propertiesOpen, setPropertiesOpen] = useState(true);
@@ -413,6 +436,7 @@ export default function App() {
   const videoRef = useRef(null);
   const mediaUrlRef = useRef(null);
   const sharedLoadedRef = useRef(false);
+  const migratedUserRef = useRef(null);
   const draftSessionRef = useRef({
     presetId,
     shaderName,
@@ -449,10 +473,12 @@ export default function App() {
   }, [running]);
 
   useEffect(() => {
+    if (user) return;
     writeDrafts(drafts, thumbnailDataUrlsRef.current);
-  }, [drafts, thumbnails]);
+  }, [drafts, thumbnails, user]);
 
   useEffect(() => {
+    if (user) return;
     if (!isDraftId(presetId)) {
       localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
       return;
@@ -485,7 +511,7 @@ export default function App() {
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [isPublic, pendingMedia, presetId, shaderName, source, values]);
+  }, [isPublic, pendingMedia, presetId, shaderName, source, user, values]);
 
   useEffect(() => {
     const flush = () => {
@@ -1193,6 +1219,41 @@ export default function App() {
         isPublic: false,
         pendingMedia: null,
       };
+      if (user) {
+        const saved = await createShader({
+          id: cloudIdForDraft(id),
+          owner_id: user.id,
+          name: draft.name,
+          source: draft.source,
+          kind: draft.kind,
+          parameter_values: {},
+          features: inferFeatures(draft.source),
+          is_public: false,
+        });
+        pendingValuesRef.current = {};
+        hostRef.current?.stop();
+        setError(null);
+        setCurrentShader(saved);
+        setPresetId(cloudChoiceId(saved.id));
+        setShaderRoute(saved.id);
+        setShaderName(saved.name);
+        setSource(saved.source);
+        setIsPublic(false);
+        setPendingMedia(null);
+        setDirty(true);
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        if (hostRef.current?.ready) {
+          if (preset.kind === "effect") await reapplyPreferredInput();
+          else {
+            clearObjectUrl();
+            hostRef.current.clearInput();
+          }
+        }
+        return;
+      }
       setDrafts((current) => [draft, ...current]);
       pendingValuesRef.current = {};
       hostRef.current?.stop();
@@ -1213,7 +1274,13 @@ export default function App() {
         }
       }
     },
-    [clearObjectUrl, persistActiveDraft, reapplyPreferredInput, setShaderRoute]
+    [
+      clearObjectUrl,
+      persistActiveDraft,
+      reapplyPreferredInput,
+      setShaderRoute,
+      user,
+    ]
   );
 
   const openCloudShader = useCallback(
@@ -1244,13 +1311,15 @@ export default function App() {
   );
 
   const refreshLibrary = useCallback(async () => {
-    if (!user) {
+    if (!authConfigured) {
       setCloudShaders([]);
       setCloudThumbnails({});
       return;
     }
     try {
-      const shaders = await listShaders(user.id);
+      // Row-level security returns public shaders to everyone and adds the
+      // current user's private drafts when signed in.
+      const shaders = await listShaders();
       setCloudShaders(shaders);
       const entries = await Promise.all(
         shaders.map(async (shader) => {
@@ -1266,11 +1335,150 @@ export default function App() {
     } catch (libraryError) {
       setError(libraryError.message || String(libraryError));
     }
-  }, [user]);
+  }, [authConfigured, user]);
 
   useEffect(() => {
     refreshLibrary();
   }, [refreshLibrary]);
+
+  useEffect(() => {
+    if (!user) {
+      migratedUserRef.current = null;
+      return;
+    }
+    if (
+      authLoading ||
+      migratedUserRef.current === user.id ||
+      drafts.length === 0
+    ) {
+      return;
+    }
+    migratedUserRef.current = user.id;
+    let cancelled = false;
+
+    const migrate = async () => {
+      const remaining = [];
+      const migrated = [];
+      let activeMigration = null;
+      let lastError = null;
+      const activeRouteId = getShaderRouteId();
+
+      for (const draft of drafts) {
+        const editorActive = draft.id === draftSessionRef.current.presetId;
+        const active =
+          editorActive || draft.id === activeRouteId;
+        const session = editorActive ? draftSessionRef.current : draft;
+        try {
+          let saved = await upsertShader({
+            id: cloudIdForDraft(draft.id),
+            owner_id: user.id,
+            name: session.shaderName || draft.name || "Untitled Shader",
+            source: session.source || draft.source,
+            kind: detectKind(session.source || draft.source),
+            parameter_values: session.values || draft.values || {},
+            features: inferFeatures(session.source || draft.source),
+            is_public: false,
+          });
+
+          const assetChanges = {};
+          const media = active ? session.pendingMedia : draft.pendingMedia;
+          if (media) {
+            assetChanges.input_path = await uploadAsset({
+              ownerId: user.id,
+              shaderId: saved.id,
+              role: "input",
+              blob: media,
+              fileName: media.name,
+              contentType: mediaType(media),
+            });
+            assetChanges.input_name = media.name;
+            assetChanges.input_mime_type = mediaType(media);
+          }
+
+          const thumbnailData =
+            thumbnailDataUrlsRef.current[draft.id] || draft.thumbnail;
+          if (thumbnailData?.startsWith("data:image/")) {
+            const thumbnailBlob = await fetch(thumbnailData).then((response) =>
+              response.blob()
+            );
+            assetChanges.thumbnail_path = await uploadAsset({
+              ownerId: user.id,
+              shaderId: saved.id,
+              role: "thumbnail",
+              blob: thumbnailBlob,
+              fileName: "thumbnail.webp",
+              contentType: thumbnailBlob.type || "image/webp",
+            });
+          }
+
+          if (Object.keys(assetChanges).length) {
+            saved = await updateShader(saved.id, assetChanges);
+          }
+          migrated.push(saved);
+          if (active) activeMigration = saved;
+          delete thumbnailDataUrlsRef.current[draft.id];
+        } catch (migrationError) {
+          remaining.push(draft);
+          lastError = migrationError;
+        }
+      }
+
+      if (cancelled) return;
+      setDrafts(remaining);
+      writeDrafts(remaining, thumbnailDataUrlsRef.current);
+      if (remaining.length === 0) {
+        localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
+      }
+      setThumbnails((current) => {
+        const next = { ...current };
+        for (const draft of drafts) {
+          if (remaining.some((item) => item.id === draft.id)) continue;
+          revokeThumbnailUrl(next[draft.id]);
+          delete next[draft.id];
+        }
+        return next;
+      });
+      setCloudShaders((current) => [
+        ...migrated,
+        ...current.filter(
+          (item) => !migrated.some((saved) => saved.id === item.id)
+        ),
+      ]);
+
+      if (activeMigration) {
+        pendingValuesRef.current = activeMigration.parameter_values || {};
+        setCurrentShader(activeMigration);
+        setPresetId(cloudChoiceId(activeMigration.id));
+        setShaderRoute(activeMigration.id);
+        setShaderName(activeMigration.name);
+        setSource(activeMigration.source);
+        setIsPublic(false);
+        setPendingMedia(null);
+        setDirty(false);
+      }
+      if (lastError) {
+        setError(
+          `Some local drafts could not sync: ${
+            lastError.message || String(lastError)
+          }`
+        );
+      }
+      await refreshLibrary();
+    };
+
+    migrate().catch((migrationError) =>
+      setError(migrationError.message || String(migrationError))
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    authLoading,
+    drafts,
+    refreshLibrary,
+    setShaderRoute,
+    user,
+  ]);
 
   const choosePreset = useCallback(
     async (id, { syncUrl = true } = {}) => {
@@ -1318,12 +1526,6 @@ export default function App() {
     },
     [choosePreset, presetId, routeId]
   );
-
-  const goHome = useCallback((event) => {
-    event?.preventDefault();
-    persistActiveDraft();
-    setShaderRoute();
-  }, [persistActiveDraft, setShaderRoute]);
 
   const openRouteId = useCallback(
     (id) => {
@@ -1556,10 +1758,18 @@ export default function App() {
         return null;
       }
       const makePublic = options.makePublic === true;
+      const background = options.background === true;
       const publicFlag = makePublic || isPublic;
       const noticeMessage =
         "notice" in options ? options.notice : "Shader saved";
-      setSaving(true);
+      const saveSnapshot = {
+        name: shaderName.trim() || "Untitled Shader",
+        source: sourceRef.current,
+        values: JSON.stringify(valuesRef.current),
+        isPublic: publicFlag,
+        pendingMedia,
+      };
+      if (!background) setSaving(true);
       setError(null);
       try {
         const payload = {
@@ -1571,6 +1781,12 @@ export default function App() {
           features: inferFeatures(sourceRef.current),
           is_public: publicFlag,
         };
+        // Background draft autosaves must never race an explicit publish or
+        // unpublish action. Visibility changes are only persisted by Save or
+        // Publish.
+        if (background && isOwner && currentShader) {
+          delete payload.is_public;
+        }
 
         let saved =
           isOwner && currentShader
@@ -1645,8 +1861,18 @@ export default function App() {
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
         setShaderRoute(saved.id);
-        setPendingMedia(null);
-        setDirty(false);
+        const latest = draftSessionRef.current;
+        const unchanged =
+          (latest.shaderName.trim() || "Untitled Shader") ===
+            saveSnapshot.name &&
+          latest.source === saveSnapshot.source &&
+          JSON.stringify(latest.values) === saveSnapshot.values &&
+          Boolean(latest.isPublic) === saveSnapshot.isPublic &&
+          latest.pendingMedia === saveSnapshot.pendingMedia;
+        if (!background || unchanged) {
+          setPendingMedia(null);
+          setDirty(false);
+        }
         if (isDraftId(presetId)) {
           setDrafts((current) =>
             current.filter((item) => item.id !== presetId)
@@ -1674,7 +1900,7 @@ export default function App() {
         setError(saveError.message || String(saveError));
         throw saveError;
       } finally {
-        setSaving(false);
+        if (!background) setSaving(false);
       }
     },
     [
@@ -1690,6 +1916,17 @@ export default function App() {
       user,
     ]
   );
+
+  useEffect(() => {
+    if (!user || !currentShader || !isOwner || !dirty || saving) return;
+    if (Boolean(isPublic) !== Boolean(currentShader.is_public)) return;
+    const timer = window.setTimeout(() => {
+      saveShader({ background: true, notice: null }).catch(() => {
+        // The editor remains dirty so a later edit or explicit Save can retry.
+      });
+    }, 1200);
+    return () => window.clearTimeout(timer);
+  }, [currentShader, dirty, isOwner, isPublic, saveShader, saving, user]);
 
   const publishShader = useCallback(async () => {
     if (!user) {
@@ -1740,6 +1977,31 @@ export default function App() {
       isPublic: false,
       pendingMedia: mediaFile,
     };
+    if (user) {
+      const saved = await createShader({
+        id: cloudIdForDraft(id),
+        owner_id: user.id,
+        name,
+        source: draft.source,
+        kind: draft.kind,
+        parameter_values: draft.values,
+        features: inferFeatures(draft.source),
+        is_public: false,
+      });
+      setCurrentShader(saved);
+      setPresetId(cloudChoiceId(saved.id));
+      setShaderRoute(saved.id);
+      setShaderName(name);
+      setIsPublic(false);
+      setPendingMedia(mediaFile);
+      setDirty(true);
+      setCloudShaders((current) => [
+        saved,
+        ...current.filter((item) => item.id !== saved.id),
+      ]);
+      showNotice("Private draft created");
+      return;
+    }
     setDrafts((current) => [draft, ...current]);
     setCurrentShader(null);
     setPresetId(id);
@@ -1756,6 +2018,7 @@ export default function App() {
     setShaderRoute,
     shaderName,
     showNotice,
+    user,
   ]);
 
   const removeCloudShader = useCallback(
@@ -1797,6 +2060,12 @@ export default function App() {
     showNotice("Share link copied");
   }, [currentShader, dirty, showNotice]);
 
+  const saveAppNavWidth = useCallback((width) => {
+    const rounded = Math.round(width);
+    setAppNavWidth(rounded);
+    localStorage.setItem(APP_NAV_WIDTH_STORAGE_KEY, String(rounded));
+  }, []);
+
   const saveCodeWidth = useCallback((width) => {
     const rounded = Math.round(width);
     setCodeWidth(rounded);
@@ -1818,6 +2087,53 @@ export default function App() {
     const rounded = Math.round(height);
     setPreviewHeight(rounded);
     localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(rounded));
+  }, []);
+
+  const resizeAppNav = useCallback((event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+
+    const handle = event.currentTarget;
+    const nav = handle.previousElementSibling;
+    if (!nav) return;
+
+    const startX = event.clientX;
+    const startWidth = nav.getBoundingClientRect().width;
+    const maxWidth = Math.max(
+      MIN_APP_NAV_WIDTH,
+      Math.min(MAX_APP_NAV_WIDTH, window.innerWidth - 420)
+    );
+    let finalWidth = startWidth;
+    handle.setPointerCapture(event.pointerId);
+
+    const onPointerMove = (moveEvent) => {
+      const next = Math.min(
+        maxWidth,
+        Math.max(
+          MIN_APP_NAV_WIDTH,
+          startWidth + moveEvent.clientX - startX
+        )
+      );
+      finalWidth = next;
+      setAppNavWidth(Math.round(next));
+    };
+
+    const onPointerUp = (upEvent) => {
+      if (handle.hasPointerCapture(upEvent.pointerId)) {
+        handle.releasePointerCapture(upEvent.pointerId);
+      }
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerUp);
+      localStorage.setItem(
+        APP_NAV_WIDTH_STORAGE_KEY,
+        String(Math.round(finalWidth))
+      );
+    };
+
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", onPointerUp);
+    handle.addEventListener("pointercancel", onPointerUp);
   }, []);
 
   const resizeCodePane = useCallback(
@@ -2013,8 +2329,7 @@ export default function App() {
   ]);
 
   const libraryCards = buildShaderLibraryCards({
-    presets: PRESETS,
-    drafts,
+    drafts: user ? [] : drafts,
     cloudShaders,
     thumbnails,
     cloudThumbnails,
@@ -2031,62 +2346,134 @@ export default function App() {
           kind: homeKind,
           origin: homeOrigin,
         })
-      : libraryCards;
+      : filterShaderLibraryCards(libraryCards, { query: editorQuery });
+  const visibleEffectCards = visibleCards.filter(
+    (card) => card.kind === "effect"
+  );
+  const visibleFillCards = visibleCards.filter((card) => card.kind === "fill");
+  const groupedVisibleCards = [
+    ...(visibleEffectCards.length
+      ? [
+          { key: "separator:effect", separatorLabel: "Shader effect" },
+          ...visibleEffectCards,
+        ]
+      : []),
+    ...(visibleFillCards.length
+      ? [
+          { key: "separator:fill", separatorLabel: "Shader fill" },
+          ...visibleFillCards,
+        ]
+      : []),
+  ];
 
   return (
     <>
-      <nav className="app-nav" data-mode={viewMode}>
-        <fig-header class="app-nav-header" borderless>
-          <a className="app-logo-link" href={makeHomeUrl()} onClick={goHome}>
-            <img className="app-logo" src={logo} alt="Shader Studio" />
-          </a>
-          {viewMode === "home" && (
-            <div className="app-nav-home-tools">
+      <nav
+        className="app-nav"
+        data-mode={viewMode}
+        style={
+          viewMode === "editor"
+            ? { "--app-nav-width": `${appNavWidth}px` }
+            : undefined
+        }
+      >
+        <div className="app-nav-headers">
+          <fig-header class="app-nav-header" borderless>
+            <h2 className="app-title">Shader studio</h2>
+            {viewMode === "editor" && (
+              <fig-menu class="new-shader-menu" position="bottom right">
+                <fig-tooltip text="New Figma shader">
+                  <fig-button
+                    fig-menu-trigger=""
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="New Figma shader"
+                  >
+                    <fig-icon name="add" />
+                  </fig-button>
+                </fig-tooltip>
+                <fig-menu-item
+                  value="effect"
+                  onClick={() => createDraft("blank-effect")}
+                >
+                  Shader effect
+                </fig-menu-item>
+                <fig-menu-item
+                  value="fill"
+                  onClick={() => createDraft("blank-fill")}
+                >
+                  Shader fill
+                </fig-menu-item>
+              </fig-menu>
+            )}
+            {viewMode === "home" && (
+              <div className="app-nav-home-tools">
+                <fig-input-text
+                  class="app-nav-search"
+                  type="search"
+                  placeholder="Search shaders"
+                  value={homeQuery}
+                  full=""
+                  onInput={(event) => setHomeQuery(event.target.value)}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-select
+                  ref={homeKindRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by kind"
+                  value={homeKind}
+                  options={JSON.stringify([
+                    { value: "all", label: "All kinds" },
+                    { value: "effect", label: "Effects" },
+                    { value: "fill", label: "Fills" },
+                  ])}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-select
+                  ref={homeOriginRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by source"
+                  value={homeOrigin}
+                  options={JSON.stringify([
+                    { value: "all", label: "All sources" },
+                    { value: "draft", label: "Drafts" },
+                    { value: "public", label: "Public" },
+                  ])}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+              </div>
+            )}
+          </fig-header>
+          {viewMode === "editor" && (
+            <fig-header class="app-nav-search-header">
               <fig-input-text
                 class="app-nav-search"
                 type="search"
                 placeholder="Search shaders"
-                value={homeQuery}
+                value={editorQuery}
                 full=""
-                onInput={(event) => setHomeQuery(event.target.value)}
+                onInput={(event) => setEditorQuery(event.target.value)}
                 dangerouslySetInnerHTML={opaqueContent}
               />
-              <fig-select
-                ref={homeKindRef}
-                class="app-nav-filter"
-                aria-label="Filter by kind"
-                value={homeKind}
-                options={JSON.stringify([
-                  { value: "all", label: "All kinds" },
-                  { value: "effect", label: "Effects" },
-                  { value: "fill", label: "Fills" },
-                ])}
-                dangerouslySetInnerHTML={opaqueContent}
-              />
-              <fig-select
-                ref={homeOriginRef}
-                class="app-nav-filter"
-                aria-label="Filter by source"
-                value={homeOrigin}
-                options={JSON.stringify([
-                  { value: "all", label: "All sources" },
-                  { value: "preset", label: "Presets" },
-                  { value: "draft", label: "Drafts" },
-                  { value: "cloud", label: "Cloud" },
-                ])}
-                dangerouslySetInnerHTML={opaqueContent}
-              />
-            </div>
+            </fig-header>
           )}
-        </fig-header>
+        </div>
         <fig-chooser
           ref={chooserRef}
           value={viewMode === "home" ? "" : presetId}
-          layout={viewMode === "home" ? "grid" : "vertical"}
-          {...(viewMode === "editor" ? { drag: "true" } : {})}
+          layout="grid"
+          {...(viewMode === "editor"
+            ? { columns: appNavWidth < 160 ? "1" : "2", drag: "true" }
+            : {})}
           loop=""
         >
-          {visibleCards.map((card) => {
+          {groupedVisibleCards.map((card) => {
+            if (card.separatorLabel) {
+              return (
+                <fig-separator key={card.key} label={card.separatorLabel} />
+              );
+            }
             const selected = viewMode === "editor" && presetId === card.key;
             const cardProps = {
               class: "shader-nav-card",
@@ -2104,7 +2491,7 @@ export default function App() {
             };
             const cardNode = <fig-card {...cardProps} />;
 
-            if (card.origin === "preset") {
+            if (!card.canDelete) {
               return (
                 <fig-choice
                   key={card.key}
@@ -2131,9 +2518,9 @@ export default function App() {
                   <fig-menu-item
                     value="delete"
                     onClick={() => {
-                      if (card.origin === "draft" && card.draft) {
+                      if (card.draft) {
                         removeDraft(card.draft);
-                      } else if (card.origin === "cloud" && card.cloud) {
+                      } else if (card.cloud) {
                         removeCloudShader(card.cloud);
                       }
                     }}
@@ -2146,32 +2533,6 @@ export default function App() {
           })}
         </fig-chooser>
         <fig-footer class="app-nav-actions" sticky="">
-          <fig-menu class="new-shader-menu" position="top right">
-            <fig-tooltip text="New Figma shader">
-              <fig-button
-                fig-menu-trigger=""
-                type="button"
-                variant="ghost"
-                icon="true"
-                size="large"
-                aria-label="New Figma shader"
-              >
-                <fig-icon name="add" />
-              </fig-button>
-            </fig-tooltip>
-            <fig-menu-item
-              value="effect"
-              onClick={() => createDraft("blank-effect")}
-            >
-              Shader effect
-            </fig-menu-item>
-            <fig-menu-item
-              value="fill"
-              onClick={() => createDraft("blank-fill")}
-            >
-              Shader fill
-            </fig-menu-item>
-          </fig-menu>
           <AccountMenu
             open={authOpen}
             onOpenChange={setAuthOpen}
@@ -2182,6 +2543,34 @@ export default function App() {
           />
         </fig-footer>
       </nav>
+
+      {viewMode === "editor" && (
+        <div
+          className="app-nav-resizer"
+          role="separator"
+          aria-label="Resize shader navigation"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_APP_NAV_WIDTH}
+          aria-valuemax={MAX_APP_NAV_WIDTH}
+          aria-valuenow={appNavWidth}
+          tabIndex={0}
+          onPointerDown={resizeAppNav}
+          onDoubleClick={() => saveAppNavWidth(DEFAULT_APP_NAV_WIDTH)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            saveAppNavWidth(
+              Math.min(
+                MAX_APP_NAV_WIDTH,
+                Math.max(
+                  MIN_APP_NAV_WIDTH,
+                  appNavWidth + (event.key === "ArrowLeft" ? -16 : 16)
+                )
+              )
+            );
+          }}
+        />
+      )}
 
       <main
         ref={viewerRef}
@@ -2293,7 +2682,7 @@ export default function App() {
                         Publish…
                       </fig-menu-item>
                     )}
-                    <fig-menu-separator />
+                    <fig-separator />
                     <fig-menu-item value="duplicate" onClick={duplicateShader}>
                       Duplicate
                     </fig-menu-item>
@@ -2308,7 +2697,7 @@ export default function App() {
                     >
                       Delete
                     </fig-menu-item>
-                    <fig-menu-separator />
+                    <fig-separator />
                     <fig-menu-item value="export" onClick={exportFiles}>
                       Download
                     </fig-menu-item>
@@ -2395,6 +2784,7 @@ export default function App() {
               fileName={shaderModuleFileName(presetId, shaderName)}
               shaderKey={chatShaderKey}
               features={shaderFeatures}
+              user={user}
               onApplySource={(nextSource) => {
                 setSource(nextSource);
                 setDirty(true);

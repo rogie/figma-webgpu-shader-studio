@@ -27,7 +27,6 @@
       padding-right: var(--spacer-2);
       display: flex;
       flex-direction: column;
-      gap: var(--spacer-3);
       scrollbar-width: thin;
     }
 
@@ -44,42 +43,6 @@
         font-family: var(--font-family-monospace, ui-monospace, monospace);
         color: var(--figma-color-text);
       }
-    }
-
-    .chat-bubble {
-      max-width: 100%;
-      padding: var(--spacer-2) var(--spacer-2-5);
-      border-radius: var(--radius-large, 8px);
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-size: var(--body-large-fontSize);
-      font-weight: var(--body-medium-fontWeight);
-      letter-spacing: var(--body-letter-spacing);
-      line-height: 1.45;
-    }
-
-    .chat-bubble-user {
-      align-self: flex-end;
-      background: var(
-        --figma-color-bg-secondary,
-        var(--figma-color-bg-secondary)
-      );
-      color: var(--figma-color-text);
-    }
-
-    .chat-bubble-assistant {
-      align-self: flex-start;
-      max-width: calc(100% - 4rem);
-      background: none;
-      padding: 0;
-    }
-
-    .chat-bubble-assistant.is-pending {
-      opacity: 0.85;
-    }
-
-    .chat-prose {
-      margin: 0;
     }
 
     .chat-code-note {
@@ -100,7 +63,8 @@
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
-      border-top: 1px solid var(--figma-color-border);
+      padding-top: 0;
+      border-top: 0;
     }
 
     .chat-error {
@@ -131,19 +95,28 @@
     }
 
     .chat-composer {
+      
       flex: 0 0 auto;
       flex-shrink: 0;
       display: flex;
       flex-direction: column;
       gap: var(--spacer-2);
-      padding: var(--spacer-3);
+      padding: var(--spacer-3) 0;
+
+      fig-ai-prompt{
+        --fig-ai-prompt-margin-inline: var(--spacer-3);
+      }
     }
 
-    .chat-input {
-      width: 100%;
-      box-sizing: border-box;
-      resize: none;
-      font: inherit;
+    .chat-model-select {
+      flex: 0 0 auto;
+      width: max-content;
+      max-width: 16rem;
+      --fig-select-trigger-width: max-content;
+    }
+
+    .chat-attach-button {
+      margin-right: auto;
     }
 
     .chat-composer-actions {
@@ -151,22 +124,8 @@
       align-items: center;
       gap: var(--spacer-2);
 
-      .chat-model-select {
-        flex: 0 0 auto;
-        width: max-content;
-        max-width: 16rem;
-        --fig-select-trigger-width: max-content;
-      }
-
-      .chat-composer-send,
       > fig-button {
         margin-left: auto;
-      }
-
-      .chat-composer-send {
-        display: flex;
-        align-items: center;
-        gap: var(--spacer-1);
       }
     }
 

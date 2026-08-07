@@ -15,13 +15,12 @@ function unwrap(result) {
   return result.data;
 }
 
-export async function listShaders(ownerId) {
+export async function listShaders() {
   const client = requireClient();
   return unwrap(
     await client
       .from("shaders")
       .select("*")
-      .eq("owner_id", ownerId)
       .order("updated_at", { ascending: false })
   );
 }
@@ -37,6 +36,17 @@ export async function createShader(payload) {
   const client = requireClient();
   return unwrap(
     await client.from("shaders").insert(payload).select().single()
+  );
+}
+
+export async function upsertShader(payload) {
+  const client = requireClient();
+  return unwrap(
+    await client
+      .from("shaders")
+      .upsert(payload, { onConflict: "id" })
+      .select()
+      .single()
   );
 }
 

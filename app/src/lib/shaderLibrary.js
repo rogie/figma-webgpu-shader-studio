@@ -1,10 +1,9 @@
 /**
- * Normalize presets, drafts, and cloud shaders into one card list for nav/home.
- * Public/multi-author rows can append with the same shape later.
+ * Normalize temporary local drafts and Supabase shaders for nav/home.
+ * Bundled file presets are intentionally not part of the user library.
  */
 
 export function buildShaderLibraryCards({
-  presets,
   drafts,
   cloudShaders,
   thumbnails = {},
@@ -16,23 +15,6 @@ export function buildShaderLibraryCards({
   const cards = [];
   const youLabel = user?.email || "You";
 
-  presets.forEach((preset, index) => {
-    cards.push({
-      key: preset.id,
-      origin: "preset",
-      name: liveNames[preset.id] || preset.name,
-      kind: preset.kind,
-      thumbnailUrl:
-        thumbnails[preset.id] ||
-        placeholderThumbnailUrl(index, preset.name),
-      authorId: null,
-      authorLabel: "Shader Studio",
-      updatedAt: null,
-      draft: null,
-      cloud: null,
-    });
-  });
-
   drafts.forEach((draft, index) => {
     const name = liveNames[draft.id] || draft.name;
     cards.push({
@@ -42,35 +24,35 @@ export function buildShaderLibraryCards({
       kind: draft.kind,
       thumbnailUrl:
         thumbnails[draft.id] ||
-        placeholderThumbnailUrl(presets.length + index, name),
+        placeholderThumbnailUrl(index, name),
       authorId: user?.id ?? null,
-      authorLabel: youLabel,
+      authorLabel: "Local draft",
       updatedAt: null,
       draft,
       cloud: null,
+      canDelete: true,
     });
   });
 
   cloudShaders.forEach((shader, index) => {
     const key = `cloud:${shader.id}`;
+    const owned = Boolean(user && shader.owner_id === user.id);
+    const privateDraft = owned && !shader.is_public;
     cards.push({
       key,
-      origin: "cloud",
+      origin: privateDraft ? "draft" : "public",
       name: liveNames[key] || shader.name,
       kind: shader.kind === "fill" ? "fill" : "effect",
       thumbnailUrl:
         thumbnails[key] ||
         cloudThumbnails[shader.id] ||
-        placeholderThumbnailUrl(
-          presets.length + drafts.length + index,
-          shader.name
-        ),
+        placeholderThumbnailUrl(drafts.length + index, shader.name),
       authorId: shader.owner_id ?? user?.id ?? null,
-      authorLabel:
-        user && shader.owner_id === user.id ? youLabel : "Author",
+      authorLabel: privateDraft ? "Draft" : owned ? youLabel : "Community",
       updatedAt: shader.updated_at || null,
       draft: null,
       cloud: shader,
+      canDelete: owned,
     });
   });
 

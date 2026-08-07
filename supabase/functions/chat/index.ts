@@ -314,8 +314,19 @@ async function streamOpenAI(
   }
 
   return sseStreamFromUpstream(upstream, (json) => {
-    const choices = json.choices as Array<{ delta?: { content?: string } }> | undefined;
-    const delta = choices?.[0]?.delta?.content;
+    const choices = json.choices as
+      | Array<{
+          delta?: { content?: string };
+          finish_reason?: string | null;
+        }>
+      | undefined;
+    const choice = choices?.[0];
+    if (choice?.finish_reason === "length") {
+      return {
+        error: "The response reached the model output limit. Ask it to continue.",
+      };
+    }
+    const delta = choice?.delta?.content;
     return typeof delta === "string" && delta ? delta : null;
   });
 }
@@ -328,7 +339,7 @@ async function streamAnthropic(
 ): Promise<Response> {
   const requestBody: Record<string, unknown> = {
     model,
-    max_tokens: 8192,
+    max_tokens: 32768,
     stream: true,
     system,
     messages: toAnthropicMessages(messages),
@@ -364,6 +375,15 @@ async function streamAnthropic(
     ) {
       const text = (json.delta as { text?: string }).text;
       return typeof text === "string" && text ? text : null;
+    }
+    if (
+      json.type === "message_delta" &&
+      (json.delta as { stop_reason?: string } | undefined)?.stop_reason ===
+        "max_tokens"
+    ) {
+      return {
+        error: "The response reached the model output limit. Ask it to continue.",
+      };
     }
     return null;
   });
@@ -441,7 +461,15 @@ async function streamGemini(
       .filter((part) => !part?.thought)
       .map((part) => (typeof part?.text === "string" ? part.text : ""))
       .join("");
-    if (text) return text;
+    if (text) {
+      return {
+        text,
+        error:
+          candidate?.finishReason === "MAX_TOKENS"
+            ? "The response reached the model output limit. Ask it to continue."
+            : null,
+      };
+    }
     if (candidate?.finishReason) {
       return {
         error:

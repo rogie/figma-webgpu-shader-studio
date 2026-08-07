@@ -7,7 +7,6 @@ import "@rogieking/figui3/fig.css";
 import "@rogieking/figui3/fig.js";
 import "@rogieking/figui3/fig-editor.css";
 import "@rogieking/figui3/fig-editor.js";
-import "@rogieking/figui3/fig-lab.css";
 import "@rogieking/figui3/fig-lab.js";
 import "./app.css";
 

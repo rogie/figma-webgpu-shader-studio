@@ -85,6 +85,7 @@ const ChatPane = forwardRef(function ChatPane(
     fileName,
     shaderKey,
     features,
+    user,
     onApplySource,
     onOpenSettings,
     onNotice,
@@ -105,7 +106,6 @@ const ChatPane = forwardRef(function ChatPane(
   const undoStackRef = useRef([]);
   const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
-  const videoInputRef = useRef(null);
   const pendingApiAttachmentRef = useRef(null);
 
   const threadId = messageKey(shaderKey);
@@ -117,6 +117,13 @@ const ChatPane = forwardRef(function ChatPane(
   const hasKey = Boolean(apiKey);
   const videoSupported = providerSupportsChatVideo(model.provider);
   const canSend = Boolean(draft.trim() || attachment) && !streaming;
+  const userName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email ||
+    "User";
+  const userAvatarUrl =
+    user?.user_metadata?.avatar_url || user?.user_metadata?.picture;
   let undoMessageIndex = -1;
   if (undoCount > 0) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
@@ -243,16 +250,10 @@ const ChatPane = forwardRef(function ChatPane(
     }
   };
 
-  const onImageChosen = (event) => {
+  const onAttachmentChosen = (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
-    pickAttachment(file, "image");
-  };
-
-  const onVideoChosen = (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    pickAttachment(file, "video");
+    pickAttachment(file, file?.type.startsWith("video/") ? "video" : "image");
   };
 
   const send = async () => {
@@ -451,7 +452,7 @@ const ChatPane = forwardRef(function ChatPane(
       <fig-select-options>
         {CHAT_MODEL_GROUPS.map((group) => (
           <Fragment key={group.label}>
-            <fig-menu-separator label={group.label} />
+            <fig-separator label={group.label} />
             {group.models.map((entry) => (
               <fig-select-option key={entry.id} value={entry.id}>
                 {entry.label}
@@ -492,7 +493,7 @@ const ChatPane = forwardRef(function ChatPane(
         {messages.map((message, index) => {
           if (message.role === "user") {
             return (
-              <div key={index} className="chat-bubble chat-bubble-user">
+              <fig-chat-message key={index} from="user">
                 {message.attachmentPreview && message.attachment?.kind === "image" && (
                   <img
                     className="chat-attachment-preview"
@@ -515,14 +516,20 @@ const ChatPane = forwardRef(function ChatPane(
                   />
                 )}
                 {message.content && <div className="chat-prose">{message.content}</div>}
-              </div>
+                {user && (
+                  <fig-avatar
+                    name={userName}
+                    src={userAvatarUrl || undefined}
+                  />
+                )}
+              </fig-chat-message>
             );
           }
           const { prose, source: code } = splitAssistantContent(message.content);
           return (
-            <div
+            <fig-chat-message
               key={index}
-              className={`chat-bubble chat-bubble-assistant${message.pending ? " is-pending" : ""}`}
+              from="agent"
             >
               {prose && <div className="chat-prose">{prose}</div>}
               {(message.applied || (code && message.pending)) && (
@@ -555,7 +562,7 @@ const ChatPane = forwardRef(function ChatPane(
                   <div className="chat-prose">Thinking…</div>
                 </fig-shimmer>
               )}
-            </div>
+            </fig-chat-message>
           );
         })}
       </div>
@@ -567,42 +574,89 @@ const ChatPane = forwardRef(function ChatPane(
           </p>
         )}
         <div className="chat-composer">
-          {hasKey ? (
-            <>
-              {attachment && (
-                <div className="chat-pending-attachment">
-                  {attachment.kind === "image" ? (
-                    <img src={attachment.previewUrl} alt={attachment.name} />
-                  ) : (
-                    <video src={attachment.previewUrl} muted />
-                  )}
-                  <span>{attachment.name}</span>
+          {attachment && (
+            <div className="chat-pending-attachment">
+              {attachment.kind === "image" ? (
+                <img src={attachment.previewUrl} alt={attachment.name} />
+              ) : (
+                <video src={attachment.previewUrl} muted />
+              )}
+              <span>{attachment.name}</span>
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                size="small"
+                aria-label="Remove attachment"
+                onClick={() => setAttachment(null)}
+              >
+                <fig-icon name="x" />
+              </fig-button>
+            </div>
+          )}
+          {hasKey && (
+            <fig-ai-prompt>
+              <fig-input-text
+                class="chat-input"
+                multiline=""
+                value={draft}
+                placeholder="Ask for changes..."
+                aria-label="Ask for changes"
+                disabled={streaming ? "" : undefined}
+                onInput={(event) => setDraft(event.target.value)}
+                onKeyDown={onKeyDown}
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
+              <fig-footer>
+                <fig-tooltip class="chat-attach-button" text="Attach media">
                   <fig-button
                     type="button"
                     variant="ghost"
                     icon="true"
-                    size="small"
-                    aria-label="Remove attachment"
-                    onClick={() => setAttachment(null)}
+                    aria-label="Attach media"
+                    disabled={streaming ? "" : undefined}
+                    onClick={() => imageInputRef.current?.click()}
                   >
-                    <fig-icon name="x" />
+                    <fig-icon name="add" />
                   </fig-button>
-                </div>
-              )}
-              <textarea
-                className="chat-input"
-                rows={3}
-                value={draft}
-                placeholder={`Ask about ${fileName}…`}
-                disabled={streaming}
-                onChange={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-              />
-            </>
-          ) : null}
-          <div className="chat-composer-actions">
-            {modelSelect}
-            {!hasKey ? (
+                </fig-tooltip>
+                <hstack>
+                  <fig-tooltip text={`Model: ${model.label}`}>
+                    {modelSelect}
+                  </fig-tooltip>
+                  {streaming ? (
+                    <fig-tooltip text="Stop">
+                      <fig-button
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        aria-label="Stop"
+                        onClick={stop}
+                      >
+                        <StopIcon />
+                      </fig-button>
+                    </fig-tooltip>
+                  ) : (
+                    <fig-tooltip text="Send">
+                      <fig-button
+                        type="button"
+                        variant="primary"
+                        icon="true"
+                        aria-label="Send"
+                        disabled={!canSend}
+                        onClick={send}
+                      >
+                        <SendIcon />
+                      </fig-button>
+                    </fig-tooltip>
+                  )}
+                </hstack>
+              </fig-footer>
+            </fig-ai-prompt>
+          )}
+          {!hasKey && (
+            <div className="chat-composer-actions">
+              {modelSelect}
               <fig-button
                 type="button"
                 variant="secondary"
@@ -610,85 +664,14 @@ const ChatPane = forwardRef(function ChatPane(
               >
                 Add API key
               </fig-button>
-            ) : (
-              <div className="chat-composer-send">
-                <fig-menu position="top right">
-                  <fig-tooltip text="Attach media">
-                    <fig-button
-                      fig-menu-trigger=""
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="Attach media"
-                      disabled={streaming ? "" : undefined}
-                    >
-                      <fig-icon name="add" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-menu-item
-                    value="image"
-                    onClick={() => imageInputRef.current?.click()}
-                  >
-                    Image
-                  </fig-menu-item>
-                  <fig-menu-item
-                    value="video"
-                    disabled={!videoSupported}
-                    onClick={() => {
-                      if (!videoSupported) {
-                        setError(
-                          "Video attachments are only supported with Gemini."
-                        );
-                        return;
-                      }
-                      videoInputRef.current?.click();
-                    }}
-                  >
-                    {videoSupported ? "Video" : "Video (Gemini only)"}
-                  </fig-menu-item>
-                </fig-menu>
-                {streaming ? (
-                  <fig-tooltip text="Stop">
-                    <fig-button
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="Stop"
-                      onClick={stop}
-                    >
-                      <StopIcon />
-                    </fig-button>
-                  </fig-tooltip>
-                ) : (
-                  <fig-tooltip text="Send">
-                    <fig-button
-                      type="button"
-                      variant="primary"
-                      icon="true"
-                      aria-label="Send"
-                      disabled={!canSend}
-                      onClick={send}
-                    >
-                      <SendIcon />
-                    </fig-button>
-                  </fig-tooltip>
-                )}
-              </div>
-            )}
-          </div>
+            </div>
+          )}
           <input
             ref={imageInputRef}
             type="file"
-            accept="image/*"
+            accept={videoSupported ? "image/*,video/*" : "image/*"}
             hidden
-            onChange={onImageChosen}
-          />
-          <input
-            ref={videoInputRef}
-            type="file"
-            accept="video/*"
-            hidden
-            onChange={onVideoChosen}
+            onChange={onAttachmentChosen}
           />
         </div>
       </div>

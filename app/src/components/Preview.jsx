@@ -288,7 +288,16 @@ export default function Preview({
         live="assertive"
         duration="5000"
       >
-        {error}
+        <p>{error}</p>
+        <fig-button
+          type="button"
+          variant="secondary"
+          onClick={() => {
+            navigator.clipboard.writeText(String(error || "")).catch(() => {});
+          }}
+        >
+          Copy
+        </fig-button>
       </dialog>
     </div>
   );
