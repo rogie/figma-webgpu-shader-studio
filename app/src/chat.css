@@ -83,17 +83,6 @@
       border-bottom: 1px solid var(--figma-color-border);
     }
 
-    .chat-link {
-      appearance: none;
-      border: 0;
-      background: none;
-      padding: 0;
-      color: var(--figma-color-text-brand, var(--figma-color-text));
-      text-decoration: underline;
-      cursor: pointer;
-      font: inherit;
-    }
-
     .chat-composer {
       
       flex: 0 0 auto;

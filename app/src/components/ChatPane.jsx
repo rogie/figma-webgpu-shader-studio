@@ -59,13 +59,6 @@ function messageKey(shaderKey) {
   return shaderKey || "default";
 }
 
-function providerLabel(provider) {
-  if (provider === "openai") return "OpenAI";
-  if (provider === "anthropic") return "Anthropic";
-  if (provider === "gemini") return "Gemini";
-  return provider;
-}
-
 function isEmptyAssistant(message) {
   return (
     message?.role === "assistant" &&
@@ -116,7 +109,8 @@ const ChatPane = forwardRef(function ChatPane(
   );
   const hasKey = Boolean(apiKey);
   const videoSupported = providerSupportsChatVideo(model.provider);
-  const canSend = Boolean(draft.trim() || attachment) && !streaming;
+  const canSend =
+    hasKey && Boolean(draft.trim() || attachment) && !streaming;
   const userName =
     user?.user_metadata?.full_name ||
     user?.user_metadata?.name ||
@@ -192,7 +186,7 @@ const ChatPane = forwardRef(function ChatPane(
     return () => {
       control.removeEventListener("change", onChange);
     };
-  }, []);
+  }, [hasKey]);
 
   const updateThread = (updater) => {
     setThreads((prev) => {
@@ -474,15 +468,6 @@ const ChatPane = forwardRef(function ChatPane(
               module source and Figma shader authoring skills. History for this
               shader is saved on this device.
             </p>
-            {!hasKey && (
-              <p>
-                Add a {providerLabel(model.provider)} API key in{" "}
-                <button type="button" className="chat-link" onClick={onOpenSettings}>
-                  Settings
-                </button>{" "}
-                to start.
-              </p>
-            )}
             {!isSupabaseConfigured && (
               <p className="chat-error">
                 Chat proxy needs Supabase env vars configured.
@@ -594,78 +579,74 @@ const ChatPane = forwardRef(function ChatPane(
               </fig-button>
             </div>
           )}
-          {hasKey && (
-            <fig-ai-prompt>
-              <fig-input-text
-                class="chat-input"
-                multiline=""
-                value={draft}
-                placeholder="Ask for changes..."
-                aria-label="Ask for changes"
-                disabled={streaming ? "" : undefined}
-                onInput={(event) => setDraft(event.target.value)}
-                onKeyDown={onKeyDown}
-                dangerouslySetInnerHTML={{ __html: "" }}
-              />
-              <fig-footer>
-                <fig-tooltip class="chat-attach-button" text="Attach media">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Attach media"
-                    disabled={streaming ? "" : undefined}
-                    onClick={() => imageInputRef.current?.click()}
-                  >
-                    <fig-icon name="add" />
-                  </fig-button>
-                </fig-tooltip>
-                <hstack>
+          <fig-ai-prompt>
+            <fig-input-text
+              class="chat-input"
+              multiline=""
+              value={draft}
+              placeholder="Ask for changes..."
+              aria-label="Ask for changes"
+              disabled={streaming || !hasKey ? "" : undefined}
+              onInput={(event) => setDraft(event.target.value)}
+              onKeyDown={onKeyDown}
+              dangerouslySetInnerHTML={{ __html: "" }}
+            />
+            <fig-footer>
+              <fig-tooltip class="chat-attach-button" text="Attach media">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Attach media"
+                  disabled={streaming || !hasKey ? "" : undefined}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <fig-icon name="add" />
+                </fig-button>
+              </fig-tooltip>
+              <hstack>
+                {hasKey ? (
                   <fig-tooltip text={`Model: ${model.label}`}>
                     {modelSelect}
                   </fig-tooltip>
-                  {streaming ? (
-                    <fig-tooltip text="Stop">
-                      <fig-button
-                        type="button"
-                        variant="ghost"
-                        icon="true"
-                        aria-label="Stop"
-                        onClick={stop}
-                      >
-                        <StopIcon />
-                      </fig-button>
-                    </fig-tooltip>
-                  ) : (
-                    <fig-tooltip text="Send">
-                      <fig-button
-                        type="button"
-                        variant="primary"
-                        icon="true"
-                        aria-label="Send"
-                        disabled={!canSend}
-                        onClick={send}
-                      >
-                        <SendIcon />
-                      </fig-button>
-                    </fig-tooltip>
-                  )}
-                </hstack>
-              </fig-footer>
-            </fig-ai-prompt>
-          )}
-          {!hasKey && (
-            <div className="chat-composer-actions">
-              {modelSelect}
-              <fig-button
-                type="button"
-                variant="secondary"
-                onClick={onOpenSettings}
-              >
-                Add API key
-              </fig-button>
-            </div>
-          )}
+                ) : (
+                  <fig-button
+                    type="button"
+                    variant="secondary"
+                    onClick={onOpenSettings}
+                  >
+                    Add API key
+                  </fig-button>
+                )}
+                {streaming ? (
+                  <fig-tooltip text="Stop">
+                    <fig-button
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Stop"
+                      onClick={stop}
+                    >
+                      <StopIcon />
+                    </fig-button>
+                  </fig-tooltip>
+                ) : (
+                  <fig-tooltip text="Send">
+                    <fig-button
+                      type="button"
+                      variant="primary"
+                      icon="true"
+                      aria-label="Send"
+                      disabled={!canSend}
+                      onClick={send}
+                    >
+                      <SendIcon />
+                    </fig-button>
+                  </fig-tooltip>
+                )}
+              </hstack>
+            </fig-footer>
+          </fig-ai-prompt>
           <input
             ref={imageInputRef}
             type="file"

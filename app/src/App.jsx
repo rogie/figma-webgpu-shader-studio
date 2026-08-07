@@ -374,6 +374,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishToast, setPublishToast] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState("");
   const [isPublic, setIsPublic] = useState(false);
   const [appNavWidth, setAppNavWidth] = useState(savedAppNavWidth);
@@ -385,6 +387,7 @@ export default function App() {
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
+  const [editorLibraryTab, setEditorLibraryTab] = useState("yours");
   const [homeKind, setHomeKind] = useState("all");
   const [homeOrigin, setHomeOrigin] = useState("all");
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(
@@ -434,13 +437,16 @@ export default function App() {
   const chatPaneRef = useRef(null);
   const [canClearChat, setCanClearChat] = useState(false);
   const chooserRef = useRef(null);
+  const editorLibraryTabsRef = useRef(null);
   const homeKindRef = useRef(null);
   const homeOriginRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
+  const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
+  const deleteDialogRef = useRef(null);
   const propertiesDialogRef = useRef(null);
   const hostRef = useRef(null);
   const onStageSize = useCallback((width, height) => {
@@ -622,12 +628,33 @@ export default function App() {
     const popup = publishDialogRef.current;
     if (!popup) return;
     if (publishOpen) {
-      popup.anchor = moreMenuAnchorRef.current;
+      popup.anchor = publishAnchorRef.current || moreMenuAnchorRef.current;
       popup.open = true;
     } else {
       popup.open = false;
     }
   }, [publishOpen]);
+
+  useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
+    if (deleteTarget) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [deleteTarget]);
+
+  useEffect(() => {
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
+    const onClose = () => {
+      setDeleteTarget(null);
+      setDeleting(false);
+    };
+    dialog.addEventListener("close", onClose);
+    return () => dialog.removeEventListener("close", onClose);
+  }, []);
 
   useEffect(() => {
     const toast = publishToastRef.current;
@@ -1626,6 +1653,29 @@ export default function App() {
     [choosePreset, cloudShaders, drafts, openCloudShader, openDraft]
   );
 
+  const openPublishForCard = useCallback(
+    async (card, anchor) => {
+      if (!user) {
+        setAuthOpen(true);
+        return;
+      }
+      publishAnchorRef.current = anchor;
+      try {
+        if (card.draft) {
+          await openDraft(card.draft);
+        } else if (card.cloud) {
+          await openCloudShader(card.cloud);
+        } else {
+          return;
+        }
+        setPublishOpen(true);
+      } catch (publishError) {
+        setError(publishError.message || String(publishError));
+      }
+    },
+    [openCloudShader, openDraft, user]
+  );
+
   useEffect(() => {
     const chooser = chooserRef.current;
     if (!chooser) return;
@@ -1654,6 +1704,19 @@ export default function App() {
       kindControl?.removeEventListener("change", onKind);
       originControl?.removeEventListener("change", onOrigin);
     };
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (viewMode !== "editor") return;
+    const tabs = editorLibraryTabsRef.current;
+    const onInput = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "yours");
+      if (value === "yours" || value === "community") {
+        setEditorLibraryTab(value);
+      }
+    };
+    tabs?.addEventListener("input", onInput);
+    return () => tabs?.removeEventListener("input", onInput);
   }, [viewMode]);
 
   const updateControl = useCallback(
@@ -2077,8 +2140,7 @@ export default function App() {
 
   const removeCloudShader = useCallback(
     async (shader) => {
-      if (!user || !shader || shader.owner_id !== user.id) return;
-      if (!window.confirm(`Delete “${shader.name}”?`)) return;
+      if (!user || !shader || shader.owner_id !== user.id) return false;
       try {
         await removeAssets([shader.input_path, shader.thumbnail_path]);
         await deleteShader(shader.id);
@@ -2089,17 +2151,40 @@ export default function App() {
           await choosePreset("dither", { syncUrl: Boolean(routeId) });
         }
         showNotice("Shader deleted");
+        return true;
       } catch (deleteError) {
         setError(deleteError.message || String(deleteError));
+        return false;
       }
     },
     [choosePreset, currentShader, routeId, showNotice, user]
   );
 
-  const removeCurrentShader = useCallback(async () => {
+  const removeCurrentShader = useCallback(() => {
     if (!isOwner || !currentShader) return;
-    await removeCloudShader(currentShader);
-  }, [currentShader, isOwner, removeCloudShader]);
+    setDeleteTarget({ cloud: currentShader, name: currentShader.name });
+  }, [currentShader, isOwner]);
+
+  const confirmDelete = useCallback(async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    if (deleteTarget.draft) {
+      removeDraft(deleteTarget.draft);
+      showNotice("Shader deleted");
+      setDeleteTarget(null);
+      setDeleting(false);
+      return;
+    }
+    const deleted = await removeCloudShader(deleteTarget.cloud);
+    if (deleted) setDeleteTarget(null);
+    setDeleting(false);
+  }, [
+    deleteTarget,
+    deleting,
+    removeCloudShader,
+    removeDraft,
+    showNotice,
+  ]);
 
   const copyShareLink = useCallback(async () => {
     if (!currentShader || dirty) {
@@ -2393,6 +2478,14 @@ export default function App() {
     },
     user,
   });
+  const editorLibraryCards = libraryCards.filter((card) => {
+    const isYours = user
+      ? card.authorId === user.id
+      : card.origin === "draft";
+    return editorLibraryTab === "yours"
+      ? isYours
+      : card.origin === "public" && !isYours;
+  });
   const visibleCards =
     viewMode === "home"
       ? filterShaderLibraryCards(libraryCards, {
@@ -2400,7 +2493,7 @@ export default function App() {
           kind: homeKind,
           origin: homeOrigin,
         })
-      : filterShaderLibraryCards(libraryCards, { query: editorQuery });
+      : filterShaderLibraryCards(editorLibraryCards, { query: editorQuery });
   const visibleEffectCards = visibleCards.filter(
     (card) => card.kind === "effect"
   );
@@ -2432,7 +2525,7 @@ export default function App() {
         }
       >
         <div className="app-nav-headers">
-          <fig-header class="app-nav-header" borderless>
+          <fig-header class="app-nav-header">
             <h2 className="app-title">Shader studio</h2>
             {viewMode === "editor" && (
               <fig-menu class="new-shader-menu" position="bottom right">
@@ -2500,17 +2593,28 @@ export default function App() {
             )}
           </fig-header>
           {viewMode === "editor" && (
-            <fig-header class="app-nav-search-header">
-              <fig-input-text
-                class="app-nav-search"
-                type="search"
-                placeholder="Search shaders"
-                value={editorQuery}
-                full=""
-                onInput={(event) => setEditorQuery(event.target.value)}
-                dangerouslySetInnerHTML={opaqueContent}
-              />
-            </fig-header>
+            <>
+              <fig-tabs
+                ref={editorLibraryTabsRef}
+                class="app-nav-tabs"
+                name="shader-library"
+                value={editorLibraryTab}
+              >
+                <fig-tab value="yours">Yours</fig-tab>
+                <fig-tab value="community">Community</fig-tab>
+              </fig-tabs>
+              <fig-header class="app-nav-search-header" borderless>
+                <fig-input-text
+                  class="app-nav-search"
+                  type="search"
+                  placeholder="Search shaders"
+                  value={editorQuery}
+                  full=""
+                  onInput={(event) => setEditorQuery(event.target.value)}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+              </fig-header>
+            </>
           )}
         </div>
         <fig-chooser
@@ -2570,12 +2674,30 @@ export default function App() {
                 >
                   <div fig-menu-trigger="">{cardNode}</div>
                   <fig-menu-item
+                    value="publish"
+                    onClick={(event) => {
+                      openPublishForCard(
+                        card,
+                        event.currentTarget.closest("fig-choice")
+                      );
+                    }}
+                  >
+                    Publish
+                  </fig-menu-item>
+                  <fig-separator />
+                  <fig-menu-item
                     value="delete"
                     onClick={() => {
                       if (card.draft) {
-                        removeDraft(card.draft);
+                        setDeleteTarget({
+                          draft: card.draft,
+                          name: card.name,
+                        });
                       } else if (card.cloud) {
-                        removeCloudShader(card.cloud);
+                        setDeleteTarget({
+                          cloud: card.cloud,
+                          name: card.name,
+                        });
                       }
                     }}
                   >
@@ -2731,7 +2853,10 @@ export default function App() {
                       <fig-menu-item
                         value="publish"
                         disabled={saving}
-                        onClick={() => setPublishOpen(true)}
+                        onClick={() => {
+                          publishAnchorRef.current = moreMenuAnchorRef.current;
+                          setPublishOpen(true);
+                        }}
                       >
                         Publish…
                       </fig-menu-item>
@@ -2987,6 +3112,43 @@ export default function App() {
           </div>
         </section>
       </main>
+
+      <dialog
+        is="fig-dialog"
+        ref={deleteDialogRef}
+        class="delete-shader-dialog"
+        title="Delete shader"
+        modal=""
+        closedby="closerequest"
+        position="center center"
+        autoresize=""
+      >
+        <fig-content padding>
+          <p>
+            Delete “{deleteTarget?.name || "this shader"}”? This action cannot
+            be undone.
+          </p>
+        </fig-content>
+        <fig-footer>
+          <fig-button
+            type="button"
+            variant="secondary"
+            disabled={deleting ? "" : undefined}
+            onClick={() => setDeleteTarget(null)}
+          >
+            Cancel
+          </fig-button>
+          <fig-button
+            class="delete-danger-button"
+            type="button"
+            variant="danger"
+            disabled={deleting ? "" : undefined}
+            onClick={confirmDelete}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </fig-button>
+        </fig-footer>
+      </dialog>
 
       <dialog
         is="fig-dialog"
