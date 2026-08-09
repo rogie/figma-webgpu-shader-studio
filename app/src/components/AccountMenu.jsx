@@ -187,9 +187,20 @@ export default function AccountMenu({
             disabled={!user && loading ? "" : undefined}
           >
             {user ? (
-              <span className="account-avatar">
-                {(user.email || "?").slice(0, 1).toUpperCase()}
-              </span>
+              <fig-avatar
+                class="account-avatar"
+                src={
+                  user.user_metadata?.avatar_url ||
+                  user.user_metadata?.picture ||
+                  ""
+                }
+                name={
+                  displayName ||
+                  accountDisplayName(user) ||
+                  user.email ||
+                  "Account"
+                }
+              />
             ) : (
               <fig-icon name="settings" />
             )}

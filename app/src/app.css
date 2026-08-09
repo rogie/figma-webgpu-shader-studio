@@ -78,18 +78,6 @@ body,
       width: 9.5rem;
     }
 
-    .account-avatar {
-      display: grid;
-      place-items: center;
-      width: 24px;
-      height: 24px;
-      border-radius: 50%;
-      color: var(--figma-color-text-secondary);
-      background: var(--figma-color-bg-secondary);
-      font-size: var(--body-small-fontSize);
-      font-weight: 600;
-    }
-
     fig-chooser {
       --fig-chooser-inline-padding: var(--spacer-1);
       --fig-chooser-inline-margin: var(--spacer-2-5);
