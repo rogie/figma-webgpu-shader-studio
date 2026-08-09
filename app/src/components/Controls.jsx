@@ -438,10 +438,8 @@ function VectorControl({ keys, def, value, onChange }) {
   );
 }
 
-function GradientControl({ def, value, onChange }) {
-  const gradientRef = useRef(null);
-  const stops = value?.stops || def.defaultValue?.stops || [];
-  const serialized = JSON.stringify({
+function serializeGradient(stops) {
+  return JSON.stringify({
     type: "gradient",
     gradient: {
       type: "linear",
@@ -457,18 +455,35 @@ function GradientControl({ def, value, onChange }) {
       })),
     },
   });
+}
+
+function PropskitGradientControl({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const gradientRef = useRef(null);
+  const stops = value?.stops || def.defaultValue?.stops || [];
+  const serialized = serializeGradient(stops);
+  const serializedDefault = serializeGradient(def.defaultValue?.stops || stops);
 
   useEffect(() => {
     const control = gradientRef.current;
     if (!control) return;
-    const handleValue = (event) => {
-      const detail =
-        typeof event.detail === "string"
-          ? JSON.parse(event.detail)
-          : event.detail;
+    const readValue = (event) => {
+      let detail = event.detail;
+      if (typeof detail === "string") {
+        try {
+          detail = JSON.parse(detail);
+        } catch {
+          return null;
+        }
+      }
       const nextStops = detail?.gradient?.stops;
-      if (!Array.isArray(nextStops)) return;
-      onChange({
+      if (!Array.isArray(nextStops)) return null;
+      return {
         stops: nextStops.map((stop) => {
           const color = hexToColor(stop.color);
           color.a =
@@ -481,21 +496,33 @@ function GradientControl({ def, value, onChange }) {
             color,
           };
         }),
-      });
+      };
     };
-    control.addEventListener("input", handleValue);
-    control.addEventListener("change", handleValue);
+    const handleInput = (event) => {
+      const next = readValue(event);
+      if (next) onInputValue(name, next);
+    };
+    const handleChange = (event) => {
+      const next = readValue(event);
+      if (next) onCommit(name, next);
+    };
+    control.addEventListener("input", handleInput);
+    control.addEventListener("change", handleChange);
     return () => {
-      control.removeEventListener("input", handleValue);
-      control.removeEventListener("change", handleValue);
+      control.removeEventListener("input", handleInput);
+      control.removeEventListener("change", handleChange);
     };
-  }, [onChange]);
+  }, [name, onCommit, onInputValue]);
 
   return (
-    <fig-input-gradient
+    <propskit-gradient
       ref={gradientRef}
+      label={def.label || name}
+      direction="horizontal"
       value={serialized}
+      default={serializedDefault}
       size="large"
+      edit="picker"
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -566,11 +593,6 @@ function Control({ def, value, onChange }) {
           onChange={(color) => onChange({ ...current, color })}
         />
       </div>
-    );
-  }
-  if (def.type === "gradient") {
-    return (
-      <GradientControl def={def} value={value} onChange={onChange} />
     );
   }
   return <code className="unknown-type">{def.type || "unknown"}</code>;
@@ -658,6 +680,18 @@ export default function Controls({ props, values, onChange, onInput }) {
           def={def}
           value={values[name]}
           onChange={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "gradient") {
+      return (
+        <PropskitGradientControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
         />
       );
     }

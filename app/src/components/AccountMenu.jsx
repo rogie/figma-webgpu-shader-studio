@@ -317,6 +317,16 @@ export default function AccountMenu({
                   dangerouslySetInnerHTML={{ __html: "" }}
                 />
               </fig-field>
+              <fig-field direction="horizontal">
+                <label>Email</label>
+                <fig-input-text
+                  type="email"
+                  value={user.email || ""}
+                  readonly=""
+                  full=""
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+              </fig-field>
             </fig-group>
           )}
 
