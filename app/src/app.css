@@ -135,6 +135,28 @@ body,
       .shader-nav-card {
         width: 100%;
       }
+
+      .shader-nav-card-preview {
+        --fig-preview-background: transparent;
+        display: grid;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+
+        > fig-spinner,
+        > img {
+          grid-area: 1 / 1;
+        }
+
+        > fig-spinner {
+          place-self: center;
+        }
+
+        > img {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+        }
+      }
     }
 
     &[data-mode="home"] {

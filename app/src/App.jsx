@@ -88,31 +88,6 @@ const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 const THUMBNAIL_SIZE = 512;
-const THUMBNAIL_COLORS = [
-  ["#1d3557", "#f1fa8c"],
-  ["#5c2a72", "#ff8fab"],
-  ["#023047", "#8ecae6"],
-  ["#202020", "#d8d8d8"],
-  ["#1b4332", "#95d5b2"],
-  ["#3c096c", "#ff9e00"],
-];
-
-// Display thumbnails as blob: object URLs. Placeholders are cached; captures are
-// revoked when replaced. localStorage still needs data: URLs (see persist map).
-const placeholderThumbnailUrls = new Map();
-
-function placeholderThumbnailUrl(index, label) {
-  const key = `${index}\0${label}`;
-  let url = placeholderThumbnailUrls.get(key);
-  if (url) return url;
-  const [from, to] = THUMBNAIL_COLORS[index % THUMBNAIL_COLORS.length];
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><defs><linearGradient id="g" x2="1" y2="1"><stop stop-color="${from}"/><stop offset="1" stop-color="${to}"/></linearGradient></defs><rect width="64" height="64" rx="8" fill="url(#g)"/><circle cx="${18 + (index % 3) * 12}" cy="${20 + (index % 2) * 22}" r="${8 + index}" fill="rgba(255,255,255,.38)"/><text x="32" y="37" text-anchor="middle" font-family="system-ui" font-size="10" font-weight="700" fill="white">${label
-    .slice(0, 2)
-    .toUpperCase()}</text></svg>`;
-  url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-  placeholderThumbnailUrls.set(key, url);
-  return url;
-}
 
 function dataUrlToObjectUrl(dataUrl) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
@@ -142,11 +117,7 @@ function blobToDataUrl(blob) {
 }
 
 function revokeThumbnailUrl(url) {
-  if (
-    typeof url === "string" &&
-    url.startsWith("blob:") &&
-    ![...placeholderThumbnailUrls.values()].includes(url)
-  ) {
+  if (typeof url === "string" && url.startsWith("blob:")) {
     URL.revokeObjectURL(url);
   }
 }
@@ -247,6 +218,39 @@ function replaceShaderUrl(id) {
 
 function pushShaderUrl(id) {
   window.history.pushState({}, "", makeShareUrl(id));
+}
+
+function ShaderNavCard({ src, label, sublabel, selected }) {
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => setLoaded(false), [src]);
+
+  return (
+    <fig-card
+      class="shader-nav-card"
+      label={label}
+      sublabel={sublabel}
+      full=""
+      {...(selected ? { selected: "" } : {})}
+    >
+      <fig-preview
+        class="shader-nav-card-preview"
+        fit="cover"
+        full=""
+        aria-label={loaded ? undefined : `Loading ${label} preview`}
+      >
+        {!loaded && <fig-spinner aria-label={`Loading ${label} preview`} />}
+        {src && (
+          <img
+            src={src}
+            alt={label}
+            onLoad={() => setLoaded(true)}
+            onError={() => setLoaded(true)}
+          />
+        )}
+      </fig-preview>
+    </fig-card>
+  );
 }
 
 function consumeAuthCallbackError() {
@@ -452,12 +456,7 @@ export default function App() {
     setRouteId(id || null);
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
-    const initial = Object.fromEntries(
-      PRESETS.map((preset, index) => [
-        preset.id,
-        placeholderThumbnailUrl(index, preset.name),
-      ])
-    );
+    const initial = {};
     for (const draft of savedDrafts()) {
       if (draft.thumbnail?.startsWith("data:")) {
         const url = dataUrlToObjectUrl(draft.thumbnail);
@@ -2745,7 +2744,6 @@ export default function App() {
     cloudShaders,
     thumbnails,
     cloudThumbnails,
-    placeholderThumbnailUrl,
     liveNames: {
       [presetId]: shaderName,
     },
@@ -3076,24 +3074,20 @@ export default function App() {
               );
             }
             const selected = viewMode === "editor" && presetId === card.key;
-            const cardProps = {
-              class: "shader-nav-card",
-              src: card.thumbnailUrl,
-              label: card.name,
-              alt: card.name,
-              fit: "cover",
-              "aspect-ratio": "4/3",
-              full: "",
-              sublabel:
-                card.origin === "public"
-                  ? "Published"
-                  : card.draft
-                    ? "Local"
-                    : "Private",
-              ...(selected ? { selected: "" } : {}),
-              dangerouslySetInnerHTML: opaqueContent,
-            };
-            const cardNode = <fig-card {...cardProps} />;
+            const cardNode = (
+              <ShaderNavCard
+                src={card.thumbnailUrl}
+                label={card.name}
+                sublabel={
+                  card.origin === "public"
+                    ? "Published"
+                    : card.draft
+                      ? "Local"
+                      : "Private"
+                }
+                selected={selected}
+              />
+            );
 
             if (!card.canDelete) {
               return (

@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildShaderLibraryCards, filterShaderLibraryCards } from "./shaderLibrary.js";
 
-const placeholderThumbnailUrl = (index, name) => `placeholder:${index}:${name}`;
-
 test("shows local drafts, owned cloud drafts, and public shaders without presets", () => {
   const cards = buildShaderLibraryCards({
     drafts: [
@@ -31,9 +29,13 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
         is_public: true,
       },
     ],
-    placeholderThumbnailUrl,
     user: { id: "user-1", email: "owner@example.com" },
   });
+
+  assert.deepEqual(
+    cards.map((card) => card.thumbnailUrl),
+    [null, null, null]
+  );
 
   assert.deepEqual(
     cards.map(({ key, origin, authorLabel, canDelete }) => ({

@@ -8,23 +8,20 @@ export function buildShaderLibraryCards({
   cloudShaders,
   thumbnails = {},
   cloudThumbnails = {},
-  placeholderThumbnailUrl,
   liveNames = {},
   user = null,
 }) {
   const cards = [];
   const youLabel = user?.email || "You";
 
-  drafts.forEach((draft, index) => {
+  drafts.forEach((draft) => {
     const name = liveNames[draft.id] || draft.name;
     cards.push({
       key: draft.id,
       origin: "draft",
       name,
       kind: draft.kind,
-      thumbnailUrl:
-        thumbnails[draft.id] ||
-        placeholderThumbnailUrl(index, name),
+      thumbnailUrl: thumbnails[draft.id] || null,
       authorId: user?.id ?? null,
       authorLabel: "Local draft",
       updatedAt: null,
@@ -34,7 +31,7 @@ export function buildShaderLibraryCards({
     });
   });
 
-  cloudShaders.forEach((shader, index) => {
+  cloudShaders.forEach((shader) => {
     const key = `cloud:${shader.id}`;
     const owned = Boolean(user && shader.owner_id === user.id);
     const privateDraft = owned && !shader.is_public;
@@ -46,7 +43,7 @@ export function buildShaderLibraryCards({
       thumbnailUrl:
         thumbnails[key] ||
         cloudThumbnails[shader.id] ||
-        placeholderThumbnailUrl(drafts.length + index, shader.name),
+        null,
       authorId: shader.owner_id ?? user?.id ?? null,
       authorLabel:
         shader.author_name ||
