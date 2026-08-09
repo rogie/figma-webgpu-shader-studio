@@ -349,18 +349,6 @@ function savedPlayState() {
   return true;
 }
 
-function measureSpacer(token) {
-  const probe = document.createElement("div");
-  probe.style.cssText =
-    "position:absolute;visibility:hidden;pointer-events:none;width:var(" +
-    token +
-    ");height:0";
-  document.documentElement.appendChild(probe);
-  const px = probe.getBoundingClientRect().width;
-  probe.remove();
-  return px;
-}
-
 export default function App() {
   const {
     user,
@@ -495,7 +483,8 @@ export default function App() {
   const videoFrameRateRef = useRef(null);
   const videoBitrateRef = useRef(null);
   const deleteDialogRef = useRef(null);
-  const propertiesDialogRef = useRef(null);
+  const propertiesPanelRef = useRef(null);
+  const visualizerRef = useRef(null);
   const hostRef = useRef(null);
   const onStageSize = useCallback((width, height) => {
     hostRef.current?.setStageCssSize?.(width, height);
@@ -643,37 +632,6 @@ export default function App() {
     sync();
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
-  }, []);
-
-  useEffect(() => {
-    const dialog = propertiesDialogRef.current;
-    if (!dialog) return;
-    // Use the `open` attribute (not `.show()`) so this panel stays out of the
-    // dialog top layer. `.show()` would stack above fig-fill-picker popups.
-    if (!dialog.open) dialog.setAttribute("open", "");
-
-    const applyInset = () => {
-      if (dialog.style.left && dialog.style.left !== "auto") return;
-      const inset = measureSpacer("--spacer-5");
-      if (!inset) return;
-      dialog.style.top = `${inset}px`;
-      dialog.style.right = `${inset}px`;
-      dialog.style.bottom = "auto";
-      dialog.style.left = "auto";
-    };
-
-    applyInset();
-    const raf = requestAnimationFrame(() =>
-      requestAnimationFrame(applyInset)
-    );
-    const t0 = window.setTimeout(applyInset, 0);
-    const t1 = window.setTimeout(applyInset, 100);
-
-    return () => {
-      cancelAnimationFrame(raf);
-      window.clearTimeout(t0);
-      window.clearTimeout(t1);
-    };
   }, []);
 
   useEffect(() => {
@@ -2552,7 +2510,7 @@ export default function App() {
       if (!viewer) return;
 
       if (stacked) {
-        const visualizer = handle.nextElementSibling;
+        const visualizer = visualizerRef.current;
         if (!visualizer) return;
 
         const startY = event.clientY;
@@ -2596,14 +2554,17 @@ export default function App() {
         return;
       }
 
-      const codePane = handle.previousElementSibling;
+      const codePane = sidebarRef.current;
       if (!codePane) return;
+      const propertiesWidth =
+        propertiesPanelRef.current?.getBoundingClientRect().width || 0;
 
       const startX = event.clientX;
       const startWidth = codePane.getBoundingClientRect().width;
       const available =
         viewer.getBoundingClientRect().width -
         handle.getBoundingClientRect().width -
+        propertiesWidth -
         MIN_PREVIEW_WIDTH;
       const maxWidth = Math.max(MIN_CODE_WIDTH, available);
       let finalWidth = startWidth;
@@ -2780,6 +2741,118 @@ export default function App() {
       : []),
   ];
 
+  const propertiesPanel = (
+    <aside
+      ref={propertiesPanelRef}
+      className="shader-properties-panel"
+      data-collapsed={propertiesCollapsed ? "true" : "false"}
+      aria-label="Shader properties"
+    >
+      <fig-header borderless aria-expanded={!propertiesCollapsed}>
+        <h3>Properties</h3>
+        <hstack>
+          <fig-tooltip
+            text={propertiesCollapsed ? "Expand properties" : "Collapse properties"}
+          >
+            <fig-button
+              type="button"
+              variant="ghost"
+              icon="true"
+              aria-label={
+                propertiesCollapsed ? "Expand properties" : "Collapse properties"
+              }
+              onClick={() =>
+                setPropertiesCollapsed((collapsed) => !collapsed)
+              }
+            >
+              <fig-icon
+                class={
+                  propertiesCollapsed
+                    ? "properties-chevron is-collapsed"
+                    : "properties-chevron"
+                }
+                name="chevron"
+                size="medium"
+              />
+            </fig-button>
+          </fig-tooltip>
+        </hstack>
+      </fig-header>
+
+      {!propertiesCollapsed && (
+        <fig-content class="shader-properties-panel-content">
+          <fig-group name={shaderName}>
+            <fig-header borderless>
+              <h3>{shaderName}</h3>
+              <hstack>
+                <fig-tooltip text="Reset properties">
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Reset properties"
+                    onClick={resetProperties}
+                  >
+                    <fig-icon name="reset" />
+                  </fig-button>
+                </fig-tooltip>
+                <fig-tooltip
+                  text={effectVisible ? "Hide effect" : "Show effect"}
+                >
+                  <fig-button
+                    type="toggle"
+                    variant="ghost"
+                    icon="true"
+                    selected={effectVisible}
+                    aria-label={
+                      effectVisible ? "Hide effect" : "Show effect"
+                    }
+                    onClick={() => {
+                      setEffectVisible((visible) => {
+                        const next = !visible;
+                        hostRef.current?.setEffectVisible?.(next);
+                        return next;
+                      });
+                    }}
+                  >
+                    <fig-icon
+                      name={effectVisible ? "visible" : "hidden"}
+                    />
+                  </fig-button>
+                </fig-tooltip>
+              </hstack>
+            </fig-header>
+            <Controls
+              props={props}
+              values={values}
+              onChange={updateControl}
+              onInput={previewControl}
+            />
+            {user && (
+              <div className="sharing-controls">
+                <fig-field label="Public" direction="horizontal">
+                  <fig-switch
+                    checked={isPublic}
+                    onInput={(event) => {
+                      setIsPublic(event.target.checked);
+                      setDirty(true);
+                    }}
+                    dangerouslySetInnerHTML={{ __html: "" }}
+                  />
+                </fig-field>
+                <p>
+                  {isPublic
+                    ? "Anyone with the link can view the source and input."
+                    : "Only you can open this cloud shader."}
+                </p>
+              </div>
+            )}
+          </fig-group>
+        </fig-content>
+      )}
+    </aside>
+  );
+
   return (
     <>
       <nav
@@ -2793,7 +2866,7 @@ export default function App() {
       >
         <div className="app-nav-headers">
           <fig-header class="app-nav-header">
-            <h2 className="app-title">Shader studio</h2>
+            <h2 className="app-title">Studio</h2>
             {viewMode === "home" && (
               <div className="app-nav-home-tools">
                 <fig-input-text
@@ -3314,7 +3387,7 @@ export default function App() {
               event.preventDefault();
               const viewer = viewerRef.current;
               const handle = event.currentTarget;
-              const visualizer = handle.nextElementSibling;
+              const visualizer = visualizerRef.current;
               if (!viewer || !visualizer) return;
               const current =
                 previewHeight ?? visualizer.getBoundingClientRect().height;
@@ -3347,6 +3420,7 @@ export default function App() {
         />
 
         <section
+          ref={visualizerRef}
           className="shader-viewer-visualizer background--light"
         >
           {fatal ? (
@@ -3470,6 +3544,8 @@ export default function App() {
             )}
           </div>
         </section>
+
+        {propertiesPanel}
       </main>
 
       <dialog
@@ -3674,120 +3750,6 @@ export default function App() {
             {deleting ? "Deleting…" : "Delete"}
           </fig-button>
         </fig-footer>
-      </dialog>
-
-      <dialog
-        is="fig-dialog"
-        ref={propertiesDialogRef}
-        class="shader-properties-dialog"
-        data-collapsed={propertiesCollapsed ? "true" : "false"}
-        open=""
-        position="top right"
-        autoresize=""
-      >
-        <fig-header
-          dialog-header
-          borderless={propertiesCollapsed ? "" : undefined}
-          aria-expanded={!propertiesCollapsed}
-        >
-          <h3>Properties</h3>
-          <hstack>
-            <fig-tooltip
-              text={propertiesCollapsed ? "Expand properties" : "Collapse properties"}
-            >
-              <fig-button
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label={
-                  propertiesCollapsed ? "Expand properties" : "Collapse properties"
-                }
-                onClick={(event) => {
-                  event.stopPropagation();
-                  setPropertiesCollapsed((collapsed) => !collapsed);
-                }}
-              >
-                <fig-icon
-                  class={propertiesCollapsed ? "properties-chevron is-collapsed" : "properties-chevron"}
-                  name="chevron"
-                  size="medium"
-                />
-              </fig-button>
-            </fig-tooltip>
-          </hstack>
-        </fig-header>
-
-        {!propertiesCollapsed && (
-          <fig-content class="shader-properties-dialog-content">
-            <fig-group name={shaderName}>
-              <fig-header borderless>
-                <h3>{shaderName}</h3>
-                <hstack>
-                  <fig-tooltip text="Reset properties">
-                    <fig-button
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="Reset properties"
-                      onClick={resetProperties}
-                    >
-                      <fig-icon name="reset" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-tooltip
-                    text={effectVisible ? "Hide effect" : "Show effect"}
-                  >
-                    <fig-button
-                      type="toggle"
-                      variant="ghost"
-                      icon="true"
-                      selected={effectVisible}
-                      aria-label={
-                        effectVisible ? "Hide effect" : "Show effect"
-                      }
-                      onClick={() => {
-                        setEffectVisible((visible) => {
-                          const next = !visible;
-                          hostRef.current?.setEffectVisible?.(next);
-                          return next;
-                        });
-                      }}
-                    >
-                      <fig-icon
-                        name={effectVisible ? "visible" : "hidden"}
-                      />
-                    </fig-button>
-                  </fig-tooltip>
-                </hstack>
-              </fig-header>
-              <Controls
-                props={props}
-                values={values}
-                onChange={updateControl}
-                onInput={previewControl}
-              />
-              {user && (
-                <div className="sharing-controls">
-                  <fig-field label="Public" direction="horizontal">
-                    <fig-switch
-                      checked={isPublic}
-                      onInput={(event) => {
-                        setIsPublic(event.target.checked);
-                        setDirty(true);
-                      }}
-                      dangerouslySetInnerHTML={{ __html: "" }}
-                    />
-                  </fig-field>
-                  <p>
-                    {isPublic
-                      ? "Anyone with the link can view the source and input."
-                      : "Only you can open this cloud shader."}
-                  </p>
-                </div>
-              )}
-            </fig-group>
-          </fig-content>
-        )}
       </dialog>
 
       <dialog
