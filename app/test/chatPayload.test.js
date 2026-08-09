@@ -29,8 +29,9 @@ after(async () => {
   await vite?.close();
 });
 
-test("current image payload reaches the final user message intact", () => {
-  const dataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+test("current attachment payloads reach the final user message intact", () => {
+  const firstDataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB";
+  const secondDataBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAC";
   const messages = toApiMessages(
     [
       { role: "user", content: "Earlier request" },
@@ -38,20 +39,35 @@ test("current image payload reaches the final user message intact", () => {
       {
         role: "user",
         content: "Use this reference",
-        attachment: {
-          kind: "image",
-          name: "reference.png",
-          mimeType: "image/png",
-        },
+        attachments: [
+          {
+            kind: "image",
+            name: "reference.png",
+            mimeType: "image/png",
+          },
+          {
+            kind: "image",
+            name: "palette.png",
+            mimeType: "image/png",
+          },
+        ],
       },
       { role: "assistant", content: "", pending: true },
     ],
-    {
-      kind: "image",
-      name: "reference.png",
-      mimeType: "image/png",
-      dataBase64,
-    }
+    [
+      {
+        kind: "image",
+        name: "reference.png",
+        mimeType: "image/png",
+        dataBase64: firstDataBase64,
+      },
+      {
+        kind: "image",
+        name: "palette.png",
+        mimeType: "image/png",
+        dataBase64: secondDataBase64,
+      },
+    ]
   );
 
   assert.equal(messages.length, 3);
@@ -60,7 +76,13 @@ test("current image payload reaches the final user message intact", () => {
       kind: "image",
       name: "reference.png",
       mimeType: "image/png",
-      dataBase64,
+      dataBase64: firstDataBase64,
+    },
+    {
+      kind: "image",
+      name: "palette.png",
+      mimeType: "image/png",
+      dataBase64: secondDataBase64,
     },
   ]);
 });

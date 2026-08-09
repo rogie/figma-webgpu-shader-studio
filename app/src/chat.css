@@ -99,6 +99,10 @@
 
       fig-ai-prompt{
         --fig-ai-prompt-margin-inline: var(--spacer-3);
+
+        > fig-attachments {
+          margin-inline: var(--spacer-2);
+        }
       }
     }
 
@@ -120,44 +124,6 @@
 
       > fig-button {
         margin-left: auto;
-      }
-    }
-
-    .chat-pending-attachment {
-      display: flex;
-      align-items: center;
-      gap: var(--spacer-2);
-      margin-inline: var(--spacer-3);
-      padding: var(--spacer-2);
-      border: 1px solid var(--figma-color-border);
-      border-radius: var(--radius-medium);
-      background: var(--figma-color-bg-secondary);
-      font-size: var(--font-size-small, 12px);
-
-      fig-image {
-        flex: 0 0 auto;
-        border-radius: var(--radius-small);
-        background: var(--figma-color-bg);
-
-        > fig-preview {
-          border-radius: inherit;
-        }
-      }
-
-      video {
-        width: 40px;
-        height: 40px;
-        object-fit: cover;
-        border-radius: 4px;
-        background: var(--figma-color-bg);
-      }
-
-      span {
-        flex: 1;
-        min-width: 0;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        white-space: nowrap;
       }
     }
 

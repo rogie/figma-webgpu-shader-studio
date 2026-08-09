@@ -2,7 +2,13 @@
  * Build provider-neutral history, attaching base64 media only to the current
  * user message. Persisted history intentionally contains metadata only.
  */
-export function toApiMessages(messages, pendingAttachment) {
+export function toApiMessages(messages, pendingAttachments = []) {
+  const currentAttachments = (
+    Array.isArray(pendingAttachments)
+      ? pendingAttachments
+      : [pendingAttachments]
+  ).filter((attachment) => attachment?.dataBase64);
+
   return messages
     .filter((message) => {
       if (message.role !== "assistant") return true;
@@ -17,20 +23,24 @@ export function toApiMessages(messages, pendingAttachment) {
       if (
         isLast &&
         message.role === "user" &&
-        pendingAttachment?.dataBase64
+        currentAttachments.length > 0
       ) {
-        api.attachments = [
-          {
-            kind: pendingAttachment.kind,
-            name: pendingAttachment.name,
-            mimeType: pendingAttachment.mimeType,
-            dataBase64: pendingAttachment.dataBase64,
-          },
-        ];
-      } else if (message.attachment?.name) {
+        api.attachments = currentAttachments.map((attachment) => ({
+          kind: attachment.kind,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          dataBase64: attachment.dataBase64,
+        }));
+      } else {
+        const persistedAttachments =
+          message.attachments ||
+          (message.attachment ? [message.attachment] : []);
+        if (persistedAttachments.length === 0) return api;
         api.content = message.content?.trim()
           ? message.content
-          : `Attached ${message.attachment.kind || "image"}: ${message.attachment.name}`;
+          : `Attached: ${persistedAttachments
+              .map((attachment) => attachment.name)
+              .join(", ")}`;
       }
       return api;
     });

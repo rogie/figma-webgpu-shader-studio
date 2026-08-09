@@ -38,7 +38,6 @@ import { isSupabaseConfigured } from "../lib/supabase.js";
 import { streamChat } from "../services/chat.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
-import TrashIcon from "./TrashIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import "../chat.css";
 
@@ -115,13 +114,13 @@ const ChatPane = forwardRef(function ChatPane(
   const [error, setError] = useState("");
   const [keyVersion, setKeyVersion] = useState(0);
   const [undoCount, setUndoCount] = useState(0);
-  const [attachment, setAttachment] = useState(null);
+  const [attachments, setAttachments] = useState([]);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const undoStackRef = useRef([]);
   const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
-  const pendingApiAttachmentRef = useRef(null);
+  const pendingAttachmentsRef = useRef(null);
 
   const threadId = messageKey(shaderKey);
   const messages = pruneEmptyAssistants(threads[threadId] || []);
@@ -132,7 +131,7 @@ const ChatPane = forwardRef(function ChatPane(
   const hasKey = Boolean(apiKey);
   const videoSupported = providerSupportsChatVideo(model.provider);
   const canSend =
-    hasKey && Boolean(draft.trim() || attachment) && !streaming;
+    hasKey && Boolean(draft.trim() || attachments.length) && !streaming;
   const userName =
     user?.user_metadata?.full_name ||
     user?.user_metadata?.name ||
@@ -180,14 +179,30 @@ const ChatPane = forwardRef(function ChatPane(
     const el = listRef.current;
     if (!el) return;
     el.scrollTop = el.scrollHeight;
-  }, [messages, streaming, attachment]);
+  }, [messages, streaming, attachments]);
 
   useEffect(() => {
-    if (attachment?.kind === "video" && !providerSupportsChatVideo(model.provider)) {
-      setAttachment(null);
-      onNotice?.("Video attachments are only supported with Gemini. Cleared attachment.");
-    }
-  }, [model.provider, attachment, onNotice]);
+    if (providerSupportsChatVideo(model.provider)) return;
+    if (!attachments.some((attachment) => attachment.kind === "video")) return;
+    setAttachments((current) =>
+      current.filter((attachment) => attachment.kind !== "video")
+    );
+    onNotice?.("Video attachments are only supported with Gemini. Cleared videos.");
+  }, [model.provider, attachments, onNotice]);
+
+  useEffect(() => {
+    const attachmentList = pendingAttachmentsRef.current;
+    if (!attachmentList) return;
+    const removeAttachment = (event) => {
+      const index = Number(event.detail?.value);
+      if (!Number.isInteger(index)) return;
+      setAttachments((current) =>
+        current.filter((_, currentIndex) => currentIndex !== index)
+      );
+    };
+    attachmentList.addEventListener("remove", removeAttachment);
+    return () => attachmentList.removeEventListener("remove", removeAttachment);
+  }, [attachments.length]);
 
   useEffect(() => {
     const control = modelControlRef.current;
@@ -239,7 +254,7 @@ const ChatPane = forwardRef(function ChatPane(
       delete next[threadId];
       return next;
     });
-    setAttachment(null);
+    setAttachments([]);
     setError("");
   };
 
@@ -251,25 +266,30 @@ const ChatPane = forwardRef(function ChatPane(
     [threadId, streaming]
   );
 
-  const pickAttachment = async (file, kind) => {
-    if (!file) return;
-    try {
-      if (kind === "video" && !providerSupportsChatVideo(model.provider)) {
-        setError("Video attachments are only supported with Gemini.");
+  const addAttachments = async (files) => {
+    const selectedFiles = Array.from(files || []);
+    if (selectedFiles.length === 0) return;
+    const nextAttachments = [];
+    for (const file of selectedFiles) {
+      const kind = file.type.startsWith("video/") ? "video" : "image";
+      try {
+        if (kind === "video" && !providerSupportsChatVideo(model.provider)) {
+          throw new Error("Video attachments are only supported with Gemini.");
+        }
+        nextAttachments.push(await fileToChatAttachment(file, kind));
+      } catch (err) {
+        setError(err.message || String(err));
         return;
       }
-      const next = await fileToChatAttachment(file, kind);
-      setAttachment(next);
-      setError("");
-    } catch (err) {
-      setError(err.message || String(err));
     }
+    setAttachments((current) => [...current, ...nextAttachments]);
+    setError("");
   };
 
   const onAttachmentChosen = (event) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = "";
-    pickAttachment(file, file?.type.startsWith("video/") ? "video" : "image");
+    addAttachments(files);
   };
 
   const onPromptPaste = (event) => {
@@ -282,12 +302,12 @@ const ChatPane = forwardRef(function ChatPane(
       );
     if (!file) return;
     event.preventDefault();
-    pickAttachment(file, "image");
+    addAttachments([file]);
   };
 
   const send = async () => {
     const text = draft.trim();
-    if ((!text && !attachment) || streaming) return;
+    if ((!text && attachments.length === 0) || streaming) return;
 
     if (!isSupabaseConfigured) {
       setError("Supabase is not configured for the chat proxy.");
@@ -297,26 +317,32 @@ const ChatPane = forwardRef(function ChatPane(
       setError("Add your API key in Settings before chatting.");
       return;
     }
-    if (attachment?.kind === "video" && !providerSupportsChatVideo(model.provider)) {
+    if (
+      attachments.some((attachment) => attachment.kind === "video") &&
+      !providerSupportsChatVideo(model.provider)
+    ) {
       setError("Video attachments are only supported with Gemini.");
       return;
     }
 
     setError("");
     setDraft("");
-    const currentAttachment = attachment;
-    pendingApiAttachmentRef.current = currentAttachment;
-    setAttachment(null);
+    const currentAttachments = attachments;
+    setAttachments([]);
 
     const userMessage = {
       role: "user",
       content:
         text ||
-        (currentAttachment
-          ? `Attached ${currentAttachment.kind}: ${currentAttachment.name}`
+        (currentAttachments.length
+          ? `Attached: ${currentAttachments
+              .map((attachment) => attachment.name)
+              .join(", ")}`
           : ""),
-      attachment: attachmentMeta(currentAttachment),
-      attachmentPreview: currentAttachment?.previewUrl || null,
+      attachments: currentAttachments.map(attachmentMeta),
+      attachmentPreviews: currentAttachments.map(
+        (attachment) => attachment.previewUrl || null
+      ),
     };
     const assistantMessage = {
       role: "assistant",
@@ -333,7 +359,7 @@ const ChatPane = forwardRef(function ChatPane(
 
     const history = toApiMessages(
       [...messages, userMessage],
-      currentAttachment
+      currentAttachments
     );
 
     let assembled = "";
@@ -593,7 +619,6 @@ const ChatPane = forwardRef(function ChatPane(
       if (applied) onNotice?.("Code updated from chat.");
     } finally {
       abortRef.current = null;
-      pendingApiAttachmentRef.current = null;
       setStreaming(false);
     }
   };
@@ -648,29 +673,44 @@ const ChatPane = forwardRef(function ChatPane(
         )}
         {messages.map((message, index) => {
           if (message.role === "user") {
+            const messageAttachments =
+              message.attachments ||
+              (message.attachment ? [message.attachment] : []);
+            const attachmentPreviews =
+              message.attachmentPreviews ||
+              (message.attachmentPreview ? [message.attachmentPreview] : []);
             return (
               <fig-chat-message key={index} from="user">
-                {message.attachmentPreview && message.attachment?.kind === "image" && (
-                  <img
-                    className="chat-attachment-preview"
-                    src={message.attachmentPreview}
-                    alt={message.attachment.name || "Attachment"}
-                  />
-                )}
-                {message.attachment && !message.attachmentPreview && (
-                  <div className="chat-attachment-chip">
-                    {message.attachment.kind === "video" ? "Video" : "Image"}:{" "}
-                    {message.attachment.name}
-                  </div>
-                )}
-                {message.attachment?.kind === "video" && message.attachmentPreview && (
-                  <video
-                    className="chat-attachment-preview"
-                    src={message.attachmentPreview}
-                    controls
-                    muted
-                  />
-                )}
+                {messageAttachments.map((messageAttachment, attachmentIndex) => {
+                  const preview = attachmentPreviews[attachmentIndex];
+                  if (preview && messageAttachment.kind === "image") {
+                    return (
+                      <img
+                        key={attachmentIndex}
+                        className="chat-attachment-preview"
+                        src={preview}
+                        alt={messageAttachment.name || "Attachment"}
+                      />
+                    );
+                  }
+                  if (preview && messageAttachment.kind === "video") {
+                    return (
+                      <video
+                        key={attachmentIndex}
+                        className="chat-attachment-preview"
+                        src={preview}
+                        controls
+                        muted
+                      />
+                    );
+                  }
+                  return (
+                    <div key={attachmentIndex} className="chat-attachment-chip">
+                      {messageAttachment.kind === "video" ? "Video" : "Image"}:{" "}
+                      {messageAttachment.name}
+                    </div>
+                  );
+                })}
                 {message.content && <div className="chat-prose">{message.content}</div>}
                 {user && (
                   <fig-avatar
@@ -725,35 +765,25 @@ const ChatPane = forwardRef(function ChatPane(
           </p>
         )}
         <div className="chat-composer">
-          {attachment && (
-            <div className="chat-pending-attachment">
-              {attachment.kind === "image" ? (
-                <fig-image
-                  src={attachment.previewUrl}
-                  alt={attachment.name}
-                  size="small"
-                  aspect-ratio="1/1"
-                  fit="cover"
-                />
-              ) : (
-                <video src={attachment.previewUrl} muted />
-              )}
-              <span>{attachment.name}</span>
-              <fig-tooltip text="Remove attachment">
-                <fig-button
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  size="small"
-                  aria-label="Remove attachment"
-                  onClick={() => setAttachment(null)}
-                >
-                  <TrashIcon />
-                </fig-button>
-              </fig-tooltip>
-            </div>
-          )}
           <fig-ai-prompt>
+            {attachments.length > 0 && (
+              <fig-attachments ref={pendingAttachmentsRef}>
+                {attachments.map((attachment, index) => (
+                  <fig-attachment
+                    key={`${attachment.name}:${attachment.size}:${index}`}
+                    src={
+                      attachment.kind === "image"
+                        ? attachment.previewUrl
+                        : undefined
+                    }
+                    name={attachment.name}
+                    value={String(index)}
+                    disabled={streaming ? "" : undefined}
+                    dangerouslySetInnerHTML={{ __html: "" }}
+                  />
+                ))}
+              </fig-attachments>
+            )}
             <fig-input-text
               class="chat-input"
               multiline=""
@@ -826,6 +856,7 @@ const ChatPane = forwardRef(function ChatPane(
             ref={imageInputRef}
             type="file"
             accept={videoSupported ? "image/*,video/*" : "image/*"}
+            multiple
             hidden
             onChange={onAttachmentChosen}
           />

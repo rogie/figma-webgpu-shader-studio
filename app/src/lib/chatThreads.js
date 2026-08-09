@@ -18,8 +18,16 @@ function sanitizeMessage(message) {
     role: message.role,
     content: message.content,
   };
-  const attachment = sanitizeAttachment(message.attachment);
-  if (attachment) out.attachment = attachment;
+  const attachments = (
+    Array.isArray(message.attachments)
+      ? message.attachments
+      : message.attachment
+        ? [message.attachment]
+        : []
+  )
+    .map(sanitizeAttachment)
+    .filter(Boolean);
+  if (attachments.length) out.attachments = attachments;
   return out;
 }
 
@@ -37,7 +45,7 @@ function sanitizeThreads(threads) {
   return out;
 }
 
-/** @returns {Record<string, Array<{role: string, content: string, attachment?: object}>>} */
+/** @returns {Record<string, Array<{role: string, content: string, attachments?: object[]}>>} */
 export function loadChatThreads() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
