@@ -249,6 +249,26 @@ function pushShaderUrl(id) {
   window.history.pushState({}, "", makeShareUrl(id));
 }
 
+function consumeAuthCallbackError() {
+  const url = new URL(window.location.href);
+  const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
+  const description =
+    url.searchParams.get("error_description") ||
+    hash.get("error_description");
+  if (!description) return null;
+
+  for (const key of ["error", "error_code", "error_description", "sb"]) {
+    url.searchParams.delete(key);
+  }
+  if (hash.has("error") || hash.has("error_description")) url.hash = "";
+  window.history.replaceState({}, "", url);
+
+  if (description.includes("Multiple accounts with the same email address")) {
+    return "We found multiple accounts for this email. Contact support to merge them, then try again.";
+  }
+  return `Sign in failed: ${description}`;
+}
+
 function mediaType(file) {
   if (file.type?.startsWith("image/") || file.type?.startsWith("video/")) {
     return file.type;
@@ -782,6 +802,11 @@ export default function App() {
       error: options.error === true,
     });
   }, []);
+
+  useEffect(() => {
+    const authError = consumeAuthCallbackError();
+    if (authError) showNotice(authError, { error: true });
+  }, [showNotice]);
 
   const setRuntimeValues = useCallback((next) => {
     valuesRef.current = next;
