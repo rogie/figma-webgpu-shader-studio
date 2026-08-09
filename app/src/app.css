@@ -921,6 +921,41 @@ dialog.video-export-dialog {
   max-width: calc(100vw - var(--spacer-6));
 }
 
+dialog.embed-dialog {
+  width: min(440px, calc(100vw - var(--spacer-6)));
+
+  .embed-tabs {
+    margin-top: var(--spacer-2);
+  }
+
+  fig-field {
+    min-width: 0;
+  }
+
+  .embed-code {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 96px;
+    resize: vertical;
+    border: 1px solid var(--figma-color-border);
+    border-radius: var(--radius-medium);
+    padding: var(--spacer-2);
+    color: var(--figma-color-text);
+    background: var(--figma-color-bg-secondary);
+    font-family: "SF Mono", "Menlo", "Consolas", monospace;
+    font-size: 11px;
+    line-height: 1.5;
+
+    &:focus {
+      border-color: var(--figma-color-border-selected);
+      outline: 1px solid var(--figma-color-border-selected);
+      outline-offset: -1px;
+    }
+  }
+}
+
 dialog.video-export-toast,
 dialog.video-exported-toast {
   .video-export-progress,

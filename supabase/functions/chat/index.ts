@@ -43,11 +43,18 @@ function sseEncode(payload: unknown): string {
   return `data: ${JSON.stringify(payload)}\n\n`;
 }
 
+type ChatStatusPhase = "thinking" | "responding";
+type ExtractedStreamEvent = {
+  text?: string | null;
+  error?: string | null;
+  status?: ChatStatusPhase | null;
+};
+
 function sseStreamFromUpstream(
   upstream: Response,
   extractDelta: (
     json: Record<string, unknown>,
-  ) => string | null | { text?: string | null; error?: string | null },
+  ) => string | null | ExtractedStreamEvent,
 ): Response {
   if (!upstream.ok || !upstream.body) {
     throw new Error(`Upstream error ${upstream.status}`);
@@ -57,6 +64,7 @@ function sseStreamFromUpstream(
   const decoder = new TextDecoder();
   let buffer = "";
   const encoder = new TextEncoder();
+  let lastStatus: ChatStatusPhase | null = null;
 
   const emitData = (
     data: string,
@@ -98,6 +106,18 @@ function sseStreamFromUpstream(
         typeof extracted === "string" ? extracted : extracted?.text;
       const error =
         typeof extracted === "object" && extracted ? extracted.error : null;
+      const status =
+        typeof extracted === "object" && extracted ? extracted.status : null;
+      if (
+        status &&
+        (status === "thinking" || status === "responding") &&
+        status !== lastStatus
+      ) {
+        lastStatus = status;
+        controller.enqueue(
+          encoder.encode(sseEncode({ type: "status", phase: status })),
+        );
+      }
       if (error) {
         controller.enqueue(
           encoder.encode(sseEncode({ type: "error", message: error })),
@@ -316,7 +336,11 @@ async function streamOpenAI(
   return sseStreamFromUpstream(upstream, (json) => {
     const choices = json.choices as
       | Array<{
-          delta?: { content?: string };
+          delta?: {
+            content?: string;
+            reasoning_content?: string;
+            role?: string;
+          };
           finish_reason?: string | null;
         }>
       | undefined;
@@ -327,7 +351,17 @@ async function streamOpenAI(
       };
     }
     const delta = choice?.delta?.content;
-    return typeof delta === "string" && delta ? delta : null;
+    if (typeof delta === "string" && delta) {
+      return { text: delta, status: "responding" };
+    }
+    if (
+      choice?.delta?.role ||
+      (typeof choice?.delta?.reasoning_content === "string" &&
+        choice.delta.reasoning_content)
+    ) {
+      return { status: "thinking" };
+    }
+    return null;
   });
 }
 
@@ -368,13 +402,32 @@ async function streamAnthropic(
   }
 
   return sseStreamFromUpstream(upstream, (json) => {
+    if (json.type === "message_start") {
+      return { status: "thinking" };
+    }
+    if (
+      json.type === "content_block_start" &&
+      (json.content_block as { type?: string } | undefined)?.type ===
+        "thinking"
+    ) {
+      return { status: "thinking" };
+    }
+    if (
+      json.type === "content_block_delta" &&
+      (json.delta as { type?: string } | undefined)?.type ===
+        "thinking_delta"
+    ) {
+      return { status: "thinking" };
+    }
     if (
       json.type === "content_block_delta" &&
       (json.delta as { type?: string; text?: string } | undefined)?.type ===
         "text_delta"
     ) {
       const text = (json.delta as { text?: string }).text;
-      return typeof text === "string" && text ? text : null;
+      return typeof text === "string" && text
+        ? { text, status: "responding" }
+        : null;
     }
     if (
       json.type === "message_delta" &&
@@ -464,11 +517,20 @@ async function streamGemini(
     if (text) {
       return {
         text,
+        status: "responding",
         error:
           candidate?.finishReason === "MAX_TOKENS"
             ? "The response reached the model output limit. Ask it to continue."
             : null,
       };
+    }
+    if (
+      parts.some(
+        (part) =>
+          part?.thought && typeof part?.text === "string" && part.text.length > 0,
+      )
+    ) {
+      return { status: "thinking" };
     }
     if (candidate?.finishReason) {
       return {

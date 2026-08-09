@@ -10,7 +10,7 @@ const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
 
 /**
  * Stream a chat completion via the Supabase Edge Function proxy.
- * Yields { type: "delta"|"done"|"error", text?, message? }.
+ * Yields { type: "status"|"delta"|"done"|"error", phase?, text?, message? }.
  *
  * @param {object} options
  * @param {string} options.provider

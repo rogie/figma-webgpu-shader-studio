@@ -123,3 +123,18 @@ test("SSE parser preserves split chunks and an unterminated final event", () => 
     { type: "delta", text: " world" },
   ]);
 });
+
+test("SSE parser preserves safe provider status phases", () => {
+  const parser = createChatSseParser();
+  assert.deepEqual(
+    parser.push(
+      'data: {"type":"status","phase":"thinking"}\n\n' +
+        'data: {"type":"status","phase":"responding"}\n\n' +
+        'data: {"type":"status","phase":"private-reasoning"}\n\n'
+    ),
+    [
+      { type: "status", phase: "thinking" },
+      { type: "status", phase: "responding" },
+    ]
+  );
+});

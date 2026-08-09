@@ -37,6 +37,7 @@ import {
   buildShaderLibraryCards,
   filterShaderLibraryCards,
 } from "./lib/shaderLibrary.js";
+import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
   createShader,
   deleteShader,
@@ -397,6 +398,8 @@ export default function App() {
   const [publishOpen, setPublishOpen] = useState(false);
   const [publishToast, setPublishToast] = useState(null);
   const [videoExportOpen, setVideoExportOpen] = useState(false);
+  const [embedOpen, setEmbedOpen] = useState(false);
+  const [embedTab, setEmbedTab] = useState("code");
   const [videoExportSettings, setVideoExportSettings] = useState({
     dimensions: "current",
     duration: 5,
@@ -484,6 +487,8 @@ export default function App() {
   const publishToastRef = useRef(null);
   const noticeToastRef = useRef(null);
   const videoExportDialogRef = useRef(null);
+  const embedDialogRef = useRef(null);
+  const embedTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
   const videoDimensionsRef = useRef(null);
@@ -695,6 +700,28 @@ export default function App() {
       dialog.close();
     }
   }, [videoExportOpen]);
+
+  useEffect(() => {
+    const dialog = embedDialogRef.current;
+    if (!dialog) return;
+    if (embedOpen) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [embedOpen]);
+
+  useEffect(() => {
+    const tabs = embedTabsRef.current;
+    const onInput = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "code");
+      if (value === "code" || value === "iframe") {
+        setEmbedTab(value);
+      }
+    };
+    tabs?.addEventListener("input", onInput);
+    return () => tabs?.removeEventListener("input", onInput);
+  }, []);
 
   useEffect(() => {
     const toast = videoExportToastRef.current;
@@ -2396,6 +2423,49 @@ export default function App() {
     showNotice("Share link copied");
   }, [currentShader, dirty, showNotice]);
 
+  const openEmbedDialog = useCallback(() => {
+    setEmbedTab("code");
+    setEmbedOpen(true);
+  }, []);
+
+  const embedUrl = currentShader
+    ? makeShareUrl(currentShader.id)
+    : window.location.href;
+  const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
+  const standaloneEmbedCode = buildStandaloneEmbedCode({
+    source,
+    values,
+    kind,
+  });
+  const embedCode =
+    embedTab === "code" ? standaloneEmbedCode : iframeEmbedCode;
+
+  const copyEmbedCode = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(embedCode);
+      showNotice("Embed code copied");
+    } catch (copyError) {
+      setError(copyError.message || String(copyError));
+    }
+  }, [embedCode, showNotice]);
+
+  const downloadEmbedCode = useCallback(() => {
+    const fileName = shaderModuleFileName(presetId, shaderName).replace(
+      /\.ts$/,
+      ".html"
+    );
+    const url = URL.createObjectURL(
+      new Blob([standaloneEmbedCode], { type: "text/html;charset=utf-8" })
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+  }, [presetId, shaderName, standaloneEmbedCode]);
+
   const saveAppNavWidth = useCallback((width) => {
     const rounded = Math.round(width);
     setAppNavWidth(rounded);
@@ -3366,6 +3436,9 @@ export default function App() {
               >
                 Video…
               </fig-menu-item>
+              <fig-menu-item value="embed" onClick={openEmbedDialog}>
+                Embed…
+              </fig-menu-item>
             </fig-menu>
             {kind === "effect" && (
               <>
@@ -3485,6 +3558,52 @@ export default function App() {
             }}
           >
             Export
+          </fig-button>
+        </fig-footer>
+      </dialog>
+
+      <dialog
+        is="fig-dialog"
+        ref={embedDialogRef}
+        class="embed-dialog"
+        title="Embed shader"
+        modal=""
+        closedby="closerequest"
+        position="center center"
+        autoresize=""
+        onClose={() => setEmbedOpen(false)}
+        onCancel={() => setEmbedOpen(false)}
+      >
+        <fig-tabs
+          ref={embedTabsRef}
+          class="embed-tabs"
+          name="embed-format"
+          value={embedTab}
+        >
+          <fig-tab value="code">Code</fig-tab>
+          <fig-tab value="iframe">iFrame</fig-tab>
+        </fig-tabs>
+        <fig-field>
+          <textarea
+            id="shader-embed-code"
+            className="embed-code"
+            value={embedCode}
+            readOnly
+            rows="5"
+            spellCheck="false"
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </fig-field>
+        <fig-footer borderless>
+          <fig-button
+            type="button"
+            variant="secondary"
+            onClick={downloadEmbedCode}
+          >
+            Download
+          </fig-button>
+          <fig-button type="button" variant="primary" onClick={copyEmbedCode}>
+            Copy
           </fig-button>
         </fig-footer>
       </dialog>

@@ -46,6 +46,25 @@ const MODEL_STORAGE_KEY = "shader-studio.chatModel";
 const MAX_UNDO = 12;
 const MAX_AUTO_HEAL_ATTEMPTS = 2;
 
+function assistantPhaseLabel(message) {
+  switch (message?.phase) {
+    case "thinking":
+      return "Thinking…";
+    case "responding":
+      return "Responding…";
+    case "writing":
+      return "Writing module…";
+    case "validating":
+      return "Validating module…";
+    case "repairing":
+      return "Fixing syntax…";
+    case "applying":
+      return "Applying changes…";
+    default:
+      return "Waiting for provider…";
+  }
+}
+
 function loadSavedModel() {
   try {
     const raw = localStorage.getItem(MODEL_STORAGE_KEY);
@@ -299,7 +318,12 @@ const ChatPane = forwardRef(function ChatPane(
       attachment: attachmentMeta(currentAttachment),
       attachmentPreview: currentAttachment?.previewUrl || null,
     };
-    const assistantMessage = { role: "assistant", content: "", pending: true };
+    const assistantMessage = {
+      role: "assistant",
+      content: "",
+      pending: true,
+      phase: "waiting",
+    };
 
     updateThread((current) => [...current, userMessage, assistantMessage]);
     setStreaming(true);
@@ -317,6 +341,16 @@ const ChatPane = forwardRef(function ChatPane(
     let lastApplied = null;
     let didPushUndo = false;
     const baselineSource = source;
+
+    const updateLastAssistant = (patch) => {
+      updateThread((current) => {
+        const next = [...current];
+        const last = next[next.length - 1];
+        if (last?.role !== "assistant") return next;
+        next[next.length - 1] = { ...last, ...patch };
+        return next;
+      });
+    };
 
     const finishAssistant = (content, { applied = false } = {}) => {
       updateThread((current) => {
@@ -362,6 +396,7 @@ const ChatPane = forwardRef(function ChatPane(
         didPushUndo = true;
       }
       lastApplied = moduleSource;
+      updateLastAssistant({ phase: "applying" });
       onApplySource(moduleSource);
       markAssistantApplied();
       return true;
@@ -392,7 +427,13 @@ const ChatPane = forwardRef(function ChatPane(
         updateThread((current) => [
           ...current,
           repairUserMessage,
-          { role: "assistant", content: "", pending: true, autoRepair: true },
+          {
+            role: "assistant",
+            content: "",
+            pending: true,
+            autoRepair: true,
+            phase: "repairing",
+          },
         ]);
 
         let repairedText = "";
@@ -411,6 +452,14 @@ const ChatPane = forwardRef(function ChatPane(
           if (event.type === "error") {
             throw new Error(event.message || "Automatic repair failed.");
           }
+          if (event.type === "status") {
+            updateLastAssistant({ phase: "repairing" });
+            continue;
+          }
+          if (event.type === "done") {
+            updateLastAssistant({ phase: "validating" });
+            continue;
+          }
           if (event.type !== "delta") continue;
           repairedText += event.text;
           const snapshot = repairedText;
@@ -422,6 +471,7 @@ const ChatPane = forwardRef(function ChatPane(
                 ...last,
                 content: snapshot,
                 pending: true,
+                phase: "repairing",
               };
             }
             return next;
@@ -467,20 +517,28 @@ const ChatPane = forwardRef(function ChatPane(
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
+          const writingModule = Boolean(
+            extractModuleSource(snapshot, { allowIncomplete: true })
+          );
           updateThread((current) => {
             const next = [...current];
             const last = next[next.length - 1];
             if (last?.role === "assistant") {
               next[next.length - 1] = {
-                role: "assistant",
+                ...last,
                 content: snapshot,
                 pending: true,
                 applied: Boolean(last.applied),
+                phase: writingModule ? "writing" : "responding",
               };
             }
             return next;
           });
           tryApplyModule(snapshot, { allowIncomplete: false });
+        } else if (event.type === "status") {
+          updateLastAssistant({ phase: event.phase });
+        } else if (event.type === "done") {
+          updateLastAssistant({ phase: "validating" });
         } else if (event.type === "error") {
           sawError = true;
           setError(event.message || "Chat failed.");
@@ -623,20 +681,20 @@ const ChatPane = forwardRef(function ChatPane(
               </fig-chat-message>
             );
           }
-          const { prose, source: code } = splitAssistantContent(message.content);
+          const { prose } = splitAssistantContent(message.content);
           return (
             <fig-chat-message
               key={index}
               from="agent"
             >
               {prose && <div className="chat-prose">{prose}</div>}
-              {(message.applied || (code && message.pending)) && (
+              {(message.applied || message.pending) && (
                 <div className="chat-code-note">
                   {message.applied ? (
                     <span>Updated module applied to editor.</span>
                   ) : (
-                    <fig-shimmer aria-label="Writing module">
-                      <span>Writing module…</span>
+                    <fig-shimmer aria-label={assistantPhaseLabel(message)}>
+                      <span>{assistantPhaseLabel(message)}</span>
                     </fig-shimmer>
                   )}
                   {index === undoMessageIndex && message.applied && (
@@ -654,11 +712,6 @@ const ChatPane = forwardRef(function ChatPane(
                     </fig-tooltip>
                   )}
                 </div>
-              )}
-              {message.pending && !message.content && (
-                <fig-shimmer aria-label="Thinking">
-                  <div className="chat-prose">Thinking…</div>
-                </fig-shimmer>
               )}
             </fig-chat-message>
           );

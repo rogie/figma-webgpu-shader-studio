@@ -77,6 +77,11 @@ export function createChatSseParser() {
           const event = JSON.parse(data);
           if (event.type === "delta" && typeof event.text === "string") {
             events.push({ type: "delta", text: event.text });
+          } else if (
+            event.type === "status" &&
+            (event.phase === "thinking" || event.phase === "responding")
+          ) {
+            events.push({ type: "status", phase: event.phase });
           } else if (event.type === "done") {
             events.push({ type: "done" });
           } else if (event.type === "error") {
