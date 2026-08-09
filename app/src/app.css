@@ -11,7 +11,7 @@ body,
 }
 
 :root {
-  --sidebar-width: 220px;
+  --sidebar-width: 240px;
   --code-width: 480px;
   --viewer-radius: 0.5rem;
 }
@@ -48,6 +48,10 @@ body,
     .app-title {
       margin: 0;
       margin-right: auto;
+    }
+
+    .app-nav-back-button {
+      margin-left: calc(var(--spacer-2) * -1);
     }
 
     fig-header.app-nav-search-header {
@@ -99,9 +103,13 @@ body,
         align-content: start;
 
         > fig-separator {
+          position: sticky;
+          top: 0;
+          z-index: 3;
           grid-column: 1 / -1;
           width: calc(100% + var(--fig-chooser-inline-margin) * 2);
           margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
+          background: var(--figma-color-bg);
 
           &:first-of-type::before {
             display: none;
@@ -147,27 +155,30 @@ body,
       width: 100%;
       margin-right: 0;
       border-right-color: transparent;
-      padding: var(--spacer-3) var(--spacer-4) var(--spacer-4);
-      gap: var(--spacer-3);
+      padding: 0;
 
       fig-header.app-nav-header {
         justify-content: flex-start;
         align-items: center;
         height: auto;
         min-height: var(--spacer-6);
-        padding: var(--spacer-2) 0;
-        box-shadow: none;
+        padding: var(--spacer-3);
       }
 
       .app-nav-home-tools {
         display: flex;
+        flex: 0 1 auto;
+        margin-left: auto;
+      }
+
+      .app-nav-filter {
+        width: auto;
       }
 
       fig-chooser {
-        --fig-chooser-gap: var(--spacer-3);
         --fig-chooser-grid-columns: 4;
-        --fig-chooser-inline-margin: 0;
-        padding-inline: 0;
+        --fig-chooser-inline-margin: var(--spacer-2-5);
+        padding-inline: var(--fig-chooser-inline-margin);
         align-content: start;
 
         fig-choice {
@@ -186,14 +197,15 @@ body,
       }
 
       @media (max-width: 720px) {
-        padding-inline: var(--spacer-3);
+        .app-nav-headers {
+          padding-inline: var(--spacer-3);
+        }
 
         fig-header.app-nav-header {
           flex-wrap: wrap;
         }
 
         .app-nav-home-tools {
-          flex: 1 1 100%;
           flex-wrap: wrap;
         }
 
@@ -868,6 +880,17 @@ dialog[is="fig-popup"].settings-popup {
 
   fig-header {
     justify-content: flex-start;
+  }
+}
+
+dialog[is="fig-popup"].auth-popup {
+  width: 180px;
+  padding: 0;
+  animation: none !important;
+  transition: none !important;
+
+  form {
+    display: contents;
   }
 }
 

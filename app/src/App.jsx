@@ -245,6 +245,10 @@ function replaceShaderUrl(id) {
   );
 }
 
+function pushShaderUrl(id) {
+  window.history.pushState({}, "", makeShareUrl(id));
+}
+
 function mediaType(file) {
   if (file.type?.startsWith("image/") || file.type?.startsWith("video/")) {
     return file.type;
@@ -411,6 +415,7 @@ export default function App() {
   const [editorLibraryTab, setEditorLibraryTab] = useState("yours");
   const [homeKind, setHomeKind] = useState("all");
   const [homeOrigin, setHomeOrigin] = useState("all");
+  const [homeAuthor, setHomeAuthor] = useState("all");
   const [codeCollapsed, setCodeCollapsed] = useState(
     () => savedSidebarSections().codeCollapsed
   );
@@ -467,6 +472,7 @@ export default function App() {
   const editorLibraryTabsRef = useRef(null);
   const homeKindRef = useRef(null);
   const homeOriginRef = useRef(null);
+  const homeAuthorRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
@@ -1788,16 +1794,24 @@ export default function App() {
     const chooser = chooserRef.current;
     if (!chooser) return;
     const handleChange = (event) => {
-      if (typeof event.detail === "string") chooseItem(event.detail);
+      if (typeof event.detail !== "string") return;
+      if (viewMode === "home") {
+        const id = event.detail.startsWith("cloud:")
+          ? event.detail.slice("cloud:".length)
+          : event.detail;
+        pushShaderUrl(id);
+      }
+      chooseItem(event.detail);
     };
     chooser.addEventListener("change", handleChange);
     return () => chooser.removeEventListener("change", handleChange);
-  }, [chooseItem]);
+  }, [chooseItem, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "home") return;
     const kindControl = homeKindRef.current;
     const originControl = homeOriginRef.current;
+    const authorControl = homeAuthorRef.current;
     const onKind = (event) => {
       const value = String(event.detail ?? event.target.value ?? "all");
       setHomeKind(value || "all");
@@ -1806,11 +1820,17 @@ export default function App() {
       const value = String(event.detail ?? event.target.value ?? "all");
       setHomeOrigin(value || "all");
     };
+    const onAuthor = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "all");
+      setHomeAuthor(value || "all");
+    };
     kindControl?.addEventListener("change", onKind);
     originControl?.addEventListener("change", onOrigin);
+    authorControl?.addEventListener("change", onAuthor);
     return () => {
       kindControl?.removeEventListener("change", onKind);
       originControl?.removeEventListener("change", onOrigin);
+      authorControl?.removeEventListener("change", onAuthor);
     };
   }, [viewMode]);
 
@@ -2706,6 +2726,16 @@ export default function App() {
     },
     user,
   });
+  const publishedAuthors = [
+    ...new Map(
+      libraryCards
+        .filter((card) => card.origin === "public" && card.authorId)
+        .map((card) => [
+          card.authorId,
+          { value: card.authorId, label: card.authorLabel },
+        ])
+    ).values(),
+  ].sort((a, b) => a.label.localeCompare(b.label));
   const editorLibraryCards = libraryCards.filter((card) => {
     const isYours = user
       ? card.authorId === user.id
@@ -2720,6 +2750,7 @@ export default function App() {
           query: homeQuery,
           kind: homeKind,
           origin: homeOrigin,
+          author: homeAuthor,
         })
       : filterShaderLibraryCards(editorLibraryCards, { query: editorQuery });
   const visibleEffectCards = visibleCards.filter(
@@ -2866,6 +2897,20 @@ export default function App() {
       >
         <div className="app-nav-headers">
           <fig-header class="app-nav-header">
+            {viewMode === "editor" && (
+              <fig-tooltip text="Back to home">
+                <fig-button
+                  class="app-nav-back-button"
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Back to home"
+                  onClick={() => setShaderRoute()}
+                >
+                  <fig-icon name="back" />
+                </fig-button>
+              </fig-tooltip>
+            )}
             <h2 className="app-title">Studio</h2>
             {viewMode === "home" && (
               <div className="app-nav-home-tools">
@@ -2898,8 +2943,20 @@ export default function App() {
                   options={JSON.stringify([
                     { value: "all", label: "All sources" },
                     { value: "draft", label: "Drafts" },
-                    { value: "public", label: "Public" },
+                    { value: "public", label: "Published" },
                   ])}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-select
+                  ref={homeAuthorRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by author"
+                  value={homeAuthor}
+                  options={JSON.stringify([
+                    { value: "all", label: "All authors" },
+                    ...publishedAuthors,
+                  ])}
+                  disabled={publishedAuthors.length ? undefined : ""}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
               </div>
@@ -2971,6 +3028,7 @@ export default function App() {
           ref={chooserRef}
           value={viewMode === "home" ? "" : presetId}
           layout="grid"
+          overflow={viewMode === "home" ? "scrollbar" : undefined}
           {...(viewMode === "editor"
             ? { columns: appNavWidth < 160 ? "1" : "2", drag: "true" }
             : {})}
@@ -2991,9 +3049,12 @@ export default function App() {
               fit: "cover",
               "aspect-ratio": "4/3",
               full: "",
-              ...(viewMode === "home"
-                ? { sublabel: card.authorLabel }
-                : {}),
+              sublabel:
+                card.origin === "public"
+                  ? "Published"
+                  : card.draft
+                    ? "Local"
+                    : "Private",
               ...(selected ? { selected: "" } : {}),
               dangerouslySetInnerHTML: opaqueContent,
             };
@@ -3481,6 +3542,34 @@ export default function App() {
                 200%
               </fig-menu-item>
             </fig-menu>
+            {kind === "effect" && (
+              <>
+                <fig-select
+                  ref={inputSelectRef}
+                  class="tools-input-source"
+                  position="top left"
+                  value={inputSource}
+                  options={JSON.stringify([
+                    { value: "image", label: "Image" },
+                    { value: "vector", label: "Vector" },
+                    { value: "video", label: "Video" },
+                    { value: "html", label: "HTML" },
+                  ])}
+                  aria-label="Input source"
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-tooltip text="Upload input">
+                  <fig-button
+                    variant="ghost"
+                    icon="true"
+                    disabled={uploading || inputSource === "html"}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <fig-icon name="upload" />
+                  </fig-button>
+                </fig-tooltip>
+              </>
+            )}
             <fig-menu position="top right">
               <fig-tooltip text="Export">
                 <fig-button
@@ -3514,34 +3603,6 @@ export default function App() {
                 Embed…
               </fig-menu-item>
             </fig-menu>
-            {kind === "effect" && (
-              <>
-                <fig-select
-                  ref={inputSelectRef}
-                  class="tools-input-source"
-                  position="top left"
-                  value={inputSource}
-                  options={JSON.stringify([
-                    { value: "image", label: "Image" },
-                    { value: "vector", label: "Vector" },
-                    { value: "video", label: "Video" },
-                    { value: "html", label: "HTML" },
-                  ])}
-                  aria-label="Input source"
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-tooltip text="Upload input">
-                  <fig-button
-                    variant="ghost"
-                    icon="true"
-                    disabled={uploading || inputSource === "html"}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <fig-icon name="upload" />
-                  </fig-button>
-                </fig-tooltip>
-              </>
-            )}
           </div>
         </section>
 

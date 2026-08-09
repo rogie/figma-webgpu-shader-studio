@@ -18,6 +18,7 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
         id: "private",
         owner_id: "user-1",
         name: "Cloud draft",
+        author_name: "Owner",
         kind: "fill",
         is_public: false,
       },
@@ -25,6 +26,7 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
         id: "public",
         owner_id: "user-2",
         name: "Published",
+        author_name: "Other author",
         kind: "effect",
         is_public: true,
       },
@@ -50,13 +52,13 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
       {
         key: "cloud:private",
         origin: "draft",
-        authorLabel: "Draft",
+        authorLabel: "Owner",
         canDelete: true,
       },
       {
         key: "cloud:public",
         origin: "public",
-        authorLabel: "Community",
+        authorLabel: "Other author",
         canDelete: false,
       },
     ]
@@ -78,6 +80,29 @@ test("filters draft and public cards independently", () => {
     cards[0],
   ]);
   assert.deepEqual(filterShaderLibraryCards(cards, { origin: "public" }), [
+    cards[1],
+  ]);
+});
+
+test("filters published shaders by author", () => {
+  const cards = [
+    {
+      name: "First",
+      authorId: "author-1",
+      authorLabel: "Ada",
+      kind: "fill",
+      origin: "public",
+    },
+    {
+      name: "Second",
+      authorId: "author-2",
+      authorLabel: "Grace",
+      kind: "effect",
+      origin: "public",
+    },
+  ];
+
+  assert.deepEqual(filterShaderLibraryCards(cards, { author: "author-2" }), [
     cards[1],
   ]);
 });

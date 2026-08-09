@@ -15,14 +15,36 @@ function unwrap(result) {
   return result.data;
 }
 
+async function attachAuthorProfiles(client, shaders) {
+  const ownerIds = [
+    ...new Set(shaders.map((shader) => shader.owner_id).filter(Boolean)),
+  ];
+  if (!ownerIds.length) return shaders;
+
+  const result = await client
+    .from("profiles")
+    .select("id, display_name")
+    .in("id", ownerIds);
+  if (result.error) return shaders;
+
+  const names = new Map(
+    result.data.map((profile) => [profile.id, profile.display_name])
+  );
+  return shaders.map((shader) => ({
+    ...shader,
+    author_name: names.get(shader.owner_id) || null,
+  }));
+}
+
 export async function listShaders() {
   const client = requireClient();
-  return unwrap(
+  const shaders = unwrap(
     await client
       .from("shaders")
       .select("*")
       .order("updated_at", { ascending: false })
   );
+  return attachAuthorProfiles(client, shaders);
 }
 
 export async function getShader(id) {

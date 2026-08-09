@@ -48,7 +48,9 @@ export function buildShaderLibraryCards({
         cloudThumbnails[shader.id] ||
         placeholderThumbnailUrl(drafts.length + index, shader.name),
       authorId: shader.owner_id ?? user?.id ?? null,
-      authorLabel: privateDraft ? "Draft" : owned ? youLabel : "Community",
+      authorLabel:
+        shader.author_name ||
+        (privateDraft ? "Private" : owned ? youLabel : "Unknown author"),
       updatedAt: shader.updated_at || null,
       draft: null,
       cloud: shader,
@@ -61,12 +63,13 @@ export function buildShaderLibraryCards({
 
 export function filterShaderLibraryCards(
   cards,
-  { query = "", kind = "all", origin = "all" } = {}
+  { query = "", kind = "all", origin = "all", author = "all" } = {}
 ) {
   const needle = query.trim().toLowerCase();
   return cards.filter((card) => {
     if (kind !== "all" && card.kind !== kind) return false;
     if (origin !== "all" && card.origin !== origin) return false;
+    if (author !== "all" && card.authorId !== author) return false;
     if (!needle) return true;
     return (
       card.name.toLowerCase().includes(needle) ||
