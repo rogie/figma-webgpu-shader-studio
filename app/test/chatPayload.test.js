@@ -85,6 +85,8 @@ test("request preserves complete source, features, and skill context", () => {
     isAnimated: false,
     usesMouse: true,
   });
+  assert.match(skills, /Skill: defineProperties label casing/);
+  assert.match(skills, /every user-facing `label`.*sentence case/);
   assert.match(skills, /Skill: figma-shader-coder/);
   assert.match(skills, /Skill: Figma shader module contract \(v3\)/);
   assert.match(skills, /Skill: WGSL/);

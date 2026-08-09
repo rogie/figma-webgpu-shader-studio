@@ -851,6 +851,24 @@ dialog[is="fig-toast"] {
   bottom: calc(2.5rem + var(--spacer-2) * 2) !important;
 }
 
+dialog[is="fig-toast"].preview-error-toast {
+  width: min(720px, calc(100vw - var(--spacer-6)));
+  max-width: calc(100vw - var(--spacer-6));
+
+  .preview-error-message {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  fig-button {
+    flex: 0 0 auto;
+  }
+}
+
 dialog[is="fig-toast"].publish-toast {
   .publish-toast-body {
     display: inline-flex;
@@ -965,19 +983,11 @@ dialog.delete-shader-dialog {
     }
   }
 
-  .compound-control,
-  .gradient-control {
+  .compound-control {
     display: flex;
     flex-direction: column;
     gap: var(--spacer-1);
     width: 100%;
-  }
-
-  .gradient-stop {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: var(--spacer-1);
   }
 
   .empty-state,
@@ -998,20 +1008,6 @@ dialog.delete-shader-dialog {
       line-height: 1.35;
     }
   }
-}
-
-.status-toast {
-  position: fixed;
-  z-index: 100;
-  left: 50%;
-  bottom: var(--spacer-4);
-  transform: translateX(-50%);
-  padding: var(--spacer-2) var(--spacer-3);
-  color: var(--figma-color-text);
-  background: var(--figma-color-bg);
-  border: 1px solid var(--figma-color-border);
-  border-radius: var(--radius-medium);
-  box-shadow: var(--figma-elevation-400-menu-panel);
 }
 
 @media (max-width: 1180px) {

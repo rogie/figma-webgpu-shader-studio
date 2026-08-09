@@ -1,3 +1,5 @@
+import { loadModule } from "../runtime/loader.js";
+
 const COMPLETE_FENCE_RE =
   /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n([\s\S]*?)```/gi;
 const OPEN_FENCE_RE =
@@ -56,7 +58,17 @@ export function validateModuleSource(source) {
   if (!/\bexport\b/.test(trimmed)) {
     return { ok: false, reason: "Code block is missing an export." };
   }
-  return { ok: true };
+  try {
+    loadModule(source);
+    return { ok: true };
+  } catch (error) {
+    const reason = error?.message || String(error);
+    return {
+      ok: false,
+      reason,
+      autoHealable: /^(Compile|Syntax) error:/i.test(reason),
+    };
+  }
 }
 
 /**

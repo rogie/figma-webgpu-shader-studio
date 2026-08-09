@@ -38,11 +38,13 @@ import { isSupabaseConfigured } from "../lib/supabase.js";
 import { streamChat } from "../services/chat.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
+import TrashIcon from "./TrashIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
 const MAX_UNDO = 12;
+const MAX_AUTO_HEAL_ATTEMPTS = 2;
 
 function loadSavedModel() {
   try {
@@ -250,6 +252,19 @@ const ChatPane = forwardRef(function ChatPane(
     pickAttachment(file, file?.type.startsWith("video/") ? "video" : "image");
   };
 
+  const onPromptPaste = (event) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const imageItem = items.find((item) => item.type.startsWith("image/"));
+    const file =
+      imageItem?.getAsFile() ||
+      Array.from(event.clipboardData?.files || []).find((item) =>
+        item.type.startsWith("image/")
+      );
+    if (!file) return;
+    event.preventDefault();
+    pickAttachment(file, "image");
+  };
+
   const send = async () => {
     const text = draft.trim();
     if ((!text && !attachment) || streaming) return;
@@ -351,6 +366,90 @@ const ChatPane = forwardRef(function ChatPane(
       return true;
     };
 
+    const autoHealSyntaxError = async (initialSource, initialReason) => {
+      let brokenSource = initialSource;
+      let reason = initialReason;
+      let repairHistory = [
+        ...history,
+        { role: "assistant", content: assembled },
+      ];
+
+      for (let attempt = 1; attempt <= MAX_AUTO_HEAL_ATTEMPTS; attempt += 1) {
+        if (controller.signal.aborted) return false;
+        const repairPrompt = [
+          `Auto-repair attempt ${attempt}/${MAX_AUTO_HEAL_ATTEMPTS}.`,
+          "The module you just wrote failed syntax validation:",
+          reason,
+          "Fix the error and return the complete corrected module in one code fence.",
+          "Do not omit unchanged code.",
+        ].join("\n\n");
+        const repairUserMessage = {
+          role: "user",
+          content: repairPrompt,
+          autoRepair: true,
+        };
+        updateThread((current) => [
+          ...current,
+          repairUserMessage,
+          { role: "assistant", content: "", pending: true, autoRepair: true },
+        ]);
+
+        let repairedText = "";
+        for await (const event of streamChat({
+          provider: model.provider,
+          model: model.id,
+          apiKey,
+          messages: [...repairHistory, { role: "user", content: repairPrompt }],
+          source: brokenSource,
+          kind,
+          fileName,
+          features,
+          skills: getChatSkillContext(),
+          signal: controller.signal,
+        })) {
+          if (event.type === "error") {
+            throw new Error(event.message || "Automatic repair failed.");
+          }
+          if (event.type !== "delta") continue;
+          repairedText += event.text;
+          const snapshot = repairedText;
+          updateThread((current) => {
+            const next = [...current];
+            const last = next[next.length - 1];
+            if (last?.role === "assistant") {
+              next[next.length - 1] = {
+                ...last,
+                content: snapshot,
+                pending: true,
+              };
+            }
+            return next;
+          });
+        }
+
+        const candidate = extractModuleSource(repairedText, {
+          allowIncomplete: true,
+        });
+        const check = candidate
+          ? validateModuleSource(candidate)
+          : { ok: false, reason: "Repair did not return a code module." };
+        const applied =
+          check.ok &&
+          tryApplyModule(repairedText, { allowIncomplete: true });
+        finishAssistant(repairedText, { applied });
+        if (applied) return true;
+
+        brokenSource = candidate || brokenSource;
+        reason = check.reason;
+        repairHistory = [
+          ...repairHistory,
+          { role: "user", content: repairPrompt },
+          { role: "assistant", content: repairedText },
+        ];
+      }
+      return false;
+    };
+
     try {
       for await (const event of streamChat({
         provider: model.provider,
@@ -408,7 +507,20 @@ const ChatPane = forwardRef(function ChatPane(
           });
           if (candidate) {
             const check = validateModuleSource(candidate);
-            if (!check.ok) onNotice?.(check.reason);
+            if (!check.ok && check.autoHealable) {
+              onNotice?.("Syntax error detected. Repairing code…");
+              const healed = await autoHealSyntaxError(candidate, check.reason);
+              if (healed) {
+                onNotice?.("Syntax error fixed automatically.");
+              } else {
+                onNotice?.(
+                  `Automatic repair failed: ${check.reason}`,
+                  { error: true }
+                );
+              }
+            } else if (!check.ok) {
+              onNotice?.(check.reason, { error: true });
+            }
           }
         }
       }
@@ -562,21 +674,29 @@ const ChatPane = forwardRef(function ChatPane(
           {attachment && (
             <div className="chat-pending-attachment">
               {attachment.kind === "image" ? (
-                <img src={attachment.previewUrl} alt={attachment.name} />
+                <fig-image
+                  src={attachment.previewUrl}
+                  alt={attachment.name}
+                  size="small"
+                  aspect-ratio="1/1"
+                  fit="cover"
+                />
               ) : (
                 <video src={attachment.previewUrl} muted />
               )}
               <span>{attachment.name}</span>
-              <fig-button
-                type="button"
-                variant="ghost"
-                icon="true"
-                size="small"
-                aria-label="Remove attachment"
-                onClick={() => setAttachment(null)}
-              >
-                <fig-icon name="x" />
-              </fig-button>
+              <fig-tooltip text="Remove attachment">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  size="small"
+                  aria-label="Remove attachment"
+                  onClick={() => setAttachment(null)}
+                >
+                  <TrashIcon />
+                </fig-button>
+              </fig-tooltip>
             </div>
           )}
           <fig-ai-prompt>
@@ -589,6 +709,7 @@ const ChatPane = forwardRef(function ChatPane(
               disabled={streaming || !hasKey ? "" : undefined}
               onInput={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
+              onPaste={onPromptPaste}
               dangerouslySetInnerHTML={{ __html: "" }}
             />
             <fig-footer>

@@ -58,6 +58,40 @@ test("serializes percent radius for fig-canvas-control", () => {
   });
 });
 
+test("reads the FigUI3 color event alpha aliases", () => {
+  const def = { type: "color-point", unit: "%" };
+  assert.deepEqual(
+    fromFigCanvasValue(def, {
+      x: 25,
+      y: 20,
+      color: "#fff5e6",
+      alpha: 0.4,
+      opacity: 40,
+    }),
+    {
+      x: 25,
+      y: 20,
+      color: { r: 1, g: 245 / 255, b: 230 / 255, a: 0.4 },
+    }
+  );
+});
+
+test("preserves opacity from FigUI3 rgba colors during point drags", () => {
+  const def = { type: "color-point", unit: "%" };
+  assert.deepEqual(
+    fromFigCanvasValue(def, {
+      x: 30,
+      y: 35,
+      color: "rgba(255, 245, 230, 0.4)",
+    }),
+    {
+      x: 30,
+      y: 35,
+      color: { r: 1, g: 245 / 255, b: 230 / 255, a: 0.4 },
+    }
+  );
+});
+
 test("lists only canvas-mode props", () => {
   const listed = listCanvasControls({
     region: {

@@ -88,7 +88,23 @@ export function colorToHex(color) {
 }
 
 export function hexToColor(hex) {
-  const raw = String(hex || "").replace("#", "");
+  const value = String(hex || "").trim();
+  const rgba = value.match(
+    /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+))?\s*\)$/i
+  );
+  if (rgba) {
+    return {
+      r: Math.max(0, Math.min(255, Number(rgba[1]))) / 255,
+      g: Math.max(0, Math.min(255, Number(rgba[2]))) / 255,
+      b: Math.max(0, Math.min(255, Number(rgba[3]))) / 255,
+      a:
+        rgba[4] == null
+          ? 1
+          : Math.max(0, Math.min(1, Number(rgba[4]))),
+    };
+  }
+
+  const raw = value.replace("#", "");
   if (raw.length < 6) return { r: 1, g: 1, b: 1, a: 1 };
   const r = parseInt(raw.slice(0, 2), 16) / 255;
   const g = parseInt(raw.slice(2, 4), 16) / 255;
@@ -160,7 +176,13 @@ export function fromFigCanvasValue(def, detail, size = { width: 0, height: 0 }) 
 
   if (def.type === "color-point") {
     const hex = src.color;
-    out.color = hex ? hexToColor(hex) : { r: 1, g: 1, b: 1, a: 1 };
+    const color = hex ? hexToColor(hex) : { r: 1, g: 1, b: 1, a: 1 };
+    if (src.alpha != null && Number.isFinite(Number(src.alpha))) {
+      color.a = Math.max(0, Math.min(1, Number(src.alpha)));
+    } else if (src.opacity != null && Number.isFinite(Number(src.opacity))) {
+      color.a = Math.max(0, Math.min(100, Number(src.opacity))) / 100;
+    }
+    out.color = color;
   }
 
   return out;

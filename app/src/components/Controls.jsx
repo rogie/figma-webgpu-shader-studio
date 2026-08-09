@@ -1,5 +1,8 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
-import { showsInPropertyPanel } from "../lib/canvasControls.js";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import {
+  hexToColor,
+  showsInPropertyPanel,
+} from "../lib/canvasControls.js";
 
 function toHexByte(value) {
   return Math.max(0, Math.min(255, Math.round((value ?? 0) * 255)))
@@ -30,6 +33,47 @@ function readPropskitSliderNumber(event) {
 // FigUI3 controls generate their implementation in light DOM. Marking that
 // content as opaque prevents React from deleting it on subsequent renders.
 const opaqueContent = { __html: "" };
+const PROPERTY_INPUT_INTERVAL_MS = 24;
+
+function useCoalescedPropertyCallback(callback) {
+  const callbackRef = useRef(callback);
+  const pendingRef = useRef(new Map());
+
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  useEffect(
+    () => () => {
+      pendingRef.current.forEach(({ timer }) => window.clearTimeout(timer));
+      pendingRef.current.clear();
+    },
+    []
+  );
+
+  return useCallback((name, value) => {
+    const pending = pendingRef.current.get(name);
+    if (pending) {
+      pending.value = value;
+      pending.hasTrailingValue = true;
+      return;
+    }
+
+    callbackRef.current(name, value);
+    const timer = window.setTimeout(() => {
+      const latest = pendingRef.current.get(name);
+      pendingRef.current.delete(name);
+      if (latest?.hasTrailingValue) {
+        callbackRef.current(name, latest.value);
+      }
+    }, PROPERTY_INPUT_INTERVAL_MS);
+    pendingRef.current.set(name, {
+      timer,
+      value,
+      hasTrailingValue: false,
+    });
+  }, []);
+}
 
 function NumberControl({ def, value, onChange }) {
   const current = value ?? def.defaultValue ?? 0;
@@ -228,15 +272,27 @@ function formatSelectOptions(options) {
   );
 }
 
-function SelectControl({ name, def, value, onChange }) {
+function SelectControl({ name, def, value, onChange, onPreview }) {
   const selectRef = useRef(null);
+  const selectedValueRef = useRef(null);
+  const hoveredValueRef = useRef(null);
   const options = def.options || [];
   const numeric = options.length > 0 && typeof options[0].value === "number";
   const current = value ?? def.defaultValue;
+  selectedValueRef.current = current;
 
   useEffect(() => {
     const select = selectRef.current;
     if (!select) return;
+    const innerSelect = select.querySelector("fig-select");
+    if (!innerSelect) return;
+
+    const readValue = (raw) => (numeric ? Number(raw) : raw);
+    const restoreSelected = () => {
+      if (hoveredValueRef.current == null) return;
+      hoveredValueRef.current = null;
+      onPreview(name, selectedValueRef.current);
+    };
     const handleValue = (event) => {
       // propskit-select forwards fig-select detail as the raw string value.
       const detail = event.detail;
@@ -244,15 +300,36 @@ function SelectControl({ name, def, value, onChange }) {
         detail && typeof detail === "object" && "value" in detail
           ? detail.value
           : (detail ?? event.target.value);
-      onChange(name, numeric ? Number(raw) : raw);
+      const next = readValue(raw);
+      selectedValueRef.current = next;
+      hoveredValueRef.current = null;
+      onChange(name, next);
+    };
+    const handleOptionHover = (event) => {
+      const next = readValue(event.detail);
+      if (Object.is(hoveredValueRef.current, next)) return;
+      hoveredValueRef.current = next;
+      onPreview(name, next);
     };
     select.addEventListener("input", handleValue);
     select.addEventListener("change", handleValue);
+    select.addEventListener("optionhover", handleOptionHover);
+
+    const openObserver = new MutationObserver(() => {
+      if (!innerSelect?.open) restoreSelected();
+    });
+    openObserver.observe(innerSelect, {
+      attributes: true,
+      attributeFilter: ["open"],
+    });
+
     return () => {
       select.removeEventListener("input", handleValue);
       select.removeEventListener("change", handleValue);
+      select.removeEventListener("optionhover", handleOptionHover);
+      openObserver.disconnect();
     };
-  }, [name, numeric, onChange]);
+  }, [name, numeric, onChange, onPreview]);
 
   const defaultValue =
     def.defaultValue == null ? "" : String(def.defaultValue);
@@ -362,67 +439,65 @@ function VectorControl({ keys, def, value, onChange }) {
 }
 
 function GradientControl({ def, value, onChange }) {
+  const gradientRef = useRef(null);
   const stops = value?.stops || def.defaultValue?.stops || [];
-  const update = (index, stop) =>
-    onChange({
-      stops: stops.map((item, itemIndex) =>
-        itemIndex === index ? stop : item
-      ),
-    });
+  const serialized = JSON.stringify({
+    type: "gradient",
+    gradient: {
+      type: "linear",
+      angle: 90,
+      interpolationSpace: "srgb",
+      hueInterpolation: "shorter",
+      stops: stops.map((stop) => ({
+        position: Math.max(0, Math.min(100, Number(stop.position) * 100)),
+        color: colorToHex(stop.color).slice(0, 7),
+        opacity: Math.round(
+          Math.max(0, Math.min(1, Number(stop.color?.a ?? 1))) * 100
+        ),
+      })),
+    },
+  });
+
+  useEffect(() => {
+    const control = gradientRef.current;
+    if (!control) return;
+    const handleValue = (event) => {
+      const detail =
+        typeof event.detail === "string"
+          ? JSON.parse(event.detail)
+          : event.detail;
+      const nextStops = detail?.gradient?.stops;
+      if (!Array.isArray(nextStops)) return;
+      onChange({
+        stops: nextStops.map((stop) => {
+          const color = hexToColor(stop.color);
+          color.a =
+            stop.opacity == null
+              ? color.a
+              : Math.max(0, Math.min(100, Number(stop.opacity))) / 100;
+          return {
+            position:
+              Math.max(0, Math.min(100, Number(stop.position))) / 100,
+            color,
+          };
+        }),
+      });
+    };
+    control.addEventListener("input", handleValue);
+    control.addEventListener("change", handleValue);
+    return () => {
+      control.removeEventListener("input", handleValue);
+      control.removeEventListener("change", handleValue);
+    };
+  }, [onChange]);
+
   return (
-    <div className="gradient-control">
-      {stops.map((stop, index) => (
-        <div className="gradient-stop" key={`${index}-${stop.position}`}>
-          <fig-input-number
-            value={stop.position}
-            min="0"
-            max="1"
-            step="0.01"
-            transform="100"
-            units="%"
-            onInput={(event) =>
-              update(index, { ...stop, position: readNumber(event) })
-            }
-            dangerouslySetInnerHTML={opaqueContent}
-          />
-          <ColorControl
-            def={{ defaultValue: stop.color }}
-            value={stop.color}
-            onChange={(color) => update(index, { ...stop, color })}
-          />
-          <fig-button
-            variant="ghost"
-            icon="true"
-            disabled={stops.length <= 2}
-            onClick={() =>
-              onChange({
-                stops: stops.filter((_, itemIndex) => itemIndex !== index),
-              })
-            }
-          >
-            −
-          </fig-button>
-        </div>
-      ))}
-      {stops.length < 8 && (
-        <fig-button
-          variant="secondary"
-          onClick={() =>
-            onChange({
-              stops: [
-                ...stops,
-                {
-                  position: 1,
-                  color: { r: 1, g: 1, b: 1, a: 1 },
-                },
-              ],
-            })
-          }
-        >
-          Add stop
-        </fig-button>
-      )}
-    </div>
+    <fig-input-gradient
+      ref={gradientRef}
+      value={serialized}
+      size="large"
+      dangerouslySetInnerHTML={opaqueContent}
+    />
   );
 }
 
@@ -502,6 +577,8 @@ function Control({ def, value, onChange }) {
 }
 
 export default function Controls({ props, values, onChange, onInput }) {
+  const coalescedChange = useCoalescedPropertyCallback(onChange);
+  const coalescedInput = useCoalescedPropertyCallback(onInput);
   const entries = Object.entries(props || {}).filter(([, def]) =>
     showsInPropertyPanel(def)
   );
@@ -523,8 +600,8 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onInputValue={onInput}
-          onCommit={onChange}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
         />
       );
     }
@@ -535,7 +612,8 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onChange={onChange}
+          onChange={coalescedChange}
+          onPreview={coalescedInput}
         />
       );
     }
@@ -546,7 +624,7 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onChange={onChange}
+          onChange={coalescedChange}
         />
       );
     }
@@ -557,7 +635,7 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onChange={onChange}
+          onChange={coalescedChange}
         />
       );
     }
@@ -568,7 +646,7 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onChange={onChange}
+          onChange={coalescedChange}
         />
       );
     }
@@ -579,7 +657,7 @@ export default function Controls({ props, values, onChange, onInput }) {
           name={name}
           def={def}
           value={values[name]}
-          onChange={onChange}
+          onChange={coalescedChange}
         />
       );
     }
@@ -589,7 +667,7 @@ export default function Controls({ props, values, onChange, onInput }) {
         <Control
           def={def}
           value={values[name]}
-          onChange={(value) => onChange(name, value)}
+          onChange={(value) => coalescedChange(name, value)}
         />
       </fig-field>
     );

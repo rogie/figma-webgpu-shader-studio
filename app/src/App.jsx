@@ -390,7 +390,7 @@ export default function App() {
   const [videoExportProgress, setVideoExportProgress] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState(null);
   const [isPublic, setIsPublic] = useState(false);
   const [appNavWidth, setAppNavWidth] = useState(savedAppNavWidth);
   const [codeWidth, setCodeWidth] = useState(savedCodeWidth);
@@ -460,6 +460,7 @@ export default function App() {
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
+  const noticeToastRef = useRef(null);
   const videoExportDialogRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
@@ -751,9 +752,15 @@ export default function App() {
     toast.showToast?.();
   }, [publishToast]);
 
-  const showNotice = useCallback((message) => {
-    setNotice(message);
-    window.setTimeout(() => setNotice(""), 3200);
+  useEffect(() => {
+    if (notice) noticeToastRef.current?.showToast?.();
+  }, [notice]);
+
+  const showNotice = useCallback((message, options = {}) => {
+    setNotice({
+      message,
+      error: options.error === true,
+    });
   }, []);
 
   const setRuntimeValues = useCallback((next) => {
@@ -2225,7 +2232,7 @@ export default function App() {
       });
     } catch (publishError) {
       setPublishToast(null);
-      showNotice(publishError.message || "Publish failed");
+      showNotice(publishError.message || "Publish failed", { error: true });
     }
   }, [saveShader, showNotice, user]);
 
@@ -3565,7 +3572,27 @@ export default function App() {
         )}
       </dialog>
 
-      {notice && <div className="status-toast">{notice}</div>}
+      <dialog
+        is="fig-toast"
+        ref={noticeToastRef}
+        class="notice-toast"
+        theme={notice?.error ? "danger" : "dark"}
+        live={notice?.error ? "assertive" : "polite"}
+        duration={notice?.error ? "0" : "3200"}
+        onClose={() => setNotice(null)}
+      >
+        <span>{notice?.message}</span>
+        {notice?.error && (
+          <fig-button
+            variant="ghost"
+            icon="true"
+            aria-label="Dismiss notification"
+            onClick={() => noticeToastRef.current?.hideToast?.()}
+          >
+            <fig-icon name="x" />
+          </fig-button>
+        )}
+      </dialog>
       <dialog
         is="fig-popup"
         ref={publishDialogRef}

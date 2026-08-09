@@ -27,6 +27,7 @@ export default function Preview({
 }) {
   const stageRef = useRef(null);
   const errorToastRef = useRef(null);
+  const errorCopiedToastRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [overlayBox, setOverlayBox] = useState(null);
@@ -284,20 +285,38 @@ export default function Preview({
       <dialog
         is="fig-toast"
         ref={errorToastRef}
+        class="preview-error-toast"
         theme="danger"
         live="assertive"
-        duration="5000"
+        duration="0"
       >
-        <p>{error}</p>
+        <p className="preview-error-message" title={error || ""}>
+          {error}
+        </p>
         <fig-button
           type="button"
           variant="secondary"
-          onClick={() => {
-            navigator.clipboard.writeText(String(error || "")).catch(() => {});
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(String(error || ""));
+              errorToastRef.current?.hideToast?.();
+              errorCopiedToastRef.current?.showToast?.();
+            } catch {
+              // Only confirm the copy after the Clipboard API succeeds.
+            }
           }}
         >
           Copy
         </fig-button>
+      </dialog>
+      <dialog
+        is="fig-toast"
+        ref={errorCopiedToastRef}
+        theme="dark"
+        live="polite"
+        duration="3200"
+      >
+        Error copied
       </dialog>
     </div>
   );
