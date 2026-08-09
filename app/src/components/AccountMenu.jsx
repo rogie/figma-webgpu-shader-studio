@@ -1,11 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import {
-  clearProviderKey,
   getProviderKeys,
   setProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
+import { getProfile, saveProfile } from "../services/shaders.js";
+
+function accountDisplayName(user) {
+  return (
+    user?.user_metadata?.user_name ||
+    user?.user_metadata?.preferred_username ||
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    ""
+  );
+}
 
 export default function AccountMenu({
   open,
@@ -14,6 +24,7 @@ export default function AccountMenu({
   onThemeChange,
   settingsOpen = false,
   onSettingsOpenChange,
+  onProfileChange,
 }) {
   const {
     user,
@@ -33,7 +44,12 @@ export default function AccountMenu({
     () => getProviderKeys().anthropic
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
-  const [keysSaved, setKeysSaved] = useState(false);
+  const [displayName, setDisplayName] = useState(() =>
+    accountDisplayName(user)
+  );
+  const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsSaved, setSettingsSaved] = useState(false);
+  const [settingsError, setSettingsError] = useState("");
 
   const setSettingsOpen = (next) => {
     onSettingsOpenChange?.(next);
@@ -47,6 +63,29 @@ export default function AccountMenu({
       setGeminiKey(keys.gemini);
     });
   }, []);
+
+  useEffect(() => {
+    if (!user) {
+      setDisplayName("");
+      return;
+    }
+    let cancelled = false;
+    setDisplayName(accountDisplayName(user));
+    getProfile(user.id)
+      .then((profile) => {
+        if (!cancelled && profile?.display_name) {
+          setDisplayName(profile.display_name);
+        }
+      })
+      .catch((profileError) => {
+        if (!cancelled) {
+          setSettingsError(profileError.message || String(profileError));
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user]);
 
   useEffect(() => {
     const popup = authPopupRef.current;
@@ -108,12 +147,27 @@ export default function AccountMenu({
     }
   };
 
-  const saveKeys = () => {
-    setProviderKey("openai", openaiKey);
-    setProviderKey("anthropic", anthropicKey);
-    setProviderKey("gemini", geminiKey);
-    setKeysSaved(true);
-    window.setTimeout(() => setKeysSaved(false), 2000);
+  const saveSettings = async () => {
+    setSettingsSaving(true);
+    setSettingsError("");
+    try {
+      if (user) {
+        const name = displayName.trim();
+        if (!name) throw new Error("Display name is required.");
+        const profile = await saveProfile(user.id, name);
+        setDisplayName(profile.display_name);
+        onProfileChange?.(profile.display_name);
+      }
+      setProviderKey("openai", openaiKey);
+      setProviderKey("anthropic", anthropicKey);
+      setProviderKey("gemini", geminiKey);
+      setSettingsSaved(true);
+      window.setTimeout(() => setSettingsSaved(false), 2000);
+    } catch (saveError) {
+      setSettingsError(saveError.message || String(saveError));
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   // fig-menu relocates items into its popup. Remount on auth changes so React
@@ -239,7 +293,23 @@ export default function AccountMenu({
             </fig-segmented-control>
           </fig-field>
 
-          <fig-group name="AI API keys">
+          {user && (
+            <fig-group name="User details">
+              <fig-field direction="horizontal">
+                <label>Display name</label>
+                <fig-input-text
+                  value={displayName}
+                  maxlength="80"
+                  full=""
+                  required=""
+                  onInput={(event) => setDisplayName(event.target.value)}
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+              </fig-field>
+            </fig-group>
+          )}
+
+          <fig-group name="AI API keys" collapsible="" open="">
             <p>
               Keys stay on this device and are sent only to the chat proxy when
               you message. They are never stored in Supabase.
@@ -281,24 +351,20 @@ export default function AccountMenu({
               />
             </fig-field>
           </fig-group>
+          {settingsError && (
+            <p className="form-message error">{settingsError}</p>
+          )}
         </fig-content>
         <fig-footer>
           <fig-button
             type="button"
-            variant="ghost"
-            onClick={() => {
-              clearProviderKey("openai");
-              clearProviderKey("anthropic");
-              clearProviderKey("gemini");
-              setOpenaiKey("");
-              setAnthropicKey("");
-              setGeminiKey("");
-            }}
+            variant="primary"
+            disabled={
+              settingsSaving || (user && !displayName.trim()) ? "" : undefined
+            }
+            onClick={saveSettings}
           >
-            Clear keys
-          </fig-button>
-          <fig-button type="button" variant="primary" onClick={saveKeys}>
-            {keysSaved ? "Saved" : "Save keys"}
+            {settingsSaving ? "Saving…" : settingsSaved ? "Saved" : "Save"}
           </fig-button>
         </fig-footer>
       </dialog>

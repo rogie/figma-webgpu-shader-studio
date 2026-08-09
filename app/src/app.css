@@ -878,7 +878,7 @@ dialog[is="fig-popup"].settings-popup {
   width: 340px;
   padding: 0;
 
-  fig-header {
+  > fig-header {
     justify-content: flex-start;
   }
 }

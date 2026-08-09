@@ -47,6 +47,31 @@ export async function listShaders() {
   return attachAuthorProfiles(client, shaders);
 }
 
+export async function getProfile(id) {
+  const client = requireClient();
+  return unwrap(
+    await client
+      .from("profiles")
+      .select("id, display_name")
+      .eq("id", id)
+      .maybeSingle()
+  );
+}
+
+export async function saveProfile(id, displayName) {
+  const client = requireClient();
+  return unwrap(
+    await client
+      .from("profiles")
+      .upsert(
+        { id, display_name: displayName, updated_at: new Date().toISOString() },
+        { onConflict: "id" }
+      )
+      .select("id, display_name")
+      .single()
+  );
+}
+
 export async function getShader(id) {
   const client = requireClient();
   return unwrap(

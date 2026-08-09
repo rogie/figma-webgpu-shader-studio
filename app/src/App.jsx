@@ -3021,6 +3021,16 @@ export default function App() {
                 onThemeChange={setTheme}
                 settingsOpen={settingsOpen}
                 onSettingsOpenChange={setSettingsOpen}
+                onProfileChange={(displayName) => {
+                  if (!user) return;
+                  setCloudShaders((current) =>
+                    current.map((shader) =>
+                      shader.owner_id === user.id
+                        ? { ...shader, author_name: displayName }
+                        : shader
+                    )
+                  );
+                }}
               />
             </hstack>
           </fig-header>
