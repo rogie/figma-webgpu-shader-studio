@@ -78,6 +78,8 @@ const APP_NAV_WIDTH_STORAGE_KEY = "figma-shader-studio:app-nav-width";
 const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
 const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
 const PREVIEW_HEIGHT_STORAGE_KEY = "figma-shader-studio:preview-height";
+const SIDEBAR_SECTIONS_STORAGE_KEY =
+  "figma-shader-studio:sidebar-sections";
 const PROPERTIES_PANEL_STORAGE_KEY =
   "figma-shader-studio:properties-panel";
 const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
@@ -293,6 +295,20 @@ function savedPreviewHeight() {
   return Number.isFinite(value) && value >= MIN_PREVIEW_HEIGHT ? value : null;
 }
 
+function savedSidebarSections() {
+  try {
+    const parsed = JSON.parse(
+      localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY) || "{}"
+    );
+    return {
+      codeCollapsed: Boolean(parsed.codeCollapsed),
+      chatCollapsed: Boolean(parsed.chatCollapsed),
+    };
+  } catch {
+    return { codeCollapsed: false, chatCollapsed: false };
+  }
+}
+
 function savedPropertiesPanel() {
   try {
     const parsed = JSON.parse(
@@ -404,6 +420,12 @@ export default function App() {
   const [editorLibraryTab, setEditorLibraryTab] = useState("yours");
   const [homeKind, setHomeKind] = useState("all");
   const [homeOrigin, setHomeOrigin] = useState("all");
+  const [codeCollapsed, setCodeCollapsed] = useState(
+    () => savedSidebarSections().codeCollapsed
+  );
+  const [chatCollapsed, setChatCollapsed] = useState(
+    () => savedSidebarSections().chatCollapsed
+  );
   const [propertiesCollapsed, setPropertiesCollapsed] = useState(
     () => savedPropertiesPanel().collapsed
   );
@@ -523,6 +545,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(PLAY_STORAGE_KEY, String(running));
   }, [running]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      SIDEBAR_SECTIONS_STORAGE_KEY,
+      JSON.stringify({ codeCollapsed, chatCollapsed })
+    );
+  }, [codeCollapsed, chatCollapsed]);
 
   useEffect(() => {
     if (user) return;
@@ -2930,18 +2959,23 @@ export default function App() {
             : {}),
         }}
       >
-        <div ref={sidebarRef} className="shader-viewer-sidebar">
-          <section className="shader-viewer-code">
-            <fig-header borderless>
-              <div
-                className={
-                  renaming ? "shader-title is-renaming" : "shader-title"
-                }
-              >
+        <div
+          ref={sidebarRef}
+          className="shader-viewer-sidebar"
+          data-code-collapsed={codeCollapsed ? "true" : "false"}
+          data-chat-collapsed={chatCollapsed ? "true" : "false"}
+        >
+          <fig-header class="shader-editor-header" borderless>
+            <div
+              className={
+                renaming ? "shader-title is-renaming" : "shader-title"
+              }
+            >
                 <fig-input-text
                   ref={nameInputRef}
                   name="name"
                   class="shader-name"
+                  size="large"
                   value={shaderName}
                   variant="editable"
                   full=""
@@ -2990,69 +3024,105 @@ export default function App() {
                     <fig-icon name="checkmark" size="small" />
                   </fig-button>
                 )}
-              </div>
-              {!renaming && (
-                <hstack>
-                  <fig-menu
-                    key={user ? "signed-in" : "signed-out"}
-                    position="bottom right"
+            </div>
+            {!renaming && (
+              <hstack>
+                <fig-menu
+                  key={user ? "signed-in" : "signed-out"}
+                  position="bottom right"
+                >
+                  <fig-tooltip text="More">
+                    <fig-button
+                      ref={moreMenuAnchorRef}
+                      fig-menu-trigger=""
+                      variant="ghost"
+                      icon="true"
+                      aria-label="More shader actions"
+                    >
+                      <fig-icon name="more" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item
+                    value="save"
+                    disabled={saving || Boolean(currentShader && !dirty)}
+                    onClick={() => {
+                      saveShader().catch(() => {});
+                    }}
                   >
-                    <fig-tooltip text="More">
-                      <fig-button
-                        ref={moreMenuAnchorRef}
-                        fig-menu-trigger=""
-                        variant="ghost"
-                        icon="true"
-                        aria-label="More shader actions"
-                      >
-                        <fig-icon name="more" />
-                      </fig-button>
-                    </fig-tooltip>
+                    {saving ? "Saving…" : "Save"}
+                  </fig-menu-item>
+                  {user && (
                     <fig-menu-item
-                      value="save"
-                      disabled={saving || Boolean(currentShader && !dirty)}
+                      value="publish"
+                      disabled={saving}
                       onClick={() => {
-                        saveShader().catch(() => {});
+                        publishAnchorRef.current = moreMenuAnchorRef.current;
+                        setPublishOpen(true);
                       }}
                     >
-                      {saving ? "Saving…" : "Save"}
+                      Publish…
                     </fig-menu-item>
-                    {user && (
-                      <fig-menu-item
-                        value="publish"
-                        disabled={saving}
-                        onClick={() => {
-                          publishAnchorRef.current = moreMenuAnchorRef.current;
-                          setPublishOpen(true);
-                        }}
-                      >
-                        Publish…
-                      </fig-menu-item>
-                    )}
-                    <fig-separator />
-                    <fig-menu-item value="duplicate" onClick={duplicateShader}>
-                      Duplicate
-                    </fig-menu-item>
-                    <fig-menu-item value="share" onClick={copyShareLink}>
-                      Copy link
-                    </fig-menu-item>
-                    <fig-menu-item
-                      value="delete"
-                      hidden={!isOwner}
-                      disabled={!isOwner}
-                      onClick={removeCurrentShader}
-                    >
-                      Delete
-                    </fig-menu-item>
-                    <fig-separator />
-                    <fig-menu-item value="export" onClick={exportFiles}>
-                      Download
-                    </fig-menu-item>
-                  </fig-menu>
-                </hstack>
-              )}
+                  )}
+                  <fig-separator />
+                  <fig-menu-item value="duplicate" onClick={duplicateShader}>
+                    Duplicate
+                  </fig-menu-item>
+                  <fig-menu-item value="share" onClick={copyShareLink}>
+                    Copy link
+                  </fig-menu-item>
+                  <fig-menu-item
+                    value="delete"
+                    hidden={!isOwner}
+                    disabled={!isOwner}
+                    onClick={removeCurrentShader}
+                  >
+                    Delete
+                  </fig-menu-item>
+                  <fig-separator />
+                  <fig-menu-item value="export" onClick={exportFiles}>
+                    Download
+                  </fig-menu-item>
+                </fig-menu>
+              </hstack>
+            )}
+          </fig-header>
+
+          <section
+            className="shader-viewer-code"
+            data-collapsed={codeCollapsed ? "true" : "false"}
+          >
+            <fig-header borderless aria-expanded={!codeCollapsed}>
+              <h3>Code editor</h3>
+              <hstack>
+                <fig-tooltip
+                  text={codeCollapsed ? "Expand code" : "Collapse code"}
+                >
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label={
+                      codeCollapsed ? "Expand code" : "Collapse code"
+                    }
+                    onClick={() => {
+                      if (renaming) finishRename();
+                      setCodeCollapsed((collapsed) => !collapsed);
+                    }}
+                  >
+                    <fig-icon
+                      class={
+                        codeCollapsed
+                          ? "section-chevron is-collapsed"
+                          : "section-chevron"
+                      }
+                      name="chevron"
+                      size="medium"
+                    />
+                  </fig-button>
+                </fig-tooltip>
+              </hstack>
             </fig-header>
-            <div className="code-editor">
+            <div className="code-editor" hidden={codeCollapsed}>
               <CodePane
                 source={source}
                 theme={theme}
@@ -3064,48 +3134,81 @@ export default function App() {
             </div>
           </section>
 
-          <div
-            className="pane-resizer pane-resizer-row"
-            role="separator"
-            aria-label="Resize code and chat panes"
-            aria-orientation="horizontal"
-            aria-valuemin={MIN_CHAT_HEIGHT}
-            aria-valuenow={chatHeight}
-            tabIndex={0}
-            onPointerDown={resizeChatPane}
-            onDoubleClick={() => saveChatHeight(DEFAULT_CHAT_HEIGHT)}
-            onKeyDown={(event) => {
-              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-              event.preventDefault();
-              saveChatHeight(
-                Math.max(
-                  MIN_CHAT_HEIGHT,
-                  chatHeight + (event.key === "ArrowUp" ? 16 : -16)
-                )
-              );
-            }}
-          />
+          {!codeCollapsed && !chatCollapsed && (
+            <div
+              className="pane-resizer pane-resizer-row"
+              role="separator"
+              aria-label="Resize code and chat panes"
+              aria-orientation="horizontal"
+              aria-valuemin={MIN_CHAT_HEIGHT}
+              aria-valuenow={chatHeight}
+              tabIndex={0}
+              onPointerDown={resizeChatPane}
+              onDoubleClick={() => saveChatHeight(DEFAULT_CHAT_HEIGHT)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                event.preventDefault();
+                saveChatHeight(
+                  Math.max(
+                    MIN_CHAT_HEIGHT,
+                    chatHeight + (event.key === "ArrowUp" ? 16 : -16)
+                  )
+                );
+              }}
+            />
+          )}
 
-          <section className="shader-viewer-chat">
-            <fig-header borderless>
+          <section
+            className="shader-viewer-chat"
+            data-collapsed={chatCollapsed ? "true" : "false"}
+          >
+            <fig-header borderless aria-expanded={!chatCollapsed}>
               <h3>AI chat</h3>
               <hstack>
-                <fig-tooltip text="Clear chat">
+                {!chatCollapsed && (
+                  <fig-tooltip text="Clear chat">
+                    <fig-button
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Clear chat"
+                      disabled={!canClearChat}
+                      onClick={() => chatPaneRef.current?.clearChat()}
+                    >
+                      <TrashIcon />
+                    </fig-button>
+                  </fig-tooltip>
+                )}
+                <fig-tooltip
+                  text={chatCollapsed ? "Expand AI chat" : "Collapse AI chat"}
+                >
                   <fig-button
                     type="button"
                     variant="ghost"
                     icon="true"
-                    aria-label="Clear chat"
-                    disabled={!canClearChat}
-                    onClick={() => chatPaneRef.current?.clearChat()}
+                    aria-label={
+                      chatCollapsed ? "Expand AI chat" : "Collapse AI chat"
+                    }
+                    onClick={() =>
+                      setChatCollapsed((collapsed) => !collapsed)
+                    }
                   >
-                    <TrashIcon />
+                    <fig-icon
+                      class={
+                        chatCollapsed
+                          ? "section-chevron is-collapsed"
+                          : "section-chevron"
+                      }
+                      name="chevron"
+                      size="medium"
+                    />
                   </fig-button>
                 </fig-tooltip>
               </hstack>
             </fig-header>
             <ChatPane
               ref={chatPaneRef}
+              hidden={chatCollapsed}
               source={source}
               kind={kind}
               fileName={shaderModuleFileName(presetId, shaderName)}
@@ -3467,10 +3570,6 @@ export default function App() {
           dialog-header
           borderless={propertiesCollapsed ? "" : undefined}
           aria-expanded={!propertiesCollapsed}
-          onClick={(event) => {
-            if (event.target.closest("fig-button, fig-menu, fig-tooltip")) return;
-            setPropertiesCollapsed((collapsed) => !collapsed);
-          }}
         >
           <h3>Properties</h3>
           <hstack>

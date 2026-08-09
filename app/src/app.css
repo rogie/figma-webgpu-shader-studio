@@ -268,6 +268,97 @@ body,
       min-height: 0;
     }
 
+    .shader-editor-header {
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacer-2);
+      margin-bottom: var(--spacer-2);
+      margin-top: calc(var(--spacer-2) * -1);
+
+      .shader-title {
+        flex: 1;
+        width: 100%;
+        min-width: 0;
+        display: flex;
+        align-items: center;
+        gap: var(--spacer-2);
+        user-select: none;
+
+        &:has(fig-input-text:not([readonly])) {
+          pointer-events: auto;
+        }
+
+        &.is-renaming {
+          pointer-events: auto;
+
+          > fig-button {
+            flex: 0 0 auto;
+            margin-right: calc(var(--spacer-2) * -1);
+          }
+        }
+      }
+
+      .shader-published-status {
+        flex: 0 0 auto;
+        font-size: var(--font-size-small);
+        line-height: var(--line-height-small);
+        color: var(--figma-color-text-brand);
+        text-decoration: none;
+        white-space: nowrap;
+
+        &:hover {
+          text-decoration: underline;
+        }
+      }
+
+      fig-input-text.shader-name {
+        flex: 1;
+        min-width: 0;
+        width: auto;
+        margin-left: calc(var(--spacer-2) * -1);
+
+        > input {
+          font-size: var(--body-large-fontSize);
+        }
+
+        &[readonly]:not([readonly="false"]) {
+          background-color: transparent;
+          box-shadow: none !important;
+          outline: none !important;
+          cursor: text;
+          user-select: none;
+
+          &:hover,
+          &:has(:is(input, textarea):focus) {
+            background-color: transparent;
+            box-shadow: none !important;
+            outline: none !important;
+          }
+        }
+
+        &:not([readonly]) {
+          user-select: text;
+        }
+      }
+
+      > hstack:last-child {
+        flex: 0 0 auto;
+
+        fig-button[icon][variant="ghost"] {
+          margin-right: calc(var(--spacer-2) * -1);
+        }
+      }
+    }
+
+    .shader-viewer-sidebar:is(
+        [data-code-collapsed="true"],
+        [data-chat-collapsed="true"]
+      )
+      .shader-viewer-code {
+      margin-bottom: var(--spacer-3);
+    }
+
     .shader-viewer-code,
     .shader-viewer-chat {
       margin: 0;
@@ -278,6 +369,11 @@ body,
       display: flex;
       flex-direction: column;
       min-height: 0;
+
+      &[data-collapsed="true"] {
+        flex: 0 0 40px;
+        min-height: 40px;
+      }
 
       &::after {
         content: "";
@@ -295,77 +391,6 @@ body,
         justify-content: space-between;
         gap: var(--spacer-2);
 
-        > h2,
-        > h3 {
-          flex: 1;
-          min-width: 0;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .shader-title {
-          flex: 1;
-          width: 100%;
-          min-width: 0;
-          display: flex;
-          align-items: center;
-          gap: var(--spacer-2);
-          user-select: none;
-
-          &:has(fig-input-text:not([readonly])) {
-            pointer-events: auto;
-          }
-
-          &.is-renaming {
-            pointer-events: auto;
-
-            > fig-button {
-              flex: 0 0 auto;
-              margin-right: calc(var(--spacer-2) * -1);
-            }
-          }
-        }
-
-        .shader-published-status {
-          flex: 0 0 auto;
-          font-size: var(--font-size-small);
-          line-height: var(--line-height-small);
-          color: var(--figma-color-text-brand);
-          text-decoration: none;
-          white-space: nowrap;
-
-          &:hover {
-            text-decoration: underline;
-          }
-        }
-
-        fig-input-text.shader-name {
-          flex: 1;
-          min-width: 0;
-          width: auto;
-          margin-left: calc(var(--spacer-2) * -1);
-
-          &[readonly]:not([readonly="false"]) {
-            background-color: transparent;
-            box-shadow: none !important;
-            outline: none !important;
-            cursor: text;
-            user-select: none;
-
-            &:hover,
-            &:has(:is(input, textarea):focus) {
-              background-color: transparent;
-              box-shadow: none !important;
-              outline: none !important;
-            }
-          }
-
-          &:not([readonly]) {
-            user-select: text;
-          }
-        }
-
         > hstack:last-child {
           flex: 0 0 auto;
           --hstack-gap: var(--spacer-1);
@@ -380,6 +405,14 @@ body,
             margin-right: calc(var(--spacer-2) * -1);
           }
 
+        }
+
+        .section-chevron {
+          transition: transform 120ms ease;
+
+          &.is-collapsed {
+            transform: rotate(-90deg);
+          }
         }
       }
     }
@@ -931,8 +964,6 @@ dialog.delete-shader-dialog {
   }
 
   > fig-header[dialog-header] {
-    cursor: pointer;
-
     hstack {
       flex: 0 0 auto;
       --hstack-gap: var(--spacer-1);

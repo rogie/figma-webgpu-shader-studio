@@ -85,6 +85,7 @@ const ChatPane = forwardRef(function ChatPane(
     onOpenSettings,
     onNotice,
     onCanClearChange,
+    hidden = false,
   },
   ref
 ) {
@@ -571,7 +572,7 @@ const ChatPane = forwardRef(function ChatPane(
   );
 
   return (
-    <div className="code-chat">
+    <div className="code-chat" hidden={hidden}>
       <div className="chat-messages" ref={listRef}>
         {messages.length === 0 && (
           <div className="chat-empty">
