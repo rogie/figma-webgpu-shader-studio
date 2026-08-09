@@ -2929,7 +2929,7 @@ export default function App() {
                   aria-label="Filter by kind"
                   value={homeKind}
                   options={JSON.stringify([
-                    { value: "all", label: "All kinds" },
+                    { value: "all", label: "All types" },
                     { value: "effect", label: "Effects" },
                     { value: "fill", label: "Fills" },
                   ])}
