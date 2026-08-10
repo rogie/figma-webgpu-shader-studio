@@ -8,9 +8,12 @@
   padding-right: var(--spacer-3);
 
   & .shader-list-item-preview {
-    --fig-preview-background: transparent;
     width: var(--spacer-6);
     flex-shrink: 0;
+
+    & > fig-preview {
+      --fig-preview-background: transparent;
+    }
   }
 
   & .shader-list-item-text {
