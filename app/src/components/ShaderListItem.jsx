@@ -1,0 +1,65 @@
+import "./ShaderListItem.css";
+
+const opaqueContent = { __html: "" };
+
+export default function ShaderListItem({
+  src,
+  label,
+  authorName,
+  published,
+  onPublish,
+  onDelete,
+}) {
+  return (
+    <div className="shader-list-item">
+      <fig-image
+        class="shader-list-item-preview"
+        src={src || undefined}
+        alt={label}
+        fit="contain"
+        aspect-ratio="1/1"
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+      <div className="shader-list-item-text">
+        <label className="shader-list-item-label">{label}</label>
+        <label className="shader-list-item-author">
+          {published && (
+            <span className="shader-list-item-published">
+              <fig-tooltip text="Published">
+                <fig-icon name="globe" size="small" />
+              </fig-tooltip>
+              <span aria-hidden="true">&middot;</span>
+            </span>
+          )}
+          {authorName || "Anon"}
+        </label>
+      </div>
+      {onDelete && (
+        <div className="shader-list-item-actions">
+          <fig-menu class="shader-list-item-menu" position="bottom right">
+            <fig-button
+              fig-menu-trigger=""
+              variant="ghost"
+              icon="true"
+              aria-label={`More actions for ${label}`}
+            >
+              <fig-icon name="more" />
+            </fig-button>
+            <fig-menu-item
+              value="publish"
+              onClick={(event) =>
+                onPublish?.(event.currentTarget.closest("fig-choice"))
+              }
+            >
+              Publish
+            </fig-menu-item>
+            <fig-separator />
+            <fig-menu-item value="delete" onClick={onDelete}>
+              Delete
+            </fig-menu-item>
+          </fig-menu>
+        </div>
+      )}
+    </div>
+  );
+}

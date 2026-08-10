@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildShaderLibraryCards, filterShaderLibraryCards } from "./shaderLibrary.js";
 
-test("shows local drafts, owned cloud drafts, and public shaders without presets", () => {
+test("shows drafts, owned cloud drafts, and public shaders without presets", () => {
   const cards = buildShaderLibraryCards({
     drafts: [
       {
         id: "draft:local",
-        name: "Local",
+        name: "Draft",
         kind: "effect",
       },
     ],
@@ -25,16 +25,29 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
         owner_id: "user-2",
         name: "Published",
         author_name: "Other author",
+        author_avatar_url: "https://example.com/other.png",
         kind: "effect",
         is_public: true,
       },
     ],
-    user: { id: "user-1", email: "owner@example.com" },
+    user: {
+      id: "user-1",
+      email: "owner@example.com",
+      user_metadata: { avatar_url: "https://example.com/owner.png" },
+    },
   });
 
   assert.deepEqual(
     cards.map((card) => card.thumbnailUrl),
     [null, null, null]
+  );
+  assert.deepEqual(
+    cards.map((card) => card.authorAvatarUrl),
+    [
+      "https://example.com/owner.png",
+      "https://example.com/owner.png",
+      "https://example.com/other.png",
+    ]
   );
 
   assert.deepEqual(
@@ -48,7 +61,7 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
       {
         key: "draft:local",
         origin: "draft",
-        authorLabel: "Local draft",
+        authorLabel: "Draft",
         canDelete: true,
       },
       {
@@ -65,6 +78,15 @@ test("shows local drafts, owned cloud drafts, and public shaders without presets
       },
     ]
   );
+});
+
+test("labels signed-out local drafts as Yours", () => {
+  const [draft] = buildShaderLibraryCards({
+    drafts: [{ id: "draft:local", name: "Draft", kind: "effect" }],
+    cloudShaders: [],
+  });
+
+  assert.equal(draft.authorName, "Yours");
 });
 
 test("filters draft and public cards independently", () => {

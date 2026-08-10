@@ -4,7 +4,9 @@ import ChatPane from "./components/ChatPane.jsx";
 import CodePane from "./components/CodePane.jsx";
 import Controls from "./components/Controls.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
+import "./components/HomeNav.css";
 import Preview from "./components/Preview.jsx";
+import ShaderList from "./components/ShaderList.jsx";
 import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
@@ -63,7 +65,7 @@ const opaqueContent = { __html: "" };
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
 const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
-const DEFAULT_APP_NAV_WIDTH = 180;
+const DEFAULT_APP_NAV_WIDTH = 240;
 const MIN_APP_NAV_WIDTH = 112;
 const MAX_APP_NAV_WIDTH = 400;
 const DEFAULT_CODE_WIDTH = 480;
@@ -220,22 +222,31 @@ function pushShaderUrl(id) {
   window.history.pushState({}, "", makeShareUrl(id));
 }
 
-function ShaderNavCard({ src, label, sublabel, selected }) {
+function ShaderNavCard({
+  src,
+  label,
+  sublabel,
+  selected,
+  size,
+  published,
+  authorName,
+  authorAvatarUrl,
+}) {
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => setLoaded(false), [src]);
 
   return (
     <fig-card
-      class="shader-nav-card"
-      label={label}
-      sublabel={sublabel}
+      class={published ? "shader-nav-card is-published" : "shader-nav-card"}
+      size={size}
       full=""
       {...(selected ? { selected: "" } : {})}
     >
       <fig-preview
         class="shader-nav-card-preview"
         fit="cover"
+        aspect-ratio="4/3"
         full=""
         aria-label={loaded ? undefined : `Loading ${label} preview`}
       >
@@ -249,6 +260,31 @@ function ShaderNavCard({ src, label, sublabel, selected }) {
           />
         )}
       </fig-preview>
+      <fig-footer>
+        <label className="fig-card-label">
+          <fig-tooltip text={authorName || "Anon"}>
+            <fig-avatar
+              src={authorAvatarUrl || ""}
+              name={authorName || "Anon"}
+            />
+          </fig-tooltip>
+          <h3>{label}</h3>
+        </label>
+        {sublabel && (
+          <label
+            className="fig-card-sublabel"
+            aria-label={published ? "Published" : undefined}
+          >
+            {published ? (
+              <fig-tooltip text="Published">
+                <fig-icon name="globe" />
+              </fig-tooltip>
+            ) : (
+              sublabel
+            )}
+          </label>
+        )}
+      </fig-footer>
     </fig-card>
   );
 }
@@ -436,10 +472,12 @@ export default function App() {
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
-  const [editorLibraryTab, setEditorLibraryTab] = useState("yours");
   const [homeKind, setHomeKind] = useState("all");
   const [homeOrigin, setHomeOrigin] = useState("all");
   const [homeAuthor, setHomeAuthor] = useState("all");
+  const [editorKind, setEditorKind] = useState("all");
+  const [editorOrigin, setEditorOrigin] = useState("all");
+  const [editorAuthor, setEditorAuthor] = useState("all");
   const [codeCollapsed, setCodeCollapsed] = useState(
     () => savedSidebarSections().codeCollapsed
   );
@@ -487,11 +525,13 @@ export default function App() {
   const sidebarRef = useRef(null);
   const chatPaneRef = useRef(null);
   const [canClearChat, setCanClearChat] = useState(false);
-  const chooserRef = useRef(null);
-  const editorLibraryTabsRef = useRef(null);
+  const homeChooserRef = useRef(null);
+  const editorChooserRef = useRef(null);
   const homeKindRef = useRef(null);
   const homeOriginRef = useRef(null);
   const homeAuthorRef = useRef(null);
+  const editorKindRef = useRef(null);
+  const editorAuthorRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
@@ -1641,7 +1681,7 @@ export default function App() {
       }
       if (lastError) {
         setError(
-          `Some local drafts could not sync: ${
+          `Some drafts could not sync: ${
             lastError.message || String(lastError)
           }`
         );
@@ -1815,7 +1855,10 @@ export default function App() {
   );
 
   useEffect(() => {
-    const chooser = chooserRef.current;
+    const chooser =
+      viewMode === "home"
+        ? homeChooserRef.current
+        : editorChooserRef.current;
     if (!chooser) return;
     const handleChange = (event) => {
       if (typeof event.detail !== "string") return;
@@ -1860,15 +1903,22 @@ export default function App() {
 
   useEffect(() => {
     if (viewMode !== "editor") return;
-    const tabs = editorLibraryTabsRef.current;
-    const onInput = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "yours");
-      if (value === "yours" || value === "community") {
-        setEditorLibraryTab(value);
-      }
+    const kindControl = editorKindRef.current;
+    const authorControl = editorAuthorRef.current;
+    const onKind = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "all");
+      setEditorKind(value || "all");
     };
-    tabs?.addEventListener("input", onInput);
-    return () => tabs?.removeEventListener("input", onInput);
+    const onAuthor = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "all");
+      setEditorAuthor(value || "all");
+    };
+    kindControl?.addEventListener("change", onKind);
+    authorControl?.addEventListener("change", onAuthor);
+    return () => {
+      kindControl?.removeEventListener("change", onKind);
+      authorControl?.removeEventListener("change", onAuthor);
+    };
   }, [viewMode]);
 
   const updateControl = useCallback(
@@ -2759,41 +2809,40 @@ export default function App() {
         ])
     ).values(),
   ].sort((a, b) => a.label.localeCompare(b.label));
-  const editorLibraryCards = libraryCards.filter((card) => {
-    const isYours = user
-      ? card.authorId === user.id
-      : card.origin === "draft";
-    return editorLibraryTab === "yours"
-      ? isYours
-      : card.origin === "public" && !isYours;
-  });
-  const visibleCards =
-    viewMode === "home"
-      ? filterShaderLibraryCards(libraryCards, {
-          query: homeQuery,
-          kind: homeKind,
-          origin: homeOrigin,
-          author: homeAuthor,
-        })
-      : filterShaderLibraryCards(editorLibraryCards, { query: editorQuery });
-  const visibleEffectCards = visibleCards.filter(
-    (card) => card.kind === "effect"
+  const groupLibraryCards = (cards) => {
+    const effects = cards.filter((card) => card.kind === "effect");
+    const fills = cards.filter((card) => card.kind === "fill");
+    return [
+      ...(effects.length
+        ? [
+            { key: "separator:effect", separatorLabel: "Shader effect" },
+            ...effects,
+          ]
+        : []),
+      ...(fills.length
+        ? [
+            { key: "separator:fill", separatorLabel: "Shader fill" },
+            ...fills,
+          ]
+        : []),
+    ];
+  };
+  const groupedHomeCards = groupLibraryCards(
+    filterShaderLibraryCards(libraryCards, {
+      query: homeQuery,
+      kind: homeKind,
+      origin: homeOrigin,
+      author: homeAuthor,
+    })
   );
-  const visibleFillCards = visibleCards.filter((card) => card.kind === "fill");
-  const groupedVisibleCards = [
-    ...(visibleEffectCards.length
-      ? [
-          { key: "separator:effect", separatorLabel: "Shader effect" },
-          ...visibleEffectCards,
-        ]
-      : []),
-    ...(visibleFillCards.length
-      ? [
-          { key: "separator:fill", separatorLabel: "Shader fill" },
-          ...visibleFillCards,
-        ]
-      : []),
-  ];
+  const groupedEditorCards = groupLibraryCards(
+    filterShaderLibraryCards(libraryCards, {
+      query: editorQuery,
+      kind: editorKind,
+      origin: editorOrigin,
+      author: editorAuthor,
+    })
+  );
 
   const propertiesPanel = (
     <aside
@@ -2907,36 +2956,83 @@ export default function App() {
     </aside>
   );
 
+  const renderLibraryChoices = (cards, { cardSize, selectedKey } = {}) =>
+    cards.map((card) => {
+      if (card.separatorLabel) {
+        return <fig-separator key={card.key} label={card.separatorLabel} />;
+      }
+      const cardNode = (
+        <ShaderNavCard
+          src={card.thumbnailUrl}
+          label={card.name}
+          sublabel={
+            card.origin === "public"
+              ? "Published"
+              : card.draft
+                ? "Draft"
+                : "Private"
+          }
+          selected={selectedKey === card.key}
+          published={card.origin === "public"}
+          authorName={card.authorName || card.authorLabel}
+          authorAvatarUrl={card.authorAvatarUrl}
+          {...(cardSize ? { size: cardSize } : {})}
+        />
+      );
+
+      if (!card.canDelete) {
+        return (
+          <fig-choice key={card.key} value={card.key} aria-label={card.name}>
+            {cardNode}
+          </fig-choice>
+        );
+      }
+
+      return (
+        <fig-choice key={card.key} value={card.key} aria-label={card.name}>
+          <fig-menu
+            class="shader-context-menu"
+            trigger="contextmenu"
+            position="center right"
+          >
+            <div fig-menu-trigger="">{cardNode}</div>
+            <fig-menu-item
+              value="publish"
+              onClick={(event) => {
+                openPublishForCard(
+                  card,
+                  event.currentTarget.closest("fig-choice")
+                );
+              }}
+            >
+              Publish
+            </fig-menu-item>
+            <fig-separator />
+            <fig-menu-item
+              value="delete"
+              onClick={() => {
+                if (card.draft) {
+                  setDeleteTarget({ draft: card.draft, name: card.name });
+                } else if (card.cloud) {
+                  setDeleteTarget({ cloud: card.cloud, name: card.name });
+                }
+              }}
+            >
+              Delete
+            </fig-menu-item>
+          </fig-menu>
+        </fig-choice>
+      );
+    });
+
   return (
     <>
-      <nav
-        className="app-nav"
-        data-mode={viewMode}
-        style={
-          viewMode === "editor"
-            ? { "--app-nav-width": `${appNavWidth}px` }
-            : undefined
-        }
-      >
+      {viewMode === "home" && (
+      <nav className="home-nav">
         <div className="app-nav-headers">
           <fig-header class="app-nav-header">
-            {viewMode === "editor" && (
-              <fig-tooltip text="Back to home">
-                <fig-button
-                  class="app-nav-back-button"
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Back to home"
-                  onClick={() => setShaderRoute()}
-                >
-                  <fig-icon name="back" />
-                </fig-button>
-              </fig-tooltip>
-            )}
             <h2 className="app-title">Studio</h2>
-            {viewMode === "home" && (
-              <div className="app-nav-home-tools">
+            <div className="app-nav-home-tools">
                 <fig-input-text
                   class="app-nav-search"
                   type="search"
@@ -2982,10 +3078,62 @@ export default function App() {
                   disabled={publishedAuthors.length ? undefined : ""}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
-              </div>
-            )}
+            </div>
             <hstack class="app-nav-header-actions">
-              {viewMode === "editor" && (
+              <AccountMenu
+                open={authOpen}
+                onOpenChange={setAuthOpen}
+                theme={theme}
+                onThemeChange={setTheme}
+                settingsOpen={settingsOpen}
+                onSettingsOpenChange={setSettingsOpen}
+                onProfileChange={(displayName) => {
+                  if (!user) return;
+                  setCloudShaders((current) =>
+                    current.map((shader) =>
+                      shader.owner_id === user.id
+                        ? { ...shader, author_name: displayName }
+                        : shader
+                    )
+                  );
+                }}
+              />
+            </hstack>
+          </fig-header>
+        </div>
+        <fig-chooser
+          ref={homeChooserRef}
+          value=""
+          layout="grid"
+          overflow="scrollbar"
+          loop=""
+        >
+          {renderLibraryChoices(groupedHomeCards, { cardSize: "large" })}
+        </fig-chooser>
+      </nav>
+      )}
+
+      <div className="editor-view" hidden={viewMode !== "editor"}>
+        <nav
+          className="app-nav"
+          style={{ "--app-nav-width": `${appNavWidth}px` }}
+        >
+          <div className="app-nav-headers">
+            <fig-header class="app-nav-header">
+              <fig-tooltip text="Back to home">
+                <fig-button
+                  class="app-nav-back-button"
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Back to home"
+                  onClick={() => setShaderRoute()}
+                >
+                  <fig-icon name="back" />
+                </fig-button>
+              </fig-tooltip>
+              <h2 className="app-title">Studio</h2>
+              <div className="app-nav-header-actions">
                 <fig-menu class="new-shader-menu" position="bottom right">
                   <fig-tooltip text="New Figma shader">
                     <fig-button
@@ -3011,146 +3159,102 @@ export default function App() {
                     Shader fill
                   </fig-menu-item>
                 </fig-menu>
-              )}
-              <AccountMenu
-                open={authOpen}
-                onOpenChange={setAuthOpen}
-                theme={theme}
-                onThemeChange={setTheme}
-                settingsOpen={settingsOpen}
-                onSettingsOpenChange={setSettingsOpen}
-                onProfileChange={(displayName) => {
-                  if (!user) return;
-                  setCloudShaders((current) =>
-                    current.map((shader) =>
-                      shader.owner_id === user.id
-                        ? { ...shader, author_name: displayName }
-                        : shader
-                    )
-                  );
-                }}
+                <AccountMenu
+                  open={authOpen}
+                  onOpenChange={setAuthOpen}
+                  theme={theme}
+                  onThemeChange={setTheme}
+                  settingsOpen={settingsOpen}
+                  onSettingsOpenChange={setSettingsOpen}
+                  onProfileChange={(displayName) => {
+                    if (!user) return;
+                    setCloudShaders((current) =>
+                      current.map((shader) =>
+                        shader.owner_id === user.id
+                          ? { ...shader, author_name: displayName }
+                          : shader
+                      )
+                    );
+                  }}
+                />
+              </div>
+            </fig-header>
+            <div className="app-nav-library-filters">
+              <fig-input-text
+                class="app-nav-search"
+                type="search"
+                placeholder="Search shaders"
+                value={editorQuery}
+                full=""
+                onInput={(event) => setEditorQuery(event.target.value)}
+                dangerouslySetInnerHTML={opaqueContent}
               />
-            </hstack>
-          </fig-header>
-          {viewMode === "editor" && (
-            <>
-              <fig-tabs
-                ref={editorLibraryTabsRef}
-                class="app-nav-tabs"
-                name="shader-library"
-                value={editorLibraryTab}
-              >
-                <fig-tab value="yours">Yours</fig-tab>
-                <fig-tab value="community">Community</fig-tab>
-              </fig-tabs>
-              <fig-header class="app-nav-search-header" borderless>
-                <fig-input-text
-                  class="app-nav-search"
-                  type="search"
-                  placeholder="Search shaders"
-                  value={editorQuery}
-                  full=""
-                  onInput={(event) => setEditorQuery(event.target.value)}
+              <div className="app-nav-filter-row">
+                <fig-select
+                  ref={editorKindRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by kind"
+                  value={editorKind}
+                  options={JSON.stringify([
+                    { value: "all", label: "All types" },
+                    { value: "effect", label: "Effects" },
+                    { value: "fill", label: "Fills" },
+                  ])}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
-              </fig-header>
-            </>
-          )}
-        </div>
-        <fig-chooser
-          ref={chooserRef}
-          value={viewMode === "home" ? "" : presetId}
-          layout="grid"
-          overflow={viewMode === "home" ? "scrollbar" : undefined}
-          {...(viewMode === "editor"
-            ? { columns: appNavWidth < 160 ? "1" : "2", drag: "true" }
-            : {})}
-          loop=""
-        >
-          {groupedVisibleCards.map((card) => {
-            if (card.separatorLabel) {
-              return (
-                <fig-separator key={card.key} label={card.separatorLabel} />
-              );
-            }
-            const selected = viewMode === "editor" && presetId === card.key;
-            const cardNode = (
-              <ShaderNavCard
-                src={card.thumbnailUrl}
-                label={card.name}
-                sublabel={
-                  card.origin === "public"
-                    ? "Published"
-                    : card.draft
-                      ? "Local"
-                      : "Private"
-                }
-                selected={selected}
-              />
-            );
-
-            if (!card.canDelete) {
-              return (
-                <fig-choice
-                  key={card.key}
-                  value={card.key}
-                  aria-label={card.name}
+                <fig-select
+                  ref={editorAuthorRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by author"
+                  value={editorAuthor}
+                  options={JSON.stringify([
+                    { value: "all", label: "All authors" },
+                    ...publishedAuthors,
+                  ])}
+                  disabled={publishedAuthors.length ? undefined : ""}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-tooltip
+                  text={
+                    editorOrigin === "public"
+                      ? "Show all shaders"
+                      : "Show published only"
+                  }
                 >
-                  {cardNode}
-                </fig-choice>
-              );
-            }
-
-            return (
-              <fig-choice
-                key={card.key}
-                value={card.key}
-                aria-label={card.name}
-              >
-                <fig-menu
-                  class="shader-context-menu"
-                  trigger="contextmenu"
-                  position="center right"
-                >
-                  <div fig-menu-trigger="">{cardNode}</div>
-                  <fig-menu-item
-                    value="publish"
-                    onClick={(event) => {
-                      openPublishForCard(
-                        card,
-                        event.currentTarget.closest("fig-choice")
-                      );
-                    }}
+                  <fig-button
+                    class="app-nav-published-toggle"
+                    type="toggle"
+                    variant="ghost"
+                    icon="true"
+                    selected={editorOrigin === "public"}
+                    aria-label="Show published shaders only"
+                    onClick={() =>
+                      setEditorOrigin((current) =>
+                        current === "public" ? "all" : "public"
+                      )
+                    }
                   >
-                    Publish
-                  </fig-menu-item>
-                  <fig-separator />
-                  <fig-menu-item
-                    value="delete"
-                    onClick={() => {
-                      if (card.draft) {
-                        setDeleteTarget({
-                          draft: card.draft,
-                          name: card.name,
-                        });
-                      } else if (card.cloud) {
-                        setDeleteTarget({
-                          cloud: card.cloud,
-                          name: card.name,
-                        });
-                      }
-                    }}
-                  >
-                    Delete
-                  </fig-menu-item>
-                </fig-menu>
-              </fig-choice>
-            );
-          })}
-        </fig-chooser>
-      </nav>
+                    <fig-icon name="globe" />
+                  </fig-button>
+                </fig-tooltip>
+              </div>
+            </div>
+          </div>
+          <ShaderList
+            ref={editorChooserRef}
+            value={presetId}
+            cards={groupedEditorCards}
+            onPublish={openPublishForCard}
+            onDelete={(card) => {
+              if (card.draft) {
+                setDeleteTarget({ draft: card.draft, name: card.name });
+              } else if (card.cloud) {
+                setDeleteTarget({ cloud: card.cloud, name: card.name });
+              }
+            }}
+          />
+        </nav>
 
-      {viewMode === "editor" && (
         <div
           className="app-nav-resizer"
           role="separator"
@@ -3176,14 +3280,10 @@ export default function App() {
             );
           }}
         />
-      )}
 
       <main
         ref={viewerRef}
         className="shader-viewer"
-        data-mode={viewMode}
-        {...(viewMode === "home" ? { inert: "" } : {})}
-        aria-hidden={viewMode === "home" ? "true" : undefined}
         style={{
           "--code-width": `${codeWidth}px`,
           "--chat-height": `${chatHeight}px`,
@@ -3275,6 +3375,9 @@ export default function App() {
                       <fig-icon name="more" />
                     </fig-button>
                   </fig-tooltip>
+                  <fig-menu-item value="rename" onClick={startRename}>
+                    Rename
+                  </fig-menu-item>
                   <fig-menu-item
                     value="save"
                     disabled={saving || Boolean(currentShader && !dirty)}
@@ -3637,6 +3740,7 @@ export default function App() {
 
         {propertiesPanel}
       </main>
+      </div>
 
       <dialog
         is="fig-dialog"

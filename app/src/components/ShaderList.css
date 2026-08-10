@@ -1,0 +1,33 @@
+fig-chooser.shader-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  --fig-chooser-inline-padding: var(--spacer-1);
+  --fig-chooser-inline-margin: 0;
+  width: 100%;
+  overflow-x: hidden;
+
+  > fig-separator:first-of-type {
+    margin-block: var(--spacer-1);
+
+    &::before {
+      display: none;
+    }
+  }
+
+  fig-choice {
+    height: max-content;
+    align-self: start;
+    align-items: stretch;
+    --fig-choice-border-radius: var(--radius-large);
+    margin: 0 var(--spacer-2);
+    width: calc(100% - var(--spacer-4));
+
+    &[selected]{
+      background-color: var(--figma-color-bg-selected);
+
+      .shader-list-item-menu {
+        visibility: visible;
+      }
+    }
+  }
+}

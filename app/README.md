@@ -24,8 +24,8 @@ Open the printed URL. The interface mirrors the original `shader.gl` application
 
 ## Supabase setup
 
-The app uses Supabase Auth, Postgres, and Storage for magic-link accounts,
-cloud shaders, thumbnails, and input media.
+The app uses Supabase Auth, Postgres, and Storage for GitHub accounts, cloud
+shaders, thumbnails, and input media.
 
 1. Create or open the Supabase project.
 2. Run
@@ -33,34 +33,42 @@ cloud shaders, thumbnails, and input media.
    in the Supabase SQL Editor. This creates the `shaders` table, private
    `shader-assets` bucket, and their Row Level Security policies.
 3. In **Authentication → URL Configuration**, set:
-   - Site URL: `https://rogie.github.io/figma-webgpu-shader-studio/`
+   - Site URL: `https://shader-studio.pages.dev/`
    - Redirect URLs:
      - `http://localhost:5173/**`
-     - `https://rogie.github.io/figma-webgpu-shader-studio/**`
-4. Keep Email enabled under **Authentication → Providers**. Magic-link login
-   uses Supabase's email template and SMTP configuration.
+     - `https://shader-studio.pages.dev/**`
+4. Enable GitHub under **Authentication → Providers**.
+5. Apply
+   [`../supabase/migrations/20260809232500_restrict_github_signups_to_figma.sql`](../supabase/migrations/20260809232500_restrict_github_signups_to_figma.sql)
+   and configure its function as the **Before User Created** Auth hook. This
+   restricts new GitHub users to verified `@figma.com` email addresses.
 
 Uploaded images and videos are limited to 25 MB in both the browser and
 Storage. The bucket remains private: its RLS policy permits owners to read
 draft assets and anonymous visitors to read assets only when the corresponding
 shader is public.
 
-## GitHub Pages
+## Cloudflare Pages
 
-The workflow at
-[`../.github/workflows/deploy-pages.yml`](../.github/workflows/deploy-pages.yml)
-builds and deploys the `app` directory whenever `main` is pushed.
+The production app is deployed at
+[`https://shader-studio.pages.dev/`](https://shader-studio.pages.dev/) from the
+private GitHub repository.
 
-Configure these repository settings:
+Configure the Pages Git integration with:
 
-- Variable `VITE_SUPABASE_URL`
-- Secret `VITE_SUPABASE_PUBLISHABLE_KEY`
-- **Settings → Pages → Source:** GitHub Actions
+- Production branch: `main`
+- Root directory: `app`
+- Build command: `npm run build`
+- Output directory: `dist`
+- Production and preview variables: `VITE_SUPABASE_URL` and
+  `VITE_SUPABASE_PUBLISHABLE_KEY`
 
-The home view lives at `/`. Open shaders use `/shader/<id>` (preset id or
-saved shader id). Legacy single-segment links like `/dither` still load.
-The deployment copies `index.html` to `404.html` so refreshing these
-routes still loads the app on GitHub Pages.
+Cloudflare Access protects the production hostname and preview deployments.
+The application policy allows GitHub login only when the identity provider
+returns an `@figma.com` email address.
+
+The home view lives at `/`. Open shaders use `/shader/<id>` (preset id or saved
+shader id). Legacy single-segment links like `/dither` still load.
 
 ## How it works
 

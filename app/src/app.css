@@ -21,8 +21,20 @@ body,
   background-color: var(--figma-color-bg);
   color: var(--figma-color-text);
 
+  .editor-view {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+
+    &[hidden] {
+      display: none;
+    }
+  }
+
   .app-nav {
-    --app-nav-width: 180px;
+    --app-nav-width: 240px;
     flex: 0 0 auto;
     width: var(--app-nav-width);
     box-sizing: border-box;
@@ -50,12 +62,27 @@ body,
       margin-right: auto;
     }
 
+    .app-nav-header {
+      height: auto;
+      padding-block: var(--spacer-3);
+    }
+
     .app-nav-back-button {
       margin-left: calc(var(--spacer-2) * -1);
     }
 
-    fig-header.app-nav-search-header {
-      margin-top: calc(var(--spacer-2) * -1);
+    .app-nav-header-actions {
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      gap: var(--spacer-1);
+    }
+
+    .app-nav-library-filters {
+      display: flex;
+      flex-direction: column;
+      gap: var(--spacer-2);
+      padding: var(--spacer-2-5);
 
       .app-nav-search {
         flex: 1 1 auto;
@@ -63,165 +90,17 @@ body,
         min-width: 0;
         max-width: none;
       }
-    }
 
-    .app-nav-home-tools {
-      display: none;
-      flex: 1 1 auto;
-      align-items: center;
-      gap: var(--spacer-2);
-      min-width: 0;
-    }
-
-    .app-nav-filter {
-      flex: 0 0 auto;
-      width: 9.5rem;
-    }
-
-    fig-chooser {
-      --fig-chooser-inline-padding: var(--spacer-1);
-      --fig-chooser-inline-margin: var(--spacer-2-5);
-      width: 100%;
-      margin-inline: 0;
-      padding-inline: var(--fig-chooser-inline-margin);
-      overflow-x: hidden;
-
-      &[layout="grid"] {
-        grid-auto-rows: max-content;
-        align-content: start;
-
-        > fig-separator {
-          position: sticky;
-          top: 0;
-          z-index: 3;
-          grid-column: 1 / -1;
-          width: calc(100% + var(--fig-chooser-inline-margin) * 2);
-          margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
-          background: var(--figma-color-bg);
-
-          &:first-of-type::before {
-            display: none;
-          }
-        }
-      }
-
-      .shader-context-menu {
-        display: block;
-        width: 100%;
-
-        > [fig-menu-trigger] {
-          display: block;
-          width: 100%;
-        }
-      }
-
-      fig-choice {
-        width: 100%;
-        height: max-content;
-        align-self: start;
-        align-items: stretch;
-
-        /* Card owns hover/selection chrome. */
-        &:hover,
-        &[selected]:not([selected="false"]) {
-          background: transparent;
-        }
-
-        &[selected]:not([selected="false"])::after {
-          content: none;
-        }
-      }
-
-      .shader-nav-card {
-        width: 100%;
-      }
-
-      .shader-nav-card-preview {
-        --fig-preview-background: transparent;
+      .app-nav-filter-row {
         display: grid;
-        width: 100%;
-        aspect-ratio: 4 / 3;
-
-        > fig-spinner,
-        > img {
-          grid-area: 1 / 1;
-        }
-
-        > fig-spinner {
-          place-self: center;
-        }
-
-        > img {
-          width: 100%;
-          height: 100%;
-          object-fit: cover;
-        }
-      }
-    }
-
-    &[data-mode="home"] {
-      --app-nav-width: 100%;
-      flex: 1 1 auto;
-      width: 100%;
-      margin-right: 0;
-      border-right-color: transparent;
-      padding: 0;
-
-      fig-header.app-nav-header {
-        justify-content: flex-start;
-        align-items: center;
-        height: auto;
-        min-height: var(--spacer-6);
-        padding: var(--spacer-3);
-      }
-
-      .app-nav-home-tools {
-        display: flex;
-        flex: 0 1 auto;
-        margin-left: auto;
+        grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+        gap: var(--spacer-1);
+        min-width: 0;
       }
 
       .app-nav-filter {
-        width: auto;
-      }
-
-      fig-chooser {
-        --fig-chooser-grid-columns: 4;
-        --fig-chooser-inline-margin: var(--spacer-2-5);
-        padding-inline: var(--fig-chooser-inline-margin);
-        align-content: start;
-
-        fig-choice {
-          min-width: 0;
-        }
-
-        .shader-nav-card {
-          min-height: 10rem;
-        }
-      }
-
-      @media (max-width: 1100px) {
-        fig-chooser {
-          --fig-chooser-grid-columns: 3;
-        }
-      }
-
-      @media (max-width: 720px) {
-        .app-nav-headers {
-          padding-inline: var(--spacer-3);
-        }
-
-        fig-header.app-nav-header {
-          flex-wrap: wrap;
-        }
-
-        .app-nav-home-tools {
-          flex-wrap: wrap;
-        }
-
-        fig-chooser {
-          --fig-chooser-grid-columns: 2;
-        }
+        width: 100%;
+        min-width: 0;
       }
     }
   }
@@ -249,22 +128,6 @@ body,
     &:focus-visible::after,
     &:active::after {
       background: var(--figma-color-border-brand-strong);
-    }
-  }
-
-  &:has(> .app-nav[data-mode="home"]) {
-    .shader-viewer {
-      flex: 0 0 0;
-      width: 0;
-      min-width: 0;
-      height: 0;
-      margin: 0;
-      padding: 0;
-      border: 0;
-      opacity: 0;
-      overflow: hidden;
-      pointer-events: none;
-      visibility: hidden;
     }
   }
 

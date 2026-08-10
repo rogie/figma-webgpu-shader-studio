@@ -1,0 +1,65 @@
+.shader-list-item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  width: 100%;
+  min-width: 0;
+  padding: var(--spacer-2);
+  padding-right: var(--spacer-3);
+
+  & .shader-list-item-preview {
+    --fig-preview-background: transparent;
+    width: var(--spacer-6);
+    flex-shrink: 0;
+  }
+
+  & .shader-list-item-text {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  & .shader-list-item-label,
+  & .shader-list-item-author {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--figma-color-text-primary);
+  }
+
+  & .shader-list-item-author {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-1);
+    color: var(--figma-color-text-secondary);
+  }
+
+  & .shader-list-item-actions {
+    display: none;
+    flex: 0 0 auto;
+    margin-left: auto;
+    place-items: center;
+  }
+
+  & .shader-list-item-published {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacer-1);
+    color: var(--figma-color-icon-secondary);
+  }
+
+  & .shader-list-item-menu {
+    visibility: hidden;
+  }
+
+  &:hover {
+    & .shader-list-item-menu {
+      visibility: visible;
+    }
+    .shader-list-item-actions {
+      display: grid;
+    }
+  }
+}

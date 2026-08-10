@@ -2,9 +2,10 @@
 # Project link: supabase link --project-ref <ref>
 
 [auth]
-site_url = "https://rogie.github.io/figma-webgpu-shader-studio/"
+site_url = "https://shader-studio.pages.dev/"
 additional_redirect_urls = [
   "http://localhost:5173/**",
+  "https://shader-studio.pages.dev/**",
   "https://rogie.github.io/figma-webgpu-shader-studio/**",
 ]
 
@@ -12,6 +13,10 @@ additional_redirect_urls = [
 enable_confirmations = true
 max_frequency = "1m"
 otp_length = 8
+
+[auth.hook.before_user_created]
+enabled = true
+uri = "pg-functions://postgres/public/hook_allow_figma_github_signup"
 
 [auth.mfa.totp]
 enroll_enabled = true

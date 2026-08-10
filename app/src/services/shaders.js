@@ -23,16 +23,17 @@ async function attachAuthorProfiles(client, shaders) {
 
   const result = await client
     .from("profiles")
-    .select("id, display_name")
+    .select("*")
     .in("id", ownerIds);
   if (result.error) return shaders;
 
-  const names = new Map(
-    result.data.map((profile) => [profile.id, profile.display_name])
+  const profiles = new Map(
+    result.data.map((profile) => [profile.id, profile])
   );
   return shaders.map((shader) => ({
     ...shader,
-    author_name: names.get(shader.owner_id) || null,
+    author_name: profiles.get(shader.owner_id)?.display_name || null,
+    author_avatar_url: profiles.get(shader.owner_id)?.avatar_url || null,
   }));
 }
 

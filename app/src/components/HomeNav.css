@@ -1,0 +1,178 @@
+#root .home-nav {
+  flex: 1 1 auto;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+
+  .app-title {
+    margin: 0;
+    margin-right: auto;
+  }
+
+  fig-header.app-nav-header {
+    justify-content: flex-start;
+    align-items: center;
+    height: auto;
+    min-height: var(--spacer-6);
+    padding: var(--spacer-3);
+  }
+
+  .app-nav-home-tools {
+    display: flex;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--spacer-2);
+    min-width: 0;
+    margin-left: auto;
+  }
+
+  .app-nav-filter {
+    flex: 0 0 auto;
+    width: auto;
+  }
+
+  fig-chooser {
+    --fig-chooser-inline-padding: var(--spacer-1);
+    --fig-chooser-inline-margin: var(--spacer-2-5);
+    --fig-chooser-grid-columns: 4;
+    width: 100%;
+    margin-inline: 0;
+    padding-inline: var(--fig-chooser-inline-margin);
+    overflow-x: hidden;
+    align-content: start;
+    grid-auto-rows: max-content;
+
+    > fig-separator {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      grid-column: 1 / -1;
+      width: calc(100% + var(--fig-chooser-inline-margin) * 2);
+      margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
+      background: var(--figma-color-bg);
+
+      &:first-of-type::before {
+        display: none;
+      }
+    }
+
+    .shader-context-menu {
+      display: block;
+      width: 100%;
+
+      > [fig-menu-trigger] {
+        display: block;
+        width: 100%;
+      }
+    }
+
+    fig-choice {
+      width: 100%;
+      height: max-content;
+      min-width: 0;
+      align-self: start;
+      align-items: stretch;
+
+      &:hover,
+      &[selected]:not([selected="false"]) {
+        background: transparent;
+      }
+
+      &[selected]:not([selected="false"])::after {
+        content: none;
+      }
+    }
+
+    .shader-nav-card {
+      width: 100%;
+      min-height: 10rem;
+
+      > fig-footer {
+        flex-direction: row;
+        align-items: center;
+      }
+
+      .fig-card-label {
+        display: flex;
+        flex: 1 1 auto;
+        align-items: center;
+        gap: var(--spacer-2);
+
+        fig-avatar[src=""] {
+          background: var(--figma-color-bg-selected);
+        }
+
+        > h3 {
+          margin: 0;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+      }
+
+      .fig-card-sublabel {
+        flex: 0 1 auto;
+        min-width: 0;
+        margin-left: auto;
+        text-align: right;
+        justify-content: flex-end;
+      }
+
+      &.is-published .fig-card-sublabel {
+        display: inline-flex;
+        align-items: center;
+        gap: var(--spacer-1);
+        color: var(--figma-color-icon-secondary);
+      }
+    }
+
+    .shader-nav-card-preview {
+      --fig-preview-background: transparent;
+      display: grid;
+      width: 100%;
+
+      > fig-spinner,
+      > img {
+        grid-area: 1 / 1;
+      }
+
+      > fig-spinner {
+        place-self: center;
+      }
+
+      > img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+    }
+  }
+
+  @media (max-width: 1100px) {
+    fig-chooser {
+      --fig-chooser-grid-columns: 3;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .app-nav-headers {
+      padding-inline: var(--spacer-3);
+    }
+
+    fig-header.app-nav-header,
+    .app-nav-home-tools {
+      flex-wrap: wrap;
+    }
+
+    fig-chooser {
+      --fig-chooser-grid-columns: 2;
+    }
+  }
+}
