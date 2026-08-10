@@ -83,8 +83,6 @@ const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
 const PREVIEW_HEIGHT_STORAGE_KEY = "figma-shader-studio:preview-height";
 const SIDEBAR_SECTIONS_STORAGE_KEY =
   "figma-shader-studio:sidebar-sections";
-const PROPERTIES_PANEL_STORAGE_KEY =
-  "figma-shader-studio:properties-panel";
 const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
 const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 const THEME_STORAGE_KEY = "figma-shader-studio:theme";
@@ -374,26 +372,6 @@ function savedSidebarSections() {
   }
 }
 
-function savedPropertiesPanel() {
-  try {
-    const parsed = JSON.parse(
-      localStorage.getItem(PROPERTIES_PANEL_STORAGE_KEY) || "{}"
-    );
-    return {
-      collapsed: Boolean(parsed.collapsed),
-    };
-  } catch {
-    return { collapsed: false };
-  }
-}
-
-function writePropertiesPanel(settings) {
-  localStorage.setItem(
-    PROPERTIES_PANEL_STORAGE_KEY,
-    JSON.stringify(settings)
-  );
-}
-
 function isStackedLayout() {
   return window.matchMedia(STACKED_MEDIA_QUERY).matches;
 }
@@ -483,9 +461,6 @@ export default function App() {
   );
   const [chatCollapsed, setChatCollapsed] = useState(
     () => savedSidebarSections().chatCollapsed
-  );
-  const [propertiesCollapsed, setPropertiesCollapsed] = useState(
-    () => savedPropertiesPanel().collapsed
   );
   const viewMode = routeId ? "editor" : "home";
 
@@ -698,10 +673,6 @@ export default function App() {
     media.addEventListener("change", sync);
     return () => media.removeEventListener("change", sync);
   }, []);
-
-  useEffect(() => {
-    writePropertiesPanel({ collapsed: propertiesCollapsed });
-  }, [propertiesCollapsed]);
 
   useEffect(() => {
     const popup = publishDialogRef.current;
@@ -2848,42 +2819,13 @@ export default function App() {
     <aside
       ref={propertiesPanelRef}
       className="shader-properties-panel"
-      data-collapsed={propertiesCollapsed ? "true" : "false"}
       aria-label="Shader properties"
     >
-      <fig-header borderless aria-expanded={!propertiesCollapsed}>
+      <fig-header borderless>
         <h3>Properties</h3>
-        <hstack>
-          <fig-tooltip
-            text={propertiesCollapsed ? "Expand properties" : "Collapse properties"}
-          >
-            <fig-button
-              type="button"
-              variant="ghost"
-              icon="true"
-              aria-label={
-                propertiesCollapsed ? "Expand properties" : "Collapse properties"
-              }
-              onClick={() =>
-                setPropertiesCollapsed((collapsed) => !collapsed)
-              }
-            >
-              <fig-icon
-                class={
-                  propertiesCollapsed
-                    ? "properties-chevron is-collapsed"
-                    : "properties-chevron"
-                }
-                name="chevron"
-                size="medium"
-              />
-            </fig-button>
-          </fig-tooltip>
-        </hstack>
       </fig-header>
 
-      {!propertiesCollapsed && (
-        <fig-content class="shader-properties-panel-content">
+      <fig-content class="shader-properties-panel-content">
           <fig-group name={shaderName}>
             <fig-header borderless>
               <h3>{shaderName}</h3>
@@ -2951,8 +2893,7 @@ export default function App() {
               </div>
             )}
           </fig-group>
-        </fig-content>
-      )}
+      </fig-content>
     </aside>
   );
 

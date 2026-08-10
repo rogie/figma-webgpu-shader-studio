@@ -906,42 +906,8 @@ dialog.delete-shader-dialog {
     box-shadow: inset 0 0 0 1px var(--figma-color-border);
   }
 
-  &[data-collapsed="true"] {
-    flex-basis: 40px;
-    width: 40px;
-    min-width: 40px;
-
-    > fig-header > h3 {
-      display: none;
-    }
-  }
-
   > fig-header {
     flex: 0 0 auto;
-
-    hstack {
-      flex: 0 0 auto;
-      --hstack-gap: var(--spacer-1);
-
-      /* Same as code header: fig-header -spacer-2 on every ghost icon
-         crushes the more/close pair; keep it only on the last control. */
-      fig-button[icon][variant="ghost"] {
-        margin-right: 0;
-      }
-
-      > :last-child fig-button[icon][variant="ghost"],
-      > fig-button[icon][variant="ghost"]:last-child {
-        margin-right: calc(var(--spacer-2) * -1);
-      }
-    }
-
-    .properties-chevron {
-      transition: transform 120ms ease;
-
-      &.is-collapsed {
-        transform: rotate(-90deg);
-      }
-    }
   }
 
   fig-content.shader-properties-panel-content {
