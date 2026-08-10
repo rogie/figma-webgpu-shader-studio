@@ -25,8 +25,6 @@ const ShaderList = forwardRef(function ShaderList(
           <ShaderListItem
             src={card.thumbnailUrl}
             label={card.name}
-            authorName={card.authorName || card.authorLabel}
-            published={card.origin === "public"}
             onPublish={
               card.canDelete
                 ? (anchor) => onPublish?.(card, anchor)

@@ -5,8 +5,6 @@ const opaqueContent = { __html: "" };
 export default function ShaderListItem({
   src,
   label,
-  authorName,
-  published,
   onPublish,
   onDelete,
 }) {
@@ -22,17 +20,6 @@ export default function ShaderListItem({
       />
       <div className="shader-list-item-text">
         <label className="shader-list-item-label">{label}</label>
-        <label className="shader-list-item-author">
-          {published && (
-            <span className="shader-list-item-published">
-              <fig-tooltip text="Published">
-                <fig-icon name="globe" size="small" />
-              </fig-tooltip>
-              <span aria-hidden="true">&middot;</span>
-            </span>
-          )}
-          {authorName || "Anon"}
-        </label>
       </div>
       {onDelete && (
         <div className="shader-list-item-actions">

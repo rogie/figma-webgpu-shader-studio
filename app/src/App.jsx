@@ -570,6 +570,23 @@ export default function App() {
     ? `cloud:${currentShader.id}`
     : `preset:${presetId}`;
   const isOwner = Boolean(user && currentShader?.owner_id === user.id);
+  const currentAuthorIsYou = Boolean(isOwner || isDraftId(presetId));
+  const currentAuthorName =
+    currentShader?.author_name ||
+    (currentAuthorIsYou
+      ? user?.user_metadata?.user_name ||
+        user?.user_metadata?.preferred_username ||
+        user?.user_metadata?.full_name ||
+        user?.user_metadata?.name ||
+        user?.email ||
+        "Yours"
+      : "Unknown author");
+  const currentAuthorAvatarUrl =
+    currentShader?.author_avatar_url ||
+    (currentAuthorIsYou
+      ? user?.user_metadata?.avatar_url || user?.user_metadata?.picture || ""
+      : "");
+  const showCurrentAuthor = Boolean(currentShader || isDraftId(presetId));
 
   useEffect(() => {
     document.documentElement.style.colorScheme = theme;
@@ -3245,6 +3262,15 @@ export default function App() {
                 renaming ? "shader-title is-renaming" : "shader-title"
               }
             >
+                {showCurrentAuthor && (
+                  <fig-tooltip text={currentAuthorName}>
+                    <fig-avatar
+                      class="shader-author-avatar"
+                      src={currentAuthorAvatarUrl}
+                      name={currentAuthorName}
+                    />
+                  </fig-tooltip>
+                )}
                 <fig-input-text
                   ref={nameInputRef}
                   name="name"
@@ -3278,14 +3304,14 @@ export default function App() {
                   dangerouslySetInnerHTML={{ __html: "" }}
                 />
                 {!renaming && currentShader?.is_public && (
-                  <a
+                  <span
                     className="shader-published-status"
-                    href={makeShareUrl(currentShader.id)}
-                    target="_blank"
-                    rel="noreferrer"
+                    aria-label="Published"
                   >
-                    Published
-                  </a>
+                    <fig-tooltip text="Published">
+                      <fig-icon name="globe" />
+                    </fig-tooltip>
+                  </span>
                 )}
                 {renaming && (
                   <fig-button
