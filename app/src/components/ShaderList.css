@@ -20,7 +20,7 @@ fig-chooser.shader-list {
     align-items: stretch;
     --fig-choice-border-radius: var(--radius-large);
     margin: 0 var(--spacer-2);
-    width: calc(100% - var(--spacer-4));
+    width: calc(100% - var(--spacer-2) * 2);
 
     &[selected]{
       background-color: var(--figma-color-bg-selected);

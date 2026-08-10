@@ -36,6 +36,15 @@ export default defineConfig({
   build: {
     target: "esnext",
     cssTarget: "esnext",
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules/@supabase/")) return "supabase";
+          if (id.includes("node_modules/sucrase/")) return "sucrase";
+          return undefined;
+        },
+      },
+    },
   },
   server: {
     port: 5173,

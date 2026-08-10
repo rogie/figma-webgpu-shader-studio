@@ -568,20 +568,30 @@ export function render(device, frame) {
   ldv.setFloat32(8, pixelSize, true)
   device.queue.writeBuffer(s.loadUbuf, 0, s.loadParams)
 
-  var loadBG = device.createBindGroup({
-    layout: loadPipe.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: s.loadUbuf } },
-      { binding: 1, resource: { buffer: pixelBuf } },
-      { binding: 2, resource: s.sampler },
-      { binding: 3, resource: frame.input.createView() },
-    ],
-  })
+  if (
+    !s.loadBG ||
+    s.loadBGPipe !== loadPipe ||
+    s.loadBGPixelBuf !== pixelBuf ||
+    s.loadBGInput !== frame.input
+  ) {
+    s.loadBG = device.createBindGroup({
+      layout: loadPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: s.loadUbuf } },
+        { binding: 1, resource: { buffer: pixelBuf } },
+        { binding: 2, resource: s.sampler },
+        { binding: 3, resource: frame.input.createView() },
+      ],
+    })
+    s.loadBGPipe = loadPipe
+    s.loadBGPixelBuf = pixelBuf
+    s.loadBGInput = frame.input
+  }
 
   var encoder = device.createCommandEncoder()
   var loadPass = encoder.beginComputePass()
   loadPass.setPipeline(loadPipe)
-  loadPass.setBindGroup(0, loadBG)
+  loadPass.setBindGroup(0, s.loadBG)
   loadPass.dispatchWorkgroups(Math.ceil(W / 8), Math.ceil(H / 8))
   loadPass.end()
 

@@ -228,6 +228,7 @@ fn grainForStyle(p: vec2f, style: f32, roughness: f32) -> f32 {
 `;
   frame.state.shaderModule = device.createShaderModule({ code: SHADER });
   frame.state.uniformBuf = device.createBuffer({ size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  frame.state.uniformData = new Float32Array(20);
   frame.state.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" });
   frame.state.quad = device.createBuffer({ size: 96, usage: GPUBufferUsage.VERTEX, mappedAtCreation: true });
   new Float32Array(frame.state.quad.getMappedRange()).set([
@@ -283,22 +284,27 @@ export function render(device, frame) {
   var falloff = (p.falloff ?? 0) / 100;
   var dens = (p.density ?? 100) / 100;
 
-  device.queue.writeBuffer(s.uniformBuf, 0, new Float32Array([
+  s.uniformData.set([
     frame.output.width, frame.output.height, intensity, grainSize,
     roughness, colorAmount, p.grainStyle ?? 0, p.blendMode ?? 1,
     highlights, midtones, shadows, p.seed ?? 0,
     reg.x / 100, reg.y / 100, reg.radius ?? 100, reg.angle ?? 0,
     falloff, dens, 0, 0,
-  ]));
+  ]);
+  device.queue.writeBuffer(s.uniformBuf, 0, s.uniformData);
 
-  var bindGroup = device.createBindGroup({
-    layout: s.pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: s.uniformBuf } },
-      { binding: 1, resource: s.sampler },
-      { binding: 2, resource: frame.input.createView() },
-    ],
-  });
+  if (!s.bindGroup || s.bindGroupPipeline !== s.pipeline || s.bindGroupInput !== frame.input) {
+    s.bindGroup = device.createBindGroup({
+      layout: s.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: s.uniformBuf } },
+        { binding: 1, resource: s.sampler },
+        { binding: 2, resource: frame.input.createView() },
+      ],
+    });
+    s.bindGroupPipeline = s.pipeline;
+    s.bindGroupInput = frame.input;
+  }
 
   var encoder = device.createCommandEncoder();
   var pass = encoder.beginRenderPass({
@@ -310,7 +316,7 @@ export function render(device, frame) {
     }],
   });
   pass.setPipeline(s.pipeline);
-  pass.setBindGroup(0, bindGroup);
+  pass.setBindGroup(0, s.bindGroup);
   pass.setVertexBuffer(0, s.quad);
   pass.draw(6);
   pass.end();

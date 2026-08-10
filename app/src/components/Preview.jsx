@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
 import CanvasControlsOverlay from "./CanvasControlsOverlay.jsx";
-import DefaultHtmlInput from "./DefaultHtmlInput.jsx";
+
+const DefaultHtmlInput = lazy(() => import("./DefaultHtmlInput.jsx"));
 
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 8;
@@ -9,7 +10,7 @@ function clampZoom(zoom) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
-export default function Preview({
+function Preview({
   canvasRef,
   error,
   uploading,
@@ -244,7 +245,9 @@ export default function Preview({
         <canvas ref={canvasRef} className="preview-canvas">
           {inputSource === "html" ? (
             <div ref={htmlInputRef} className="preview-html-input">
-              <DefaultHtmlInput />
+              <Suspense fallback={null}>
+                <DefaultHtmlInput />
+              </Suspense>
             </div>
           ) : null}
         </canvas>
@@ -321,3 +324,5 @@ export default function Preview({
     </div>
   );
 }
+
+export default memo(Preview);

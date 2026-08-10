@@ -1,4 +1,4 @@
-import { forwardRef } from "react";
+import { forwardRef, memo } from "react";
 import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
 
@@ -46,4 +46,4 @@ const ShaderList = forwardRef(function ShaderList(
   );
 });
 
-export default ShaderList;
+export default memo(ShaderList);

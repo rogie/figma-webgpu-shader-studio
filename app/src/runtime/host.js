@@ -3,6 +3,7 @@
 // animation frame). See skills/v3.md.tmpl for the frame field semantics.
 
 import { cssSizeToDevicePixels } from "./dpi.js";
+import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
@@ -20,19 +21,28 @@ export class ShaderHost {
     this.setupFn = null;
     this.renderFn = null;
     this.isFill = false;
+    this.isAnimated = false;
     this.effectVisible = true;
+    this.active = true;
 
     this.inputTexture = null;
     this.video = null; // HTMLVideoElement when the input is a video
     this.htmlElement = null; // canvas child Element for HTML-in-Canvas input
     this.htmlCssSize = null; // logical CSS size of the HTML subject
+    this._htmlFrameDirty = false;
+    this._videoFrameDirty = false;
+    this._videoFrameCallbackId = 0;
+    this._lastVideoTime = -1;
     this.stageCssSize = { width: DEFAULT_FILL_CSS, height: DEFAULT_FILL_CSS };
+    this._fillResizeTimer = 0;
     this._onHtmlPaint = this._onHtmlPaint.bind(this);
 
     this._passthroughPipeline = null;
     this._passthroughFormat = null;
     this._passthroughSampler = null;
     this._passthroughBindLayout = null;
+    this._passthroughBindGroup = null;
+    this._passthroughInputTexture = null;
 
     this.frame = {
       input: null,
@@ -55,6 +65,7 @@ export class ShaderHost {
   }
 
   async init() {
+    const startedAt = perfNow();
     if (!navigator.gpu) {
       throw new Error(
         "WebGPU is not available in this browser. Use Chrome/Edge, or Safari Technology Preview."
@@ -88,6 +99,7 @@ export class ShaderHost {
       this.frame.mousePosition = { x: 0, y: 0 };
     });
     this.ready = true;
+    measurePerf("host.init", startedAt);
   }
 
   _onMouse(e) {
@@ -129,7 +141,11 @@ export class ShaderHost {
     this.stageCssSize = { width, height };
     if (!this.ready) return;
     if (this.isFill) {
-      this.resizeFill(width, height);
+      clearTimeout(this._fillResizeTimer);
+      this._fillResizeTimer = setTimeout(() => {
+        this._fillResizeTimer = 0;
+        this.resizeFill(this.stageCssSize.width, this.stageCssSize.height);
+      }, 80);
       return;
     }
     // HTML subjects stay at a fixed CSS size; re-sync when DPR changes.
@@ -207,6 +223,7 @@ export class ShaderHost {
 
   _clearInputResources() {
     this._unbindHtmlPaint();
+    this._cancelVideoFrameCallback();
     if (this.inputTexture) {
       this.inputTexture.destroy();
       this.inputTexture = null;
@@ -214,6 +231,11 @@ export class ShaderHost {
     this.video = null;
     this.htmlElement = null;
     this.htmlCssSize = null;
+    this._htmlFrameDirty = false;
+    this._videoFrameDirty = false;
+    this._lastVideoTime = -1;
+    this._passthroughBindGroup = null;
+    this._passthroughInputTexture = null;
     this.frame.input = null;
   }
 
@@ -240,6 +262,10 @@ export class ShaderHost {
           GPUTextureUsage.RENDER_ATTACHMENT,
       });
       textureChanged = true;
+      if (this.video) this._videoFrameDirty = true;
+      if (this.htmlElement) this._htmlFrameDirty = true;
+      this._passthroughBindGroup = null;
+      this._passthroughInputTexture = null;
     }
     this.frame.input = this.inputTexture;
     let sizeChanged = false;
@@ -296,8 +322,11 @@ export class ShaderHost {
     const w = Math.min(MAX_DIM, video.videoWidth || 1024);
     const h = Math.min(MAX_DIM, video.videoHeight || 1024);
     const sizeChanged = this._ensureInputTexture(w, h);
+    this._videoFrameDirty = true;
+    this._watchVideoFrames();
     this._uploadVideoFrame();
     this._rebindAfterInputChange(sizeChanged);
+    this._scheduleLoop();
   }
 
   // HTML-in-Canvas: `element` must be a direct child of this.canvas with
@@ -325,6 +354,7 @@ export class ShaderHost {
         Math.round(element.offsetHeight || element.clientHeight || 720)
       );
     this.htmlCssSize = { width: cssWidth, height: cssHeight };
+    this._htmlFrameDirty = true;
     const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
     const sizeChanged = this._ensureInputTexture(size.width, size.height, {
       width: size.cssWidth,
@@ -352,11 +382,11 @@ export class ShaderHost {
   }
 
   _onHtmlPaint() {
+    if (!this.active) return;
     try {
-      if (!this.running && this.renderFn) {
+      this._htmlFrameDirty = true;
+      if (this.renderFn && (!this.running || !this.isAnimated)) {
         this._present();
-      } else {
-        this._uploadHtmlFrame();
       }
     } catch (err) {
       this.onError(err && err.message ? err.message : String(err));
@@ -368,19 +398,54 @@ export class ShaderHost {
     if (!video || !this.inputTexture) return;
     if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
     if (!video.videoWidth || !video.videoHeight) return;
+    if (
+      !this._videoFrameDirty &&
+      Number.isFinite(video.currentTime) &&
+      video.currentTime === this._lastVideoTime
+    ) {
+      return false;
+    }
     try {
       this.device.queue.copyExternalImageToTexture(
         { source: video, flipY: false },
         { texture: this.inputTexture, premultipliedAlpha: true },
         [this.inputTexture.width, this.inputTexture.height]
       );
+      this._videoFrameDirty = false;
+      this._lastVideoTime = video.currentTime;
+      recordPerf("input.videoUpload");
+      return true;
     } catch {
       // Skip frames that aren't importable yet (no backing resource).
+      return false;
     }
+  }
+
+  _watchVideoFrames() {
+    const video = this.video;
+    if (!video || typeof video.requestVideoFrameCallback !== "function") return;
+    const markDirty = () => {
+      if (this.video !== video) return;
+      this._videoFrameDirty = true;
+      this._videoFrameCallbackId = video.requestVideoFrameCallback(markDirty);
+    };
+    this._videoFrameCallbackId = video.requestVideoFrameCallback(markDirty);
+  }
+
+  _cancelVideoFrameCallback() {
+    if (
+      this.video &&
+      this._videoFrameCallbackId &&
+      typeof this.video.cancelVideoFrameCallback === "function"
+    ) {
+      this.video.cancelVideoFrameCallback(this._videoFrameCallbackId);
+    }
+    this._videoFrameCallbackId = 0;
   }
 
   _uploadHtmlFrame() {
     if (!this.htmlElement || !this.inputTexture) return;
+    if (!this._htmlFrameDirty) return false;
     const queue = this.device.queue;
     const texture = this.inputTexture;
     const width = texture.width;
@@ -396,7 +461,9 @@ export class ShaderHost {
           height,
         }
       );
-      return;
+      this._htmlFrameDirty = false;
+      recordPerf("input.htmlUpload");
+      return true;
     } catch {
       /* try legacy signatures below */
     }
@@ -405,7 +472,9 @@ export class ShaderHost {
         texture,
         premultipliedAlpha: true,
       });
-      return;
+      this._htmlFrameDirty = false;
+      recordPerf("input.htmlUpload");
+      return true;
     } catch {
       /* try older 4-arg form */
     }
@@ -414,8 +483,12 @@ export class ShaderHost {
         texture,
         premultipliedAlpha: true,
       });
+      this._htmlFrameDirty = false;
+      recordPerf("input.htmlUpload");
+      return true;
     } catch {
       // Skip until a paint snapshot exists / API is available.
+      return false;
     }
   }
 
@@ -428,7 +501,7 @@ export class ShaderHost {
     // When the RAF loop is already presenting, the next frame picks up params.
     // Forcing an extra synchronous present here hitchs the main thread and
     // cancels native range-slider drags in the properties panel.
-    if (!this.running) this.redraw();
+    if (!this._isLoopActive()) this.redraw();
   }
 
   setEffectVisible(visible) {
@@ -437,7 +510,7 @@ export class ShaderHost {
   }
 
   redraw() {
-    if (!this.ready || !this.renderFn) return;
+    if (!this.active || !this.ready || !this.renderFn) return;
     try {
       this._present();
     } catch (err) {
@@ -447,8 +520,14 @@ export class ShaderHost {
 
   async captureInputBitmap({ width, height } = {}) {
     if (!this.ready || !this.inputTexture) return null;
-    if (this.video) this._uploadVideoFrame();
-    if (this.htmlElement) this._uploadHtmlFrame();
+    if (this.video) {
+      this._videoFrameDirty = true;
+      this._uploadVideoFrame();
+    }
+    if (this.htmlElement) {
+      this._htmlFrameDirty = true;
+      this._uploadHtmlFrame();
+    }
 
     const texture = this.inputTexture;
     const srcW = texture.width;
@@ -716,13 +795,19 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
 
     this._ensurePassthroughPipeline(output.format);
-    const bindGroup = this.device.createBindGroup({
-      layout: this._passthroughBindLayout,
-      entries: [
-        { binding: 0, resource: this._passthroughSampler },
-        { binding: 1, resource: this.frame.input.createView() },
-      ],
-    });
+    if (
+      !this._passthroughBindGroup ||
+      this._passthroughInputTexture !== this.frame.input
+    ) {
+      this._passthroughBindGroup = this.device.createBindGroup({
+        layout: this._passthroughBindLayout,
+        entries: [
+          { binding: 0, resource: this._passthroughSampler },
+          { binding: 1, resource: this.frame.input.createView() },
+        ],
+      });
+      this._passthroughInputTexture = this.frame.input;
+    }
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -734,7 +819,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       ],
     });
     pass.setPipeline(this._passthroughPipeline);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, this._passthroughBindGroup);
     pass.draw(3);
     pass.end();
     this.device.queue.submit([encoder.finish()]);
@@ -742,21 +827,26 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   _present() {
+    const startedAt = perfNow();
     if (this.video) this._uploadVideoFrame();
     if (this.htmlElement) this._uploadHtmlFrame();
     this.frame.output = this.context.getCurrentTexture();
     if (!this.effectVisible) {
-      return this._presentPassthrough();
+      const output = this._presentPassthrough();
+      measurePerf("host.present", startedAt);
+      return output;
     }
     this.renderFn(this.device, this.frame);
+    measurePerf("host.present", startedAt);
     return this.frame.output;
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
-  async setModule({ setup, render }, { isFill } = {}) {
+  async setModule({ setup, render }, { isFill, isAnimated } = {}) {
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);
+    this.isAnimated = Boolean(isAnimated);
     this._teardownState();
     this.frame.frame = 0;
     this.startTime = performance.now();
@@ -771,7 +861,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let jsError = null;
     try {
       this.frame.output = this.context.getCurrentTexture();
+      const setupStartedAt = perfNow();
       if (this.setupFn) this.setupFn(this.device, this.frame);
+      measurePerf("shader.setup", setupStartedAt);
       this._present();
     } catch (err) {
       jsError = err && err.message ? err.message : String(err);
@@ -794,7 +886,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (this.running || !this.renderFn) return;
     this.running = true;
     this.lastTime = performance.now();
-    this.rafId = requestAnimationFrame(this._loopBound);
+    if (this._needsAnimationFrame()) {
+      this._scheduleLoop();
+    } else {
+      this.redraw();
+    }
   }
 
   renderFrame(time, deltaTime, frameNumber) {
@@ -811,8 +907,36 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.rafId = 0;
   }
 
+  setActive(active) {
+    this.active = Boolean(active);
+    if (!this.active) {
+      if (this.rafId) cancelAnimationFrame(this.rafId);
+      this.rafId = 0;
+      return;
+    }
+    if (this.running) {
+      this.lastTime = performance.now();
+      this._scheduleLoop();
+      if (!this._needsAnimationFrame()) this.redraw();
+    }
+  }
+
+  _needsAnimationFrame() {
+    return this.active && this.running && (this.isAnimated || Boolean(this.video));
+  }
+
+  _isLoopActive() {
+    return this._needsAnimationFrame() && Boolean(this.rafId);
+  }
+
+  _scheduleLoop() {
+    if (!this._needsAnimationFrame() || this.rafId) return;
+    this.rafId = requestAnimationFrame(this._loopBound);
+  }
+
   _loop(now) {
-    if (!this.running) return;
+    this.rafId = 0;
+    if (!this._needsAnimationFrame()) return;
     this.frame.time = now - this.startTime;
     this.frame.deltaTime = now - this.lastTime;
     this.lastTime = now;
@@ -825,11 +949,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       this.stop();
       return;
     }
-    this.rafId = requestAnimationFrame(this._loopBound);
+    this._scheduleLoop();
   }
 
   destroy() {
     this.stop();
+    clearTimeout(this._fillResizeTimer);
+    this._fillResizeTimer = 0;
     this._teardownState();
     this.clearInput();
     this.canvas.removeEventListener?.("pointermove", this._onMouse);

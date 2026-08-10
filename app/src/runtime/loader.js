@@ -1,4 +1,5 @@
 import { transform } from "sucrase";
+import { measurePerf, perfNow } from "./perf.js";
 
 // Globals the real Figma shader runtime does NOT provide. We shadow them to
 // `undefined` inside the module scope so the preview catches code that would
@@ -68,6 +69,7 @@ function makeRequire(recordProps) {
  * @throws on transpile or evaluation error (message surfaced to the editor)
  */
 export function loadModule(source) {
+  const startedAt = perfNow();
   let code;
   try {
     code = transform(source, {
@@ -112,10 +114,12 @@ export function loadModule(source) {
     throw new Error('Module has no exported `render(device, frame)` function.');
   }
 
-  return {
+  const loaded = {
     Effect: typeof Effect === "function" ? Effect : function Effect() {},
     setup: typeof setup === "function" ? setup : null,
     render,
     props: captured || {},
   };
+  measurePerf("module.compile", startedAt);
+  return loaded;
 }

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "budget": "node scripts/check-bundle-budget.mjs",
     "test": "node --test",
+    "verify": "npm test && npm run build && npm run budget",
     "preview": "vite preview"
   },
   "dependencies": {

@@ -1,7 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import AccountMenu from "./components/AccountMenu.jsx";
-import ChatPane from "./components/ChatPane.jsx";
-import CodePane from "./components/CodePane.jsx";
 import Controls from "./components/Controls.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
 import "./components/HomeNav.css";
@@ -45,6 +51,7 @@ import {
   deleteShader,
   downloadAsset,
   getAssetUrl,
+  getAssetUrls,
   getShader,
   getShaderRouteId,
   listShaders,
@@ -57,6 +64,8 @@ import {
   uploadAsset,
 } from "./services/shaders.js";
 
+const ChatPane = lazy(() => import("./components/ChatPane.jsx"));
+const CodePane = lazy(() => import("./components/CodePane.jsx"));
 
 // FigUI3 builds light-DOM internals; a stable opaque marker keeps React from
 // wiping those nodes when the parent re-renders.
@@ -65,6 +74,7 @@ const opaqueContent = { __html: "" };
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
 const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
+const INITIAL_DRAFTS = savedDrafts();
 const DEFAULT_APP_NAV_WIDTH = 240;
 const MIN_APP_NAV_WIDTH = 112;
 const MAX_APP_NAV_WIDTH = 400;
@@ -120,6 +130,44 @@ function revokeThumbnailUrl(url) {
   if (typeof url === "string" && url.startsWith("blob:")) {
     URL.revokeObjectURL(url);
   }
+}
+
+function createRafCssWriter(element, property) {
+  let rafId = 0;
+  let latest = null;
+  const apply = () => {
+    rafId = 0;
+    if (latest != null) element.style.setProperty(property, `${Math.round(latest)}px`);
+  };
+  return {
+    write(value) {
+      latest = value;
+      if (!rafId) rafId = requestAnimationFrame(apply);
+    },
+    flush() {
+      if (rafId) cancelAnimationFrame(rafId);
+      apply();
+    },
+  };
+}
+
+function groupLibraryCards(cards) {
+  const effects = cards.filter((card) => card.kind === "effect");
+  const fills = cards.filter((card) => card.kind === "fill");
+  return [
+    ...(effects.length
+      ? [
+          { key: "separator:effect", separatorLabel: "Shader effect" },
+          ...effects,
+        ]
+      : []),
+    ...(fills.length
+      ? [
+          { key: "separator:fill", separatorLabel: "Shader fill" },
+          ...fills,
+        ]
+      : []),
+  ];
 }
 
 function mergeValues(definitions, candidate = {}) {
@@ -416,7 +464,7 @@ export default function App() {
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
   const [cloudShaders, setCloudShaders] = useState([]);
-  const [drafts, setDrafts] = useState(savedDrafts);
+  const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
   const [currentShader, setCurrentShader] = useState(null);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
@@ -470,7 +518,7 @@ export default function App() {
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
     const initial = {};
-    for (const draft of savedDrafts()) {
+    for (const draft of INITIAL_DRAFTS) {
       if (draft.thumbnail?.startsWith("data:")) {
         const url = dataUrlToObjectUrl(draft.thumbnail);
         if (url) initial[draft.id] = url;
@@ -482,7 +530,7 @@ export default function App() {
   const thumbnailDataUrlsRef = useRef(null);
   if (thumbnailDataUrlsRef.current === null) {
     const initial = {};
-    for (const draft of savedDrafts()) {
+    for (const draft of INITIAL_DRAFTS) {
       if (draft.thumbnail?.startsWith("data:")) {
         initial[draft.id] = draft.thumbnail;
       }
@@ -532,10 +580,9 @@ export default function App() {
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const valuesRef = useRef(values);
-  const runningRef = useRef(running);
+  const playPreferenceRef = useRef(running);
   const inputSourceRef = useRef(inputSource);
   const inputApplyGenRef = useRef(0);
-  runningRef.current = running;
   inputSourceRef.current = inputSource;
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
@@ -564,8 +611,10 @@ export default function App() {
     isPublic,
     pendingMedia,
   };
-  const kind = detectKind(source);
-  const shaderFeatures = inferFeatures(source);
+  const kind = useMemo(() => detectKind(source), [source]);
+  const shaderFeatures = useMemo(() => inferFeatures(source), [source]);
+  const shaderFeaturesRef = useRef(shaderFeatures);
+  shaderFeaturesRef.current = shaderFeatures;
   const chatShaderKey = currentShader?.id
     ? `cloud:${currentShader.id}`
     : `preset:${presetId}`;
@@ -594,10 +643,6 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    localStorage.setItem(PLAY_STORAGE_KEY, String(running));
-  }, [running]);
-
-  useEffect(() => {
     localStorage.setItem(
       SIDEBAR_SECTIONS_STORAGE_KEY,
       JSON.stringify({ codeCollapsed, chatCollapsed })
@@ -606,7 +651,10 @@ export default function App() {
 
   useEffect(() => {
     if (user) return;
-    writeDrafts(drafts, thumbnailDataUrlsRef.current);
+    const timer = window.setTimeout(() => {
+      writeDrafts(drafts, thumbnailDataUrlsRef.current);
+    }, 500);
+    return () => window.clearTimeout(timer);
   }, [drafts, thumbnails, user]);
 
   useEffect(() => {
@@ -867,19 +915,21 @@ export default function App() {
       host
         .setModule(
           { setup: loaded.setup, render: loaded.render },
-          { isFill: detectKind(nextSource) === "fill" }
+          {
+            isFill: detectKind(nextSource) === "fill",
+            isAnimated: inferFeatures(nextSource).isAnimated,
+          }
         )
         .then((ok) => {
           if (!ok) {
-            runningRef.current = false;
             setRunning(false);
             return;
           }
           // Capture code edits only after the new module has compiled,
           // validated, and presented successfully.
           setThumbnailRefreshRevision((revision) => revision + 1);
-          // Preserve play/pause across shader switches and recompiles.
-          if (runningRef.current) {
+          // Restore the user's play/pause preference after shader switches.
+          if (playPreferenceRef.current) {
             host.start();
             setRunning(true);
           } else {
@@ -1277,14 +1327,14 @@ export default function App() {
   }, [kind, runtimeReady, clearObjectUrl, reapplyPreferredInput]);
 
   useEffect(() => {
-    if (initedRef.current || !canvasRef.current) return;
+    if (viewMode !== "editor" || initedRef.current || !canvasRef.current) return;
+    let cancelled = false;
     initedRef.current = true;
     const host = new ShaderHost(canvasRef.current, {
       onError: (message) => {
         setError(message);
         // Host stops its RAF loop on render errors — keep the play toggle in sync.
         if (message) {
-          runningRef.current = false;
           setRunning(false);
         }
       },
@@ -1294,14 +1344,38 @@ export default function App() {
     (async () => {
       try {
         await host.init();
+        if (cancelled) return;
         await restoreSample();
+        if (cancelled) return;
         compile(sourceRef.current);
         setRuntimeReady(true);
       } catch (initError) {
         setFatal(initError.message || String(initError));
       }
     })();
-  }, [compile, restoreSample]);
+    return () => {
+      cancelled = true;
+      inputApplyGenRef.current += 1;
+      if (hostRef.current === host) {
+        host.destroy();
+        hostRef.current = null;
+      }
+      initedRef.current = false;
+      setRuntimeReady(false);
+      clearObjectUrl();
+    };
+  }, [clearObjectUrl, compile, restoreSample, viewMode]);
+
+  useEffect(() => {
+    const syncVisibility = () => {
+      hostRef.current?.setActive(
+        viewMode === "editor" && document.visibilityState !== "hidden"
+      );
+    };
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
+  }, [viewMode]);
 
   useEffect(() => {
     if (!hostRef.current?.ready) return;
@@ -1320,7 +1394,6 @@ export default function App() {
     () => () => {
       window.clearTimeout(thumbnailPreviewTimerRef.current);
       clearObjectUrl();
-      hostRef.current?.destroy?.();
     },
     [clearObjectUrl]
   );
@@ -1498,21 +1571,24 @@ export default function App() {
     async (shader) => {
       setShaderRoute(shader.id);
       if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) return;
+      const fullShader = shader.source
+        ? shader
+        : { ...shader, ...(await getShader(shader.id)) };
       persistActiveDraft();
-      pendingValuesRef.current = shader.parameter_values || {};
+      pendingValuesRef.current = fullShader.parameter_values || {};
       hostRef.current?.stop();
       setError(null);
-      setCurrentShader(shader);
-      setPresetId(cloudChoiceId(shader.id));
-      setShaderName(shader.name);
-      setSource(shader.source);
-      setIsPublic(shader.is_public);
+      setCurrentShader(fullShader);
+      setPresetId(cloudChoiceId(fullShader.id));
+      setShaderName(fullShader.name);
+      setSource(fullShader.source);
+      setIsPublic(fullShader.is_public);
       setPendingMedia(null);
       setDirty(false);
       setError(null);
       if (runtimeReady) {
         try {
-          await loadMediaForShader(shader);
+          await loadMediaForShader(fullShader);
         } catch (mediaError) {
           setError(mediaError.message || String(mediaError));
         }
@@ -1532,16 +1608,13 @@ export default function App() {
       // current user's private drafts when signed in.
       const shaders = await listShaders();
       setCloudShaders(shaders);
-      const entries = await Promise.all(
-        shaders.map(async (shader) => {
-          if (!shader.thumbnail_path) return [shader.id, null];
-          try {
-            return [shader.id, await getAssetUrl(shader.thumbnail_path)];
-          } catch {
-            return [shader.id, null];
-          }
-        })
+      const urlsByPath = await getAssetUrls(
+        shaders.map((shader) => shader.thumbnail_path)
       );
+      const entries = shaders.map((shader) => [
+        shader.id,
+        urlsByPath[shader.thumbnail_path] || null,
+      ]);
       setCloudThumbnails(Object.fromEntries(entries));
     } catch (libraryError) {
       setError(libraryError.message || String(libraryError));
@@ -1928,13 +2001,6 @@ export default function App() {
 
   const previewControl = useCallback((name, value) => {
     valuesRef.current = { ...valuesRef.current, [name]: value };
-    // Most sliders commit with `change`. This idle fallback also covers
-    // controls that only emit live `input` events.
-    window.clearTimeout(thumbnailPreviewTimerRef.current);
-    thumbnailPreviewTimerRef.current = window.setTimeout(() => {
-      thumbnailPreviewTimerRef.current = 0;
-      setThumbnailRefreshRevision((revision) => revision + 1);
-    }, 450);
     // Coalesce live preview redraws to one present per frame. Synchronous
     // WebGPU redraws on every pointermove hitch the main thread and cancel
     // native range-slider drags in the properties panel.
@@ -1973,13 +2039,15 @@ export default function App() {
   const togglePlay = useCallback(() => {
     const host = hostRef.current;
     if (!host) return;
-    if (running) {
-      host.stop();
-      setRunning(false);
-    } else {
+    const next = !running;
+    playPreferenceRef.current = next;
+    localStorage.setItem(PLAY_STORAGE_KEY, String(next));
+    if (next) {
       host.start();
-      setRunning(true);
+    } else {
+      host.stop();
     }
+    setRunning(next);
   }, [running]);
 
   const pickFile = useCallback(
@@ -2017,6 +2085,29 @@ export default function App() {
     },
     [pickFile]
   );
+
+  const onSourceChange = useCallback((nextSource) => {
+    setSource(nextSource);
+    setDirty(true);
+  }, []);
+  const openSettings = useCallback(() => setSettingsOpen(true), []);
+
+  const onPreviewFile = useCallback(
+    (file) => {
+      pickFile(file).catch((dropError) =>
+        setError(dropError.message || String(dropError))
+      );
+    },
+    [pickFile]
+  );
+
+  const onDeleteLibraryCard = useCallback((card) => {
+    if (card.draft) {
+      setDeleteTarget({ draft: card.draft, name: card.name });
+    } else if (card.cloud) {
+      setDeleteTarget({ cloud: card.cloud, name: card.name });
+    }
+  }, []);
 
   const exportFiles = useCallback(() => {
     exportFigmaFiles(sourceRef.current, shaderName || "Shader");
@@ -2472,11 +2563,17 @@ export default function App() {
     ? makeShareUrl(currentShader.id)
     : window.location.href;
   const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
-  const standaloneEmbedCode = buildStandaloneEmbedCode({
-    source,
-    values,
-    kind,
-  });
+  const standaloneEmbedCode = useMemo(
+    () =>
+      embedOpen
+        ? buildStandaloneEmbedCode({
+            source,
+            values,
+            kind,
+          })
+        : "",
+    [embedOpen, kind, source, values]
+  );
   const embedCode =
     embedTab === "code" ? standaloneEmbedCode : iframeEmbedCode;
 
@@ -2550,6 +2647,7 @@ export default function App() {
       Math.min(MAX_APP_NAV_WIDTH, window.innerWidth - 420)
     );
     let finalWidth = startWidth;
+    const cssWriter = createRafCssWriter(nav, "--app-nav-width");
     handle.setPointerCapture(event.pointerId);
 
     const onPointerMove = (moveEvent) => {
@@ -2561,7 +2659,7 @@ export default function App() {
         )
       );
       finalWidth = next;
-      setAppNavWidth(Math.round(next));
+      cssWriter.write(next);
     };
 
     const onPointerUp = (upEvent) => {
@@ -2571,6 +2669,8 @@ export default function App() {
       handle.removeEventListener("pointermove", onPointerMove);
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
+      cssWriter.flush();
+      setAppNavWidth(Math.round(finalWidth));
       localStorage.setItem(
         APP_NAV_WIDTH_STORAGE_KEY,
         String(Math.round(finalWidth))
@@ -2603,6 +2703,7 @@ export default function App() {
           MIN_STACKED_SIDEBAR;
         const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, available);
         let finalHeight = startHeight;
+        const cssWriter = createRafCssWriter(viewer, "--preview-height");
         handle.setPointerCapture(event.pointerId);
 
         const onPointerMove = (moveEvent) => {
@@ -2614,7 +2715,7 @@ export default function App() {
             )
           );
           finalHeight = next;
-          setPreviewHeight(Math.round(next));
+          cssWriter.write(next);
         };
 
         const onPointerUp = (upEvent) => {
@@ -2624,6 +2725,8 @@ export default function App() {
           handle.removeEventListener("pointermove", onPointerMove);
           handle.removeEventListener("pointerup", onPointerUp);
           handle.removeEventListener("pointercancel", onPointerUp);
+          cssWriter.flush();
+          setPreviewHeight(Math.round(finalHeight));
           localStorage.setItem(
             PREVIEW_HEIGHT_STORAGE_KEY,
             String(Math.round(finalHeight))
@@ -2650,6 +2753,7 @@ export default function App() {
         MIN_PREVIEW_WIDTH;
       const maxWidth = Math.max(MIN_CODE_WIDTH, available);
       let finalWidth = startWidth;
+      const cssWriter = createRafCssWriter(viewer, "--code-width");
       handle.setPointerCapture(event.pointerId);
 
       const onPointerMove = (moveEvent) => {
@@ -2658,7 +2762,7 @@ export default function App() {
           Math.max(MIN_CODE_WIDTH, startWidth + moveEvent.clientX - startX)
         );
         finalWidth = next;
-        setCodeWidth(Math.round(next));
+        cssWriter.write(next);
       };
 
       const onPointerUp = (upEvent) => {
@@ -2668,6 +2772,8 @@ export default function App() {
         handle.removeEventListener("pointermove", onPointerMove);
         handle.removeEventListener("pointerup", onPointerUp);
         handle.removeEventListener("pointercancel", onPointerUp);
+        cssWriter.flush();
+        setCodeWidth(Math.round(finalWidth));
         localStorage.setItem(
           CODE_WIDTH_STORAGE_KEY,
           String(Math.round(finalWidth))
@@ -2698,6 +2804,7 @@ export default function App() {
       sidebarRect.height - handleHeight - MIN_CODE_EDITOR_HEIGHT
     );
     let finalHeight = startHeight;
+    const cssWriter = createRafCssWriter(viewerRef.current, "--chat-height");
     handle.setPointerCapture(event.pointerId);
 
     const onPointerMove = (moveEvent) => {
@@ -2707,7 +2814,7 @@ export default function App() {
         Math.max(MIN_CHAT_HEIGHT, startHeight + (startY - moveEvent.clientY))
       );
       finalHeight = next;
-      setChatHeight(Math.round(next));
+      cssWriter.write(next);
     };
 
     const onPointerUp = (upEvent) => {
@@ -2717,6 +2824,8 @@ export default function App() {
       handle.removeEventListener("pointermove", onPointerMove);
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
+      cssWriter.flush();
+      setChatHeight(Math.round(finalHeight));
       localStorage.setItem(
         CHAT_HEIGHT_STORAGE_KEY,
         String(Math.round(finalHeight))
@@ -2764,72 +2873,72 @@ export default function App() {
         .catch(() => {
           // Keep the previous thumbnail if WebGPU capture fails.
         });
-    }, 450);
+    }, 1200);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [
-    values,
-    presetId,
-    previewRevision,
-    thumbnailRefreshRevision,
-    runtimeReady,
-  ]);
+  }, [presetId, previewRevision, thumbnailRefreshRevision, runtimeReady, viewMode]);
 
-  const libraryCards = buildShaderLibraryCards({
-    drafts: user ? [] : drafts,
-    cloudShaders,
-    thumbnails,
-    cloudThumbnails,
-    liveNames: {
-      [presetId]: shaderName,
-    },
-    user,
-  });
-  const publishedAuthors = [
-    ...new Map(
-      libraryCards
-        .filter((card) => card.origin === "public" && card.authorId)
-        .map((card) => [
-          card.authorId,
-          { value: card.authorId, label: card.authorLabel },
-        ])
-    ).values(),
-  ].sort((a, b) => a.label.localeCompare(b.label));
-  const groupLibraryCards = (cards) => {
-    const effects = cards.filter((card) => card.kind === "effect");
-    const fills = cards.filter((card) => card.kind === "fill");
-    return [
-      ...(effects.length
-        ? [
-            { key: "separator:effect", separatorLabel: "Shader effect" },
-            ...effects,
-          ]
-        : []),
-      ...(fills.length
-        ? [
-            { key: "separator:fill", separatorLabel: "Shader fill" },
-            ...fills,
-          ]
-        : []),
-    ];
-  };
-  const groupedHomeCards = groupLibraryCards(
-    filterShaderLibraryCards(libraryCards, {
-      query: homeQuery,
-      kind: homeKind,
-      origin: homeOrigin,
-      author: homeAuthor,
-    })
+  const libraryCards = useMemo(
+    () =>
+      buildShaderLibraryCards({
+        drafts: user ? [] : drafts,
+        cloudShaders,
+        thumbnails,
+        cloudThumbnails,
+        liveNames: {
+          [presetId]: shaderName,
+        },
+        user,
+      }),
+    [
+      cloudShaders,
+      cloudThumbnails,
+      drafts,
+      presetId,
+      shaderName,
+      thumbnails,
+      user,
+    ]
   );
-  const groupedEditorCards = groupLibraryCards(
-    filterShaderLibraryCards(libraryCards, {
-      query: editorQuery,
-      kind: editorKind,
-      origin: editorOrigin,
-      author: editorAuthor,
-    })
+  const publishedAuthors = useMemo(
+    () =>
+      [
+        ...new Map(
+          libraryCards
+            .filter((card) => card.origin === "public" && card.authorId)
+            .map((card) => [
+              card.authorId,
+              { value: card.authorId, label: card.authorLabel },
+            ])
+        ).values(),
+      ].sort((a, b) => a.label.localeCompare(b.label)),
+    [libraryCards]
+  );
+  const groupedHomeCards = useMemo(
+    () =>
+      groupLibraryCards(
+        filterShaderLibraryCards(libraryCards, {
+          query: homeQuery,
+          kind: homeKind,
+          origin: homeOrigin,
+          author: homeAuthor,
+        })
+      ),
+    [homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
+  );
+  const groupedEditorCards = useMemo(
+    () =>
+      groupLibraryCards(
+        filterShaderLibraryCards(libraryCards, {
+          query: editorQuery,
+          kind: editorKind,
+          origin: editorOrigin,
+          author: editorAuthor,
+        })
+      ),
+    [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
 
   const propertiesPanel = (
@@ -3071,7 +3180,8 @@ export default function App() {
       </nav>
       )}
 
-      <div className="editor-view" hidden={viewMode !== "editor"}>
+      {viewMode === "editor" && (
+      <div className="editor-view">
         <nav
           className="app-nav"
           style={{ "--app-nav-width": `${appNavWidth}px` }}
@@ -3203,13 +3313,7 @@ export default function App() {
             value={presetId}
             cards={groupedEditorCards}
             onPublish={openPublishForCard}
-            onDelete={(card) => {
-              if (card.draft) {
-                setDeleteTarget({ draft: card.draft, name: card.name });
-              } else if (card.cloud) {
-                setDeleteTarget({ cloud: card.cloud, name: card.name });
-              }
-            }}
+            onDelete={onDeleteLibraryCard}
           />
         </nav>
 
@@ -3426,14 +3530,15 @@ export default function App() {
               </hstack>
             </fig-header>
             <div className="code-editor" hidden={codeCollapsed}>
-              <CodePane
-                source={source}
-                theme={theme}
-                onSourceChange={(nextSource) => {
-                  setSource(nextSource);
-                  setDirty(true);
-                }}
-              />
+              {!codeCollapsed && (
+                <Suspense fallback={null}>
+                  <CodePane
+                    source={source}
+                    theme={theme}
+                    onSourceChange={onSourceChange}
+                  />
+                </Suspense>
+              )}
             </div>
           </section>
 
@@ -3509,23 +3614,23 @@ export default function App() {
                 </fig-tooltip>
               </hstack>
             </fig-header>
-            <ChatPane
-              ref={chatPaneRef}
-              hidden={chatCollapsed}
-              source={source}
-              kind={kind}
-              fileName={shaderModuleFileName(presetId, shaderName)}
-              shaderKey={chatShaderKey}
-              features={shaderFeatures}
-              user={user}
-              onApplySource={(nextSource) => {
-                setSource(nextSource);
-                setDirty(true);
-              }}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onNotice={showNotice}
-              onCanClearChange={setCanClearChat}
-            />
+            {!chatCollapsed && (
+              <Suspense fallback={null}>
+                <ChatPane
+                  ref={chatPaneRef}
+                  sourceRef={sourceRef}
+                  kind={kind}
+                  fileName={shaderModuleFileName(presetId, shaderName)}
+                  shaderKey={chatShaderKey}
+                  featuresRef={shaderFeaturesRef}
+                  user={user}
+                  onApplySource={onSourceChange}
+                  onOpenSettings={openSettings}
+                  onNotice={showNotice}
+                  onCanClearChange={setCanClearChat}
+                />
+              </Suspense>
+            )}
           </section>
         </div>
 
@@ -3599,11 +3704,7 @@ export default function App() {
               inputSource={kind === "effect" ? inputSource : "image"}
               htmlInputRef={htmlInputRef}
               onStageSize={onStageSize}
-              onPickFile={(file) =>
-                pickFile(file).catch((dropError) =>
-                  setError(dropError.message || String(dropError))
-                )
-              }
+              onPickFile={onPreviewFile}
               onDropError={setError}
             />
           )}
@@ -3708,6 +3809,7 @@ export default function App() {
         {propertiesPanel}
       </main>
       </div>
+      )}
 
       <dialog
         is="fig-dialog"

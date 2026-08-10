@@ -237,6 +237,7 @@ fn shade(ro: vec3f, rd: vec3f, lightPos: vec3f) -> vec4f {
     size: 64,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   })
+  frame.state.uniformData = new Float32Array(16)
 }
 
 export function render(device, frame) {
@@ -285,23 +286,23 @@ export function render(device, frame) {
   var w = frame.output.width
   var h = frame.output.height
 
-  device.queue.writeBuffer(
-    frame.state.uniformBuf,
-    0,
-    new Float32Array([
-      shadowI, lightH, shadowS, baseGray,
-      edgeDark, edgeLight, w, h,
-      showShadow, sph.x, sph.y, sph.radius * Math.min(w, h) / 100.0,
-      light.x, light.y, light.radius, 0,
-    ])
-  )
+  frame.state.uniformData.set([
+    shadowI, lightH, shadowS, baseGray,
+    edgeDark, edgeLight, w, h,
+    showShadow, sph.x, sph.y, sph.radius * Math.min(w, h) / 100.0,
+    light.x, light.y, light.radius, 0,
+  ])
+  device.queue.writeBuffer(frame.state.uniformBuf, 0, frame.state.uniformData)
 
-  var bindGroup = device.createBindGroup({
-    layout: frame.state.pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: frame.state.uniformBuf } },
-    ],
-  })
+  if (!frame.state.bindGroup || frame.state.bindGroupPipeline !== frame.state.pipeline) {
+    frame.state.bindGroup = device.createBindGroup({
+      layout: frame.state.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: frame.state.uniformBuf } },
+      ],
+    })
+    frame.state.bindGroupPipeline = frame.state.pipeline
+  }
 
   var encoder = device.createCommandEncoder()
   var pass = encoder.beginRenderPass({
@@ -313,7 +314,7 @@ export function render(device, frame) {
     }],
   })
   pass.setPipeline(frame.state.pipeline)
-  pass.setBindGroup(0, bindGroup)
+  pass.setBindGroup(0, frame.state.bindGroup)
   pass.setVertexBuffer(0, frame.state.quad)
   pass.draw(6)
   pass.end()

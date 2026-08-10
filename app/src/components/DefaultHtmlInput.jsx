@@ -17,7 +17,7 @@ export default function DefaultHtmlInput() {
     let active = true;
     const paint = () => {
       if (!active) return;
-      canvas.requestPaint();
+      if (document.visibilityState !== "hidden") canvas.requestPaint();
       if (typeof video.requestVideoFrameCallback === "function") {
         video.requestVideoFrameCallback(paint);
       }
@@ -30,7 +30,9 @@ export default function DefaultHtmlInput() {
       };
     }
 
-    const id = window.setInterval(() => canvas.requestPaint(), 1000 / 30);
+    const id = window.setInterval(() => {
+      if (document.visibilityState !== "hidden") canvas.requestPaint();
+    }, 1000 / 30);
     return () => {
       active = false;
       window.clearInterval(id);

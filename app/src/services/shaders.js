@@ -42,7 +42,9 @@ export async function listShaders() {
   const shaders = unwrap(
     await client
       .from("shaders")
-      .select("*")
+      .select(
+        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, created_at, updated_at"
+      )
       .order("updated_at", { ascending: false })
   );
   return attachAuthorProfiles(client, shaders);
@@ -154,6 +156,22 @@ export async function getAssetUrl(path, expiresIn = 3600) {
       .createSignedUrl(path, expiresIn)
   );
   return data.signedUrl;
+}
+
+export async function getAssetUrls(paths, expiresIn = 3600) {
+  const filtered = [...new Set(paths.filter(Boolean))];
+  if (!filtered.length) return {};
+  const client = requireClient();
+  const rows = unwrap(
+    await client.storage
+      .from(ASSET_BUCKET)
+      .createSignedUrls(filtered, expiresIn)
+  );
+  return Object.fromEntries(
+    rows
+      .filter((row) => row?.path && row?.signedUrl)
+      .map((row) => [row.path, row.signedUrl])
+  );
 }
 
 const SHADER_ROUTE_PREFIX = "shader/";

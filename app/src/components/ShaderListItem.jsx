@@ -1,8 +1,9 @@
+import { memo } from "react";
 import "./ShaderListItem.css";
 
 const opaqueContent = { __html: "" };
 
-export default function ShaderListItem({
+function ShaderListItem({
   src,
   label,
   onPublish,
@@ -50,3 +51,5 @@ export default function ShaderListItem({
     </div>
   );
 }
+
+export default memo(ShaderListItem);

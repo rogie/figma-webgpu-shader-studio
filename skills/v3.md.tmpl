@@ -393,29 +393,37 @@ frame.state.uniformBuf = device.createBuffer({
   size: 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 })
+frame.state.uniformData = new Float32Array(4)
 
-device.queue.writeBuffer(
-  frame.state.uniformBuf,
-  0,
-  new Float32Array([{{ if .animations }}frame.time, intensity, amount, 0{{ else }}intensity, amount, 0, 0{{ end }}]),
-)
+frame.state.uniformData.set([{{ if .animations }}frame.time, intensity, amount, 0{{ else }}intensity, amount, 0, 0{{ end }}])
+device.queue.writeBuffer(frame.state.uniformBuf, 0, frame.state.uniformData)
 ```
 
 Prefer uniform structs made of `vec4f` slots.
 
 ### Bind groups
 
-Build each frame when binding `frame.input`, because input textures can be recreated.
+Cache bind groups while their pipeline, buffers, samplers, and input texture identities
+are unchanged. Recreate after any of those resources changes; video frames update the
+contents of the same input texture and do not require a new bind group.
 
 ```javascript
-var bindGroup = device.createBindGroup({
-  layout: frame.state.pipeline.getBindGroupLayout(0),
-  entries: [
-    { binding: 0, resource: { buffer: frame.state.uniformBuf } },
-    { binding: 1, resource: frame.state.sampler },
-    { binding: 2, resource: frame.input.createView() },
-  ],
-})
+if (
+  !frame.state.bindGroup ||
+  frame.state.bindGroupPipeline !== frame.state.pipeline ||
+  frame.state.bindGroupInput !== frame.input
+) {
+  frame.state.bindGroup = device.createBindGroup({
+    layout: frame.state.pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: frame.state.uniformBuf } },
+      { binding: 1, resource: frame.state.sampler },
+      { binding: 2, resource: frame.input.createView() },
+    ],
+  })
+  frame.state.bindGroupPipeline = frame.state.pipeline
+  frame.state.bindGroupInput = frame.input
+}
 ```
 
 ### Render pass

@@ -1,6 +1,7 @@
 import {
   Fragment,
   forwardRef,
+  memo,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -24,7 +25,6 @@ import {
   DEFAULT_CHAT_MODEL,
   findChatModel,
 } from "../lib/chatModels.js";
-import { getChatSkillContext } from "../lib/chatSkills.js";
 import {
   loadChatThreads,
   saveChatThreads,
@@ -36,6 +36,7 @@ import {
 import { toApiMessages } from "../lib/chatPayload.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import { streamChat } from "../services/chat.js";
+import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
@@ -93,11 +94,11 @@ function pruneEmptyAssistants(thread) {
 
 const ChatPane = forwardRef(function ChatPane(
   {
-    source,
+    sourceRef,
     kind,
     fileName,
     shaderKey,
-    features,
+    featuresRef,
     user,
     onApplySource,
     onOpenSettings,
@@ -121,6 +122,8 @@ const ChatPane = forwardRef(function ChatPane(
   const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
   const pendingAttachmentsRef = useRef(null);
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
 
   const threadId = messageKey(shaderKey);
   const messages = pruneEmptyAssistants(threads[threadId] || []);
@@ -160,8 +163,16 @@ const ChatPane = forwardRef(function ChatPane(
   }, [model]);
 
   useEffect(() => {
-    saveChatThreads(threads);
+    const timer = window.setTimeout(() => saveChatThreads(threads), 400);
+    return () => window.clearTimeout(timer);
   }, [threads]);
+
+  useEffect(
+    () => () => {
+      saveChatThreads(threadsRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     setThreads((prev) => {
@@ -325,6 +336,14 @@ const ChatPane = forwardRef(function ChatPane(
       return;
     }
 
+    let skills;
+    try {
+      skills = (await import("../lib/chatSkills.js")).getChatSkillContext();
+    } catch (skillError) {
+      setError(skillError.message || "Unable to load shader authoring guidance.");
+      return;
+    }
+
     setError("");
     setDraft("");
     const currentAttachments = attachments;
@@ -366,7 +385,10 @@ const ChatPane = forwardRef(function ChatPane(
     let sawError = false;
     let lastApplied = null;
     let didPushUndo = false;
-    const baselineSource = source;
+    const baselineSource = sourceRef.current;
+    const features = featuresRef.current;
+    let lastStreamUiAt = 0;
+    let lastValidationAt = 0;
 
     const updateLastAssistant = (patch) => {
       updateThread((current) => {
@@ -411,7 +433,9 @@ const ChatPane = forwardRef(function ChatPane(
       const moduleSource = extractModuleSource(text, { allowIncomplete });
       if (!moduleSource || moduleSource === lastApplied) return false;
       if (moduleSource === baselineSource && !didPushUndo) return false;
+      const validationStartedAt = perfNow();
       const check = validateModuleSource(moduleSource);
+      measurePerf("chat.validateModule", validationStartedAt);
       if (!check.ok) return false;
       if (!didPushUndo) {
         undoStackRef.current.push(baselineSource);
@@ -472,7 +496,7 @@ const ChatPane = forwardRef(function ChatPane(
           kind,
           fileName,
           features,
-          skills: getChatSkillContext(),
+          skills,
           signal: controller.signal,
         })) {
           if (event.type === "error") {
@@ -489,6 +513,9 @@ const ChatPane = forwardRef(function ChatPane(
           if (event.type !== "delta") continue;
           repairedText += event.text;
           const snapshot = repairedText;
+          const now = performance.now();
+          if (now - lastStreamUiAt < 50) continue;
+          lastStreamUiAt = now;
           updateThread((current) => {
             const next = [...current];
             const last = next[next.length - 1];
@@ -537,30 +564,37 @@ const ChatPane = forwardRef(function ChatPane(
         kind,
         fileName,
         features,
-        skills: getChatSkillContext(),
+        skills,
         signal: controller.signal,
       })) {
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
+          const now = performance.now();
           const writingModule = Boolean(
             extractModuleSource(snapshot, { allowIncomplete: true })
           );
-          updateThread((current) => {
-            const next = [...current];
-            const last = next[next.length - 1];
-            if (last?.role === "assistant") {
-              next[next.length - 1] = {
-                ...last,
-                content: snapshot,
-                pending: true,
-                applied: Boolean(last.applied),
-                phase: writingModule ? "writing" : "responding",
-              };
-            }
-            return next;
-          });
-          tryApplyModule(snapshot, { allowIncomplete: false });
+          if (now - lastStreamUiAt >= 50) {
+            lastStreamUiAt = now;
+            updateThread((current) => {
+              const next = [...current];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = {
+                  ...last,
+                  content: snapshot,
+                  pending: true,
+                  applied: Boolean(last.applied),
+                  phase: writingModule ? "writing" : "responding",
+                };
+              }
+              return next;
+            });
+          }
+          if (now - lastValidationAt >= 150) {
+            lastValidationAt = now;
+            tryApplyModule(snapshot, { allowIncomplete: false });
+          }
         } else if (event.type === "status") {
           updateLastAssistant({ phase: event.phase });
         } else if (event.type === "done") {
@@ -866,4 +900,4 @@ const ChatPane = forwardRef(function ChatPane(
   );
 });
 
-export default ChatPane;
+export default memo(ChatPane);

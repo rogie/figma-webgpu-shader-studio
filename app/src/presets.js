@@ -51,6 +51,7 @@ struct VsOut { @builtin(position) position: vec4f, @location(0) uv: vec2f };
     size: 16,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   })
+  frame.state.uniformData = new Float32Array(4)
   frame.state.sampler = device.createSampler({ magFilter: "linear", minFilter: "linear" })
 }
 
@@ -73,23 +74,28 @@ export function render(device, frame) {
     s.pipelineFormat = frame.output.format
   }
 
-  device.queue.writeBuffer(s.uniformBuf, 0, new Float32Array([frame.params.tint ?? 0, 0, 0, 0]))
+  s.uniformData.set([frame.params.tint ?? 0, 0, 0, 0])
+  device.queue.writeBuffer(s.uniformBuf, 0, s.uniformData)
 
-  var bindGroup = device.createBindGroup({
-    layout: s.pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: s.uniformBuf } },
-      { binding: 1, resource: s.sampler },
-      { binding: 2, resource: frame.input.createView() },
-    ],
-  })
+  if (!s.bindGroup || s.bindGroupPipeline !== s.pipeline || s.bindGroupInput !== frame.input) {
+    s.bindGroup = device.createBindGroup({
+      layout: s.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: s.uniformBuf } },
+        { binding: 1, resource: s.sampler },
+        { binding: 2, resource: frame.input.createView() },
+      ],
+    })
+    s.bindGroupPipeline = s.pipeline
+    s.bindGroupInput = frame.input
+  }
 
   var encoder = device.createCommandEncoder()
   var pass = encoder.beginRenderPass({
     colorAttachments: [{ view: frame.output.createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
   })
   pass.setPipeline(s.pipeline)
-  pass.setBindGroup(0, bindGroup)
+  pass.setBindGroup(0, s.bindGroup)
   pass.setVertexBuffer(0, s.quad)
   pass.draw(6)
   pass.end()
@@ -145,6 +151,7 @@ struct VsOut { @builtin(position) position: vec4f, @location(0) uv: vec2f };
   frame.state.quad.unmap()
 
   frame.state.uniformBuf = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST })
+  frame.state.uniformData = new Float32Array(4)
 }
 
 export function render(device, frame) {
@@ -165,24 +172,28 @@ export function render(device, frame) {
     s.pipelineFormat = frame.output.format
   }
 
-  device.queue.writeBuffer(s.uniformBuf, 0, new Float32Array([
+  s.uniformData.set([
     frame.params.scale ?? 1,
     (frame.time ?? 0) * 0.001,
     0,
     0,
-  ]))
+  ])
+  device.queue.writeBuffer(s.uniformBuf, 0, s.uniformData)
 
-  var bindGroup = device.createBindGroup({
-    layout: s.pipeline.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: { buffer: s.uniformBuf } }],
-  })
+  if (!s.bindGroup || s.bindGroupPipeline !== s.pipeline) {
+    s.bindGroup = device.createBindGroup({
+      layout: s.pipeline.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: s.uniformBuf } }],
+    })
+    s.bindGroupPipeline = s.pipeline
+  }
 
   var encoder = device.createCommandEncoder()
   var pass = encoder.beginRenderPass({
     colorAttachments: [{ view: frame.output.createView(), loadOp: "clear", clearValue: { r: 0, g: 0, b: 0, a: 0 }, storeOp: "store" }],
   })
   pass.setPipeline(s.pipeline)
-  pass.setBindGroup(0, bindGroup)
+  pass.setBindGroup(0, s.bindGroup)
   pass.setVertexBuffer(0, s.quad)
   pass.draw(6)
   pass.end()
