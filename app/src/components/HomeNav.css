@@ -44,21 +44,29 @@
     width: 100%;
     margin-inline: 0;
     padding-inline: var(--fig-chooser-inline-margin);
+    padding-bottom: var(--spacer-3);
     overflow-x: hidden;
     align-content: start;
     grid-auto-rows: max-content;
 
     > fig-separator {
+      --fig-separator-label-color: var(--figma-color-text);
       position: sticky;
       top: 0;
       z-index: 3;
       grid-column: 1 / -1;
       width: calc(100% + var(--fig-chooser-inline-margin) * 2);
       margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
+      margin-bottom: calc(-1 * var(--spacer-2));
       background: var(--figma-color-bg);
+      font-size: var(--body-large-fontSize);
 
       &:first-of-type::before {
         display: none;
+      }
+
+      &[label]:not([label=""])::after {
+        padding: var(--spacer-2);
       }
     }
 
