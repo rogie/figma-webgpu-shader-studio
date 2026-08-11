@@ -170,13 +170,41 @@ function isSymmetricDeltaRange(min, max) {
   );
 }
 
+function isOpacityPercentRange(name, min, max) {
+  const key = String(name || "").toLowerCase();
+  return (
+    (key === "opacity" || key === "alpha") &&
+    Number.isFinite(min) &&
+    Number.isFinite(max) &&
+    min === 0 &&
+    max === 100
+  );
+}
+
+function stepCountBetween(min, max, step) {
+  if (!(Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(step))) {
+    return Infinity;
+  }
+  if (!(step > 0) || !(max > min)) return Infinity;
+  return (max - min) / step;
+}
+
+function sliderTypeForProperty(name, min, max, step) {
+  if (isOpacityPercentRange(name, min, max)) return "opacity";
+  if (stepCountBetween(min, max, step) < 16) return "stepper";
+  if (isSymmetricDeltaRange(min, max)) return "delta";
+  return null;
+}
+
 function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   const sliderRef = useRef(null);
   const draggingRef = useRef(false);
   const latestValue = value ?? def.defaultValue ?? 0;
   const min = def.min ?? 0;
   const max = def.max ?? 1;
-  const deltaVariant = isSymmetricDeltaRange(min, max);
+  const step = def.step ?? 0.01;
+  const sliderType = sliderTypeForProperty(name, min, max, step);
+  const units = sliderType === "opacity" ? "%" : def.unit || "";
 
   useEffect(() => {
     const slider = sliderRef.current;
@@ -233,10 +261,10 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
       default={def.defaultValue}
       min={min}
       max={max}
-      step={def.step ?? 0.01}
-      units={def.unit || ""}
+      step={step}
+      units={units}
       text="true"
-      {...(deltaVariant ? { type: "delta" } : {})}
+      {...(sliderType ? { type: sliderType } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
