@@ -61,6 +61,7 @@ export class ShaderHost {
     this.rafId = 0;
     this.startTime = 0;
     this.lastTime = 0;
+    this._playbackGeneration = 0;
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
@@ -604,6 +605,7 @@ export class ShaderHost {
     if (!this.renderFn) return null;
 
     const wasRunning = this.running;
+    const playbackGeneration = this._playbackGeneration;
     let readbackBuffer = null;
     try {
       if (wasRunning) this.stop();
@@ -668,7 +670,15 @@ export class ShaderHost {
           /* ignore */
         }
       }
-      if (wasRunning && shouldResume()) this.start();
+      // Resume from the caller's play intent when this capture still belongs to
+      // the current module. A newer setModule bumps the generation so stale
+      // captures overlapping a shader switch do not restart the old loop.
+      if (
+        shouldResume() &&
+        playbackGeneration === this._playbackGeneration
+      ) {
+        this.start();
+      }
     }
   }
 
@@ -854,6 +864,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
   async setModule({ setup, render }, { isFill, isAnimated, usesMouse } = {}) {
+    this._playbackGeneration += 1;
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);

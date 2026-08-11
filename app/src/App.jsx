@@ -1349,9 +1349,9 @@ export default function App() {
     const host = new ShaderHost(canvasRef.current, {
       onError: (message) => {
         setError(message);
-        // Host stops its RAF loop on render errors — keep the play toggle in sync.
+        // Host stops its RAF loop on render errors — pause the current
+        // preview, but keep the user's play preference for the next shader.
         if (message) {
-          playPreferenceRef.current = false;
           setRunning(false);
         }
       },
@@ -1462,6 +1462,7 @@ export default function App() {
       persistActiveDraft();
       pendingValuesRef.current = draft.values || {};
       hostRef.current?.stop();
+      setRunning(playPreferenceRef.current);
       setError(null);
       setCurrentShader(null);
       setPresetId(draft.id);
@@ -1522,6 +1523,7 @@ export default function App() {
         });
         pendingValuesRef.current = {};
         hostRef.current?.stop();
+        setRunning(playPreferenceRef.current);
         setError(null);
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
@@ -1547,6 +1549,7 @@ export default function App() {
       setDrafts((current) => [draft, ...current]);
       pendingValuesRef.current = {};
       hostRef.current?.stop();
+      setRunning(playPreferenceRef.current);
       setError(null);
       setCurrentShader(null);
       setPresetId(id);
@@ -1583,6 +1586,7 @@ export default function App() {
       persistActiveDraft();
       pendingValuesRef.current = fullShader.parameter_values || {};
       hostRef.current?.stop();
+      setRunning(playPreferenceRef.current);
       setError(null);
       setCurrentShader(fullShader);
       setPresetId(cloudChoiceId(fullShader.id));
@@ -1778,6 +1782,7 @@ export default function App() {
       persistActiveDraft();
       pendingValuesRef.current = {};
       hostRef.current?.stop();
+      setRunning(playPreferenceRef.current);
       setError(null);
       setCurrentShader(null);
       setPresetId(preset.id);
