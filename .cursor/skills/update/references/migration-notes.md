@@ -11,6 +11,10 @@ Replace ad-hoc `fig-field` + primitive pairings in the properties panel with pro
 
 Event handling: listen on the propskit element for bubbling `input`/`change`; detail shape varies by control (see existing handlers in `Controls.jsx`).
 
+From 6.38+, `propskit-slider` supports drag-scrubbing on the numeric field and sets
+`data-number-scrubbing` while active. Mirror the existing `data-elastic-dragging`
+guard and skip React `value` attribute writes during that scrub.
+
 ## Chat attachments (fig-lab)
 
 Pending composer attachments belong **inside** `fig-ai-prompt`, above the textarea:

@@ -245,6 +245,7 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
     if (!slider || draggingRef.current) return;
     if (slider.matches(":focus-within")) return;
     if (slider.hasAttribute("data-elastic-dragging")) return;
+    if (slider.hasAttribute("data-number-scrubbing")) return;
     const current = Number(slider.getAttribute("value"));
     if (Number.isFinite(current) && current === Number(latestValue)) return;
     const next = String(latestValue);
