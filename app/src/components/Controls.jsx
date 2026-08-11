@@ -160,10 +160,23 @@ function PropskitTextControl({ name, def, value, onChange }) {
   );
 }
 
+function isSymmetricDeltaRange(min, max) {
+  return (
+    Number.isFinite(min) &&
+    Number.isFinite(max) &&
+    min < 0 &&
+    max > 0 &&
+    min === -max
+  );
+}
+
 function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   const sliderRef = useRef(null);
   const draggingRef = useRef(false);
   const latestValue = value ?? def.defaultValue ?? 0;
+  const min = def.min ?? 0;
+  const max = def.max ?? 1;
+  const deltaVariant = isSymmetricDeltaRange(min, max);
 
   useEffect(() => {
     const slider = sliderRef.current;
@@ -218,11 +231,12 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
       direction="horizontal"
       size="large"
       default={def.defaultValue}
-      min={def.min ?? 0}
-      max={def.max ?? 1}
+      min={min}
+      max={max}
       step={def.step ?? 0.01}
       units={def.unit || ""}
       text="true"
+      {...(deltaVariant ? { type: "delta" } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );

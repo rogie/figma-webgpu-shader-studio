@@ -8,6 +8,41 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
 
+export async function listAvailableProviderModels(
+  provider,
+  apiKey,
+  { signal } = {}
+) {
+  if (!isSupabaseConfigured || !apiKey?.trim()) return [];
+
+  const response = await fetch(`${supabaseUrl}/functions/v1/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: publishableKey,
+      Authorization: `Bearer ${publishableKey}`,
+      "x-user-api-key": apiKey.trim(),
+    },
+    body: JSON.stringify({ action: "list-models", provider }),
+    signal,
+  });
+
+  if (!response.ok) {
+    let message = `${provider} model discovery failed (${response.status})`;
+    try {
+      const json = await response.json();
+      if (typeof json?.error === "string") message = json.error;
+      else if (json?.error?.message) message = String(json.error.message);
+    } catch {
+      // Keep the status-based message.
+    }
+    throw new Error(message);
+  }
+
+  const payload = await response.json();
+  return Array.isArray(payload?.models) ? payload.models : [];
+}
+
 /**
  * Stream a chat completion via the Supabase Edge Function proxy.
  * Yields { type: "status"|"delta"|"done"|"error", phase?, text?, message? }.

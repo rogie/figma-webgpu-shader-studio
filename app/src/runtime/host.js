@@ -22,6 +22,7 @@ export class ShaderHost {
     this.renderFn = null;
     this.isFill = false;
     this.isAnimated = false;
+    this.usesMouse = false;
     this.effectVisible = true;
     this.active = true;
 
@@ -62,6 +63,7 @@ export class ShaderHost {
     this.lastTime = 0;
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
+    this._onMouseLeave = this._onMouseLeave.bind(this);
   }
 
   async init() {
@@ -95,9 +97,7 @@ export class ShaderHost {
     });
 
     this.canvas.addEventListener?.("pointermove", this._onMouse);
-    this.canvas.addEventListener?.("pointerleave", () => {
-      this.frame.mousePosition = { x: 0, y: 0 };
-    });
+    this.canvas.addEventListener?.("pointerleave", this._onMouseLeave);
     this.ready = true;
     measurePerf("host.init", startedAt);
   }
@@ -110,6 +110,16 @@ export class ShaderHost {
       x: (e.clientX - rect.left) * sx,
       y: (e.clientY - rect.top) * sy,
     };
+    this._redrawForMouse();
+  }
+
+  _onMouseLeave() {
+    this.frame.mousePosition = { x: 0, y: 0 };
+    this._redrawForMouse();
+  }
+
+  _redrawForMouse() {
+    if (this.usesMouse && !this._isLoopActive()) this.redraw();
   }
 
   /**
@@ -588,6 +598,7 @@ export class ShaderHost {
     height = 512,
     type = "image/webp",
     quality = 0.85,
+    shouldResume = () => true,
   } = {}) {
     if (!this.ready || !this.canvas?.width || !this.canvas?.height) return null;
     if (!this.renderFn) return null;
@@ -657,7 +668,7 @@ export class ShaderHost {
           /* ignore */
         }
       }
-      if (wasRunning) this.start();
+      if (wasRunning && shouldResume()) this.start();
     }
   }
 
@@ -842,11 +853,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
-  async setModule({ setup, render }, { isFill, isAnimated } = {}) {
+  async setModule({ setup, render }, { isFill, isAnimated, usesMouse } = {}) {
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);
     this.isAnimated = Boolean(isAnimated);
+    this.usesMouse = Boolean(usesMouse);
     this._teardownState();
     this.frame.frame = 0;
     this.startTime = performance.now();
@@ -883,7 +895,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   start() {
-    if (this.running || !this.renderFn) return;
+    if (!this.renderFn) return;
     this.running = true;
     this.lastTime = performance.now();
     if (this._needsAnimationFrame()) {
@@ -922,7 +934,10 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   _needsAnimationFrame() {
-    return this.active && this.running && (this.isAnimated || Boolean(this.video));
+    // Play is an explicit request to advance the shader every frame. Do not
+    // gate it on source inspection: valid modules can alias or destructure
+    // frame time in ways inferFeatures() cannot reliably detect.
+    return this.active && this.running;
   }
 
   _isLoopActive() {
@@ -959,6 +974,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._teardownState();
     this.clearInput();
     this.canvas.removeEventListener?.("pointermove", this._onMouse);
+    this.canvas.removeEventListener?.("pointerleave", this._onMouseLeave);
     if (this.device) {
       try {
         this.device.destroy();

@@ -1,0 +1,129 @@
+.streaming-code-block {
+  min-width: 0;
+  margin-top: var(--spacer-2);
+  padding: 0;
+  overflow: hidden;
+  color: var(--figma-color-text);
+  border-radius: var(--radius-medium);
+
+  &[open]:not([open="false"]),
+  &[data-pending="true"] {
+    outline: 1px solid var(--figma-color-bordertranslucent);
+    outline-offset: -1px;
+  }
+
+  &[data-pending="true"] .streaming-code-source {
+    overflow: hidden;
+  }
+
+  & .streaming-code-header {
+    background: var(--figma-color-bg-secondary);
+  }
+
+  & .streaming-code-filename {
+    overflow: hidden;
+    font-weight: var(--body-medium-strong-fontWeight);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  & fig-spinner.streaming-code-status {
+    color: var(--figma-color-text-secondary);
+  }
+
+  & .streaming-code-status[name="checkmark"] {
+    margin: var(--spacer-1);
+    margin-right: calc(-1 * var(--spacer-1));
+    color: var(--figma-color-text-tertiary);
+  }
+
+  & .streaming-code-status[name="hidden"] {
+    color: var(--figma-color-text-tertiary);
+  }
+
+  & .streaming-code-status {
+    margin-right: calc(-1 * var(--spacer-2));
+  }
+
+  & .streaming-code-source {
+    max-height: 8rem;
+    margin: 0;
+    padding: var(--spacer-2) var(--spacer-3) var(--spacer-3);
+    overflow: auto;
+    font-family: var(--font-family-monospace, "SF Mono", "Menlo", monospace);
+    font-size: var(--body-medium-fontSize);
+    line-height: var(--line-height);
+    tab-size: 2;
+    white-space: pre;
+    scrollbar-width: thin;
+    scrollbar-color: var(--figma-color-border) transparent;
+    mask-image: linear-gradient(to bottom, transparent, black var(--spacer-5));
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent,
+      black var(--spacer-5)
+    );
+
+    &::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      border: 2px solid transparent;
+      border-radius: var(--radius-medium);
+      background: var(--figma-color-border);
+      background-clip: content-box;
+    }
+  }
+
+  & :is(.tok-keyword, .tok-meta, .tok-tagName) {
+    color: var(--figma-color-text-component);
+  }
+
+  & :is(.tok-typeName, .tok-className, .tok-function, .tok-definition) {
+    color: var(--figma-color-text-brand);
+  }
+
+  & :is(.tok-string, .tok-regexp, .tok-escape) {
+    color: var(--figma-color-text-success);
+  }
+
+  & :is(.tok-number, .tok-bool, .tok-null) {
+    color: var(--figma-color-text-warning);
+  }
+
+  & :is(.tok-comment, .tok-docComment) {
+    color: var(--figma-color-text-tertiary);
+    font-style: italic;
+  }
+
+  & :is(.tok-operator, .tok-punctuation, .tok-bracket) {
+    color: var(--figma-color-text-secondary);
+  }
+
+  & .tok-invalid {
+    color: var(--figma-color-text-danger);
+    text-decoration: underline wavy;
+  }
+
+  & .streaming-code-cursor {
+    display: inline-block;
+    width: 1px;
+    height: var(--line-height);
+    margin-left: 1px;
+    vertical-align: text-bottom;
+    background: var(--figma-color-text);
+    animation: streaming-code-cursor-blink 900ms steps(1, end) infinite;
+  }
+}
+
+@keyframes streaming-code-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}

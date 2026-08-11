@@ -44,7 +44,7 @@ body,
     flex-direction: column;
     justify-content: flex-start;
     align-items: stretch;
-    min-width: 0;
+    min-width: 12rem;
     min-height: 0;
     transition:
       margin 220ms ease,
@@ -310,13 +310,27 @@ body,
         flex: 1 1 auto;
         min-height: 0;
         overflow: hidden;
-        /* Match fig-header horizontal inset so the scrollbar isn't flush
-           against the pane border / resizer. */
-        padding-right: var(--spacer-2);
 
         > div,
         .cm-editor {
           height: 100%;
+        }
+
+        .code-pane {
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
+
+        .code-pane-editor {
+          flex: 1 1 auto;
+          min-height: 0;
+          overflow: hidden;
+
+          > div,
+          .cm-editor {
+            height: 100%;
+          }
         }
 
         .cm-editor,
@@ -330,6 +344,65 @@ body,
 
         .cm-content {
           padding-right: var(--spacer-2);
+        }
+
+        .code-error-panel {
+          flex: 0 0 auto;
+          max-height: min(10rem, 40%);
+          overflow: hidden;
+          color: var(--figma-color-text-danger);
+          background: var(--figma-color-bg-danger-tertiary);
+          border-top: 1px solid var(--figma-color-border-danger);
+        }
+
+        .code-error-header {
+          display: flex;
+          min-width: 0;
+          align-items: center;
+          gap: var(--spacer-2);
+          padding: var(--spacer-1) var(--spacer-2);
+
+          strong {
+            flex: 0 0 auto;
+          }
+
+          > fig-button.code-error-copy {
+            flex: 0 0 auto;
+            margin-left: auto;
+          }
+
+          > fig-button.code-error-toggle {
+            flex: 0 0 auto;
+          }
+        }
+
+        .code-error-chevron {
+          transition: transform 120ms ease;
+
+          &.is-collapsed {
+            transform: rotate(-90deg);
+          }
+        }
+
+        .code-error-summary {
+          min-width: 0;
+          overflow: hidden;
+          color: var(--figma-color-text-danger);
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .code-error-message {
+          max-height: 7rem;
+          margin: 0;
+          padding: var(--spacer-2) var(--spacer-3) var(--spacer-3);
+          overflow: auto;
+          color: inherit;
+          font-family: var(--font-family-monospace, ui-monospace, monospace);
+          font-size: var(--body-medium-fontSize);
+          line-height: 1.35;
+          white-space: pre-wrap;
+          overflow-wrap: anywhere;
         }
       }
     }
@@ -780,24 +853,6 @@ dialog[is="fig-toast"] {
   bottom: calc(2.5rem + var(--spacer-2) * 2) !important;
 }
 
-dialog[is="fig-toast"].preview-error-toast {
-  width: min(720px, calc(100vw - var(--spacer-6)));
-  max-width: calc(100vw - var(--spacer-6));
-
-  .preview-error-message {
-    flex: 1 1 auto;
-    min-width: 0;
-    margin: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  fig-button {
-    flex: 0 0 auto;
-  }
-}
-
 dialog[is="fig-toast"].publish-toast {
   .publish-toast-body {
     display: inline-flex;
@@ -867,19 +922,6 @@ dialog.delete-shader-dialog {
 
   fig-content p {
     margin: 0;
-  }
-
-  fig-button.delete-danger-button:not([disabled]) {
-    color: var(--figma-color-text-onbrand);
-    background-color: var(--figma-color-bg-danger);
-
-    &:hover {
-      background-color: var(--figma-color-bg-danger-hover);
-    }
-
-    &:active {
-      background-color: var(--figma-color-bg-danger-pressed);
-    }
   }
 }
 
@@ -951,13 +993,6 @@ dialog.delete-shader-dialog {
     margin-top: var(--spacer-4);
     padding-top: var(--spacer-3);
     border-top: 1px solid var(--figma-color-border);
-
-    p {
-      padding: 0 var(--spacer-2);
-      color: var(--figma-color-text-secondary);
-      font-size: var(--body-small-fontSize);
-      line-height: 1.35;
-    }
   }
 }
 

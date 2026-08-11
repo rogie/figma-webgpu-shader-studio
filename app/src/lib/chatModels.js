@@ -4,18 +4,8 @@ export const CHAT_MODEL_GROUPS = [
   {
     label: "OpenAI",
     models: [
-      { provider: "openai", id: "gpt-4.1", label: "GPT-4.1" },
-      { provider: "openai", id: "gpt-4.1-mini", label: "GPT-4.1 Mini" },
-      { provider: "openai", id: "gpt-4.1-nano", label: "GPT-4.1 Nano" },
-      { provider: "openai", id: "gpt-4o", label: "GPT-4o" },
-      { provider: "openai", id: "gpt-4o-mini", label: "GPT-4o Mini" },
-    ],
-  },
-  {
-    label: "OpenAI Reasoning",
-    models: [
-      { provider: "openai", id: "o3", label: "o3" },
-      { provider: "openai", id: "o4-mini", label: "o4-mini" },
+      { provider: "openai", id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+      { provider: "openai", id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
     ],
   },
   {
@@ -24,11 +14,6 @@ export const CHAT_MODEL_GROUPS = [
       { provider: "anthropic", id: "claude-fable-5", label: "Claude Fable 5" },
       { provider: "anthropic", id: "claude-opus-5", label: "Claude Opus 5" },
       { provider: "anthropic", id: "claude-sonnet-5", label: "Claude Sonnet 5" },
-      { provider: "anthropic", id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
-      { provider: "anthropic", id: "claude-opus-4-8", label: "Claude Opus 4.8" },
-      { provider: "anthropic", id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
-      { provider: "anthropic", id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
-      { provider: "anthropic", id: "claude-opus-4-5", label: "Claude Opus 4.5" },
     ],
   },
   {
@@ -36,10 +21,7 @@ export const CHAT_MODEL_GROUPS = [
     models: [
       { provider: "gemini", id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
       { provider: "gemini", id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-      { provider: "gemini", id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite" },
-      { provider: "gemini", id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
       { provider: "gemini", id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
-      { provider: "gemini", id: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
     ],
   },
 ];
@@ -47,6 +29,51 @@ export const CHAT_MODEL_GROUPS = [
 export const CHAT_MODELS = CHAT_MODEL_GROUPS.flatMap((group) => group.models);
 
 export const DEFAULT_CHAT_MODEL = CHAT_MODELS[0];
+
+export function groupsForAvailableProviderModels(availableModelsByProvider) {
+  if (!availableModelsByProvider || typeof availableModelsByProvider !== "object") {
+    return CHAT_MODEL_GROUPS;
+  }
+
+  const availableIdsByProvider = new Map(
+    Object.entries(availableModelsByProvider)
+      .filter(([, models]) => Array.isArray(models))
+      .map(([provider, models]) => [
+        provider,
+        new Set(
+          models
+            .map((model) => (typeof model === "string" ? model : model?.id))
+            .filter(Boolean)
+        ),
+      ])
+  );
+
+  return CHAT_MODEL_GROUPS.map((group) => ({
+    ...group,
+    models: group.models.filter(
+      (model) =>
+        !availableIdsByProvider.has(model.provider) ||
+        availableIdsByProvider.get(model.provider).has(model.id)
+    ),
+  })).filter((group) => group.models.length > 0);
+}
+
+export function groupsForAvailableOpenAIModels(availableModels) {
+  if (!Array.isArray(availableModels)) return CHAT_MODEL_GROUPS;
+  return groupsForAvailableProviderModels({ openai: availableModels });
+}
+
+export function reconcileAvailableChatModel(currentModel, groups) {
+  const models = groups.flatMap((group) => group.models);
+  return (
+    models.find(
+      (model) =>
+        model.provider === currentModel?.provider && model.id === currentModel?.id
+    ) ||
+    models[0] ||
+    DEFAULT_CHAT_MODEL
+  );
+}
 
 export function modelsForProvider(provider) {
   return CHAT_MODELS.filter((model) => model.provider === provider);

@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildShaderLibraryCards, filterShaderLibraryCards } from "./shaderLibrary.js";
+import {
+  ANON_YOU_LABEL,
+  buildShaderLibraryCards,
+  filterShaderLibraryCards,
+} from "./shaderLibrary.js";
 
 test("shows drafts, owned cloud drafts, and public shaders without presets", () => {
   const cards = buildShaderLibraryCards({
@@ -80,13 +84,13 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
   );
 });
 
-test("labels signed-out local drafts as Yours", () => {
+test("labels signed-out local drafts as Anon (You)", () => {
   const [draft] = buildShaderLibraryCards({
     drafts: [{ id: "draft:local", name: "Draft", kind: "effect" }],
     cloudShaders: [],
   });
 
-  assert.equal(draft.authorName, "Yours");
+  assert.equal(draft.authorName, ANON_YOU_LABEL);
 });
 
 test("filters draft and public cards independently", () => {

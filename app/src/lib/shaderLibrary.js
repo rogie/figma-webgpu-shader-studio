@@ -3,6 +3,8 @@
  * Bundled file presets are intentionally not part of the user library.
  */
 
+export const ANON_YOU_LABEL = "Anon (You)";
+
 export function buildShaderLibraryCards({
   drafts,
   cloudShaders,
@@ -33,7 +35,7 @@ export function buildShaderLibraryCards({
       thumbnailUrl: thumbnails[draft.id] || null,
       authorId: user?.id ?? null,
       authorLabel: "Draft",
-      authorName: user ? userName : "Yours",
+      authorName: user ? userName : ANON_YOU_LABEL,
       authorAvatarUrl: userAvatarUrl,
       updatedAt: null,
       draft,

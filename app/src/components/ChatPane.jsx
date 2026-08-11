@@ -14,16 +14,17 @@ import {
   splitAssistantContent,
   validateModuleSource,
 } from "../lib/chatApply.js";
+import { ANON_YOU_LABEL } from "../lib/shaderLibrary.js";
 import {
   attachmentMeta,
   fileToChatAttachment,
   providerSupportsChatVideo,
 } from "../lib/chatAttachments.js";
 import {
-  CHAT_MODEL_GROUPS,
-  CHAT_MODELS,
   DEFAULT_CHAT_MODEL,
   findChatModel,
+  groupsForAvailableProviderModels,
+  reconcileAvailableChatModel,
 } from "../lib/chatModels.js";
 import {
   loadChatThreads,
@@ -35,11 +36,16 @@ import {
 } from "../lib/providerKeys.js";
 import { toApiMessages } from "../lib/chatPayload.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
-import { streamChat } from "../services/chat.js";
+import {
+  listAvailableProviderModels,
+  streamChat,
+} from "../services/chat.js";
 import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
+import UserAvatar from "./UserAvatar.jsx";
+import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
@@ -92,6 +98,20 @@ function pruneEmptyAssistants(thread) {
   return thread.filter((message) => !isEmptyAssistant(message));
 }
 
+function chatActivityLabel(messages) {
+  const latest = messages[messages.length - 1];
+  if (!latest) return "New chat activity";
+  if (latest.role !== "assistant") return "New message";
+  if (latest.pending) {
+    if (latest.phase === "writing") return "Writing main.ts…";
+    if (latest.phase === "applying") return "Applying main.ts…";
+    if (latest.phase === "repairing") return "Repairing main.ts…";
+    return "AI is responding…";
+  }
+  if (latest.applied) return "Applied main.ts";
+  return "New AI response";
+}
+
 const ChatPane = forwardRef(function ChatPane(
   {
     sourceRef,
@@ -114,10 +134,13 @@ const ChatPane = forwardRef(function ChatPane(
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
   const [keyVersion, setKeyVersion] = useState(0);
+  const [availableProviderModels, setAvailableProviderModels] = useState({});
   const [undoCount, setUndoCount] = useState(0);
   const [attachments, setAttachments] = useState([]);
+  const [latestActivity, setLatestActivity] = useState("");
   const abortRef = useRef(null);
   const listRef = useRef(null);
+  const followingLatestRef = useRef(true);
   const undoStackRef = useRef([]);
   const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
@@ -126,7 +149,30 @@ const ChatPane = forwardRef(function ChatPane(
   threadsRef.current = threads;
 
   const threadId = messageKey(shaderKey);
-  const messages = pruneEmptyAssistants(threads[threadId] || []);
+  const messages = useMemo(
+    () => pruneEmptyAssistants(threads[threadId] || []),
+    [threads, threadId]
+  );
+  const openaiApiKey = useMemo(
+    () => getProviderKey("openai"),
+    [keyVersion]
+  );
+  const anthropicApiKey = useMemo(
+    () => getProviderKey("anthropic"),
+    [keyVersion]
+  );
+  const geminiApiKey = useMemo(
+    () => getProviderKey("gemini"),
+    [keyVersion]
+  );
+  const modelGroups = useMemo(
+    () => groupsForAvailableProviderModels(availableProviderModels),
+    [availableProviderModels]
+  );
+  const selectableModels = useMemo(
+    () => modelGroups.flatMap((group) => group.models),
+    [modelGroups]
+  );
   const apiKey = useMemo(
     () => getProviderKey(model.provider),
     [model.provider, keyVersion]
@@ -156,6 +202,41 @@ const ChatPane = forwardRef(function ChatPane(
   useEffect(() => subscribeProviderKeys(() => setKeyVersion((n) => n + 1)), []);
 
   useEffect(() => {
+    setAvailableProviderModels({});
+    const controller = new AbortController();
+    const providerKeys = [
+      ["openai", openaiApiKey],
+      ["anthropic", anthropicApiKey],
+      ["gemini", geminiApiKey],
+    ];
+    for (const [provider, providerKey] of providerKeys) {
+      if (!providerKey) continue;
+      listAvailableProviderModels(provider, providerKey, {
+        signal: controller.signal,
+      })
+        .then((models) => {
+          setAvailableProviderModels((current) => ({
+            ...current,
+            [provider]: models,
+          }));
+        })
+        .catch(() => {
+          // Keep the curated fallback when provider discovery is unavailable.
+        });
+    }
+    return () => controller.abort();
+  }, [openaiApiKey, anthropicApiKey, geminiApiKey]);
+
+  useEffect(() => {
+    if (Object.keys(availableProviderModels).length === 0) return;
+    const next = reconcileAvailableChatModel(model, modelGroups);
+    if (next.provider !== model.provider || next.id !== model.id) {
+      setModel(next);
+      setError("");
+    }
+  }, [availableProviderModels, model, modelGroups]);
+
+  useEffect(() => {
     localStorage.setItem(
       MODEL_STORAGE_KEY,
       JSON.stringify({ provider: model.provider, id: model.id })
@@ -180,6 +261,13 @@ const ChatPane = forwardRef(function ChatPane(
       if (!current?.some(isEmptyAssistant)) return prev;
       return { ...prev, [threadId]: pruneEmptyAssistants(current) };
     });
+    followingLatestRef.current = true;
+    setLatestActivity("");
+    const frame = requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list) list.scrollTop = list.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [threadId]);
 
   useEffect(() => {
@@ -187,10 +275,29 @@ const ChatPane = forwardRef(function ChatPane(
   }, [messages.length, onCanClearChange]);
 
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages, streaming, attachments]);
+    const list = listRef.current;
+    if (!list) return undefined;
+    const onScroll = () => {
+      const distanceFromBottom =
+        list.scrollHeight - list.scrollTop - list.clientHeight;
+      const isFollowing = distanceFromBottom <= 24;
+      followingLatestRef.current = isFollowing;
+      if (isFollowing) setLatestActivity("");
+    };
+    list.addEventListener("scroll", onScroll, { passive: true });
+    return () => list.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    if (followingLatestRef.current) {
+      list.scrollTop = list.scrollHeight;
+      setLatestActivity("");
+    } else {
+      setLatestActivity(chatActivityLabel(messages));
+    }
+  }, [messages]);
 
   useEffect(() => {
     if (providerSupportsChatVideo(model.provider)) return;
@@ -224,7 +331,9 @@ const ChatPane = forwardRef(function ChatPane(
         detail && typeof detail === "object" && "value" in detail
           ? detail.value
           : (detail ?? event.target?.value);
-      const next = CHAT_MODELS.find((entry) => entry.id === String(value || ""));
+      const next = selectableModels.find(
+        (entry) => entry.id === String(value || "")
+      );
       if (next) {
         setModel(next);
         setError("");
@@ -234,7 +343,7 @@ const ChatPane = forwardRef(function ChatPane(
     return () => {
       control.removeEventListener("change", onChange);
     };
-  }, [hasKey]);
+  }, [selectableModels]);
 
   const updateThread = (updater) => {
     setThreads((prev) => {
@@ -383,12 +492,12 @@ const ChatPane = forwardRef(function ChatPane(
 
     let assembled = "";
     let sawError = false;
+    let sawDone = false;
     let lastApplied = null;
     let didPushUndo = false;
     const baselineSource = sourceRef.current;
     const features = featuresRef.current;
     let lastStreamUiAt = 0;
-    let lastValidationAt = 0;
 
     const updateLastAssistant = (patch) => {
       updateThread((current) => {
@@ -591,13 +700,10 @@ const ChatPane = forwardRef(function ChatPane(
               return next;
             });
           }
-          if (now - lastValidationAt >= 150) {
-            lastValidationAt = now;
-            tryApplyModule(snapshot, { allowIncomplete: false });
-          }
         } else if (event.type === "status") {
           updateLastAssistant({ phase: event.phase });
         } else if (event.type === "done") {
+          sawDone = true;
           updateLastAssistant({ phase: "validating" });
         } else if (event.type === "error") {
           sawError = true;
@@ -606,8 +712,11 @@ const ChatPane = forwardRef(function ChatPane(
         }
       }
 
-      const applied =
-        tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo;
+      const responseComplete =
+        sawDone && !sawError && !controller.signal.aborted;
+      const applied = responseComplete
+        ? tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo
+        : false;
 
       if (sawError || !assembled.trim()) {
         finishAssistant(assembled.trim() ? assembled : "", { applied });
@@ -647,10 +756,7 @@ const ChatPane = forwardRef(function ChatPane(
       if (err?.name !== "AbortError") {
         setError(err.message || String(err));
       }
-      const applied =
-        tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo;
-      finishAssistant(assembled, { applied });
-      if (applied) onNotice?.("Code updated from chat.");
+      finishAssistant(assembled, { applied: false });
     } finally {
       abortRef.current = null;
       setStreaming(false);
@@ -664,6 +770,17 @@ const ChatPane = forwardRef(function ChatPane(
     }
   };
 
+  const jumpToLatest = () => {
+    followingLatestRef.current = true;
+    setLatestActivity("");
+    requestAnimationFrame(() => {
+      const list = listRef.current;
+      if (list) {
+        list.scrollTo({ top: list.scrollHeight, behavior: "smooth" });
+      }
+    });
+  };
+
   const modelSelect = (
     <fig-select
       ref={modelControlRef}
@@ -674,7 +791,7 @@ const ChatPane = forwardRef(function ChatPane(
       disabled={streaming ? "" : undefined}
     >
       <fig-select-options>
-        {CHAT_MODEL_GROUPS.map((group) => (
+        {modelGroups.map((group) => (
           <Fragment key={group.label}>
             <fig-separator label={group.label} />
             {group.models.map((entry) => (
@@ -746,32 +863,40 @@ const ChatPane = forwardRef(function ChatPane(
                   );
                 })}
                 {message.content && <div className="chat-prose">{message.content}</div>}
-                {user && (
-                  <fig-avatar
-                    name={userName}
-                    src={userAvatarUrl || undefined}
-                  />
-                )}
+                <UserAvatar
+                  name={user ? userName : ANON_YOU_LABEL}
+                  tooltip={user ? userName : ANON_YOU_LABEL}
+                  src={userAvatarUrl}
+                />
               </fig-chat-message>
             );
           }
-          const { prose } = splitAssistantContent(message.content);
+          const { prose, source } = splitAssistantContent(message.content);
+          const applied = Boolean(
+            message.applied ||
+              (!message.pending && source && source === sourceRef.current)
+          );
           return (
             <fig-chat-message
               key={index}
               from="agent"
             >
               {prose && <div className="chat-prose">{prose}</div>}
-              {(message.applied || message.pending) && (
+              <StreamingCodeBlock
+                source={source}
+                pending={Boolean(message.pending)}
+                applied={applied}
+              />
+              {(applied || (message.pending && !source)) && (
                 <div className="chat-code-note">
-                  {message.applied ? (
+                  {applied ? (
                     <span>Updated module applied to editor.</span>
                   ) : (
                     <fig-shimmer aria-label={assistantPhaseLabel(message)}>
                       <span>{assistantPhaseLabel(message)}</span>
                     </fig-shimmer>
                   )}
-                  {index === undoMessageIndex && message.applied && (
+                  {index === undoMessageIndex && applied && (
                     <fig-tooltip text="Undo apply">
                       <fig-button
                         type="button"
@@ -800,6 +925,18 @@ const ChatPane = forwardRef(function ChatPane(
         )}
         <div className="chat-composer">
           <fig-ai-prompt>
+            {latestActivity && (
+              <div className="chat-latest-activity" aria-live="polite">
+                <fig-button
+                  type="button"
+                  variant="secondary"
+                  size="small"
+                  onClick={jumpToLatest}
+                >
+                  {latestActivity} · View latest
+                </fig-button>
+              </div>
+            )}
             {attachments.length > 0 && (
               <fig-attachments ref={pendingAttachmentsRef}>
                 {attachments.map((attachment, index) => (

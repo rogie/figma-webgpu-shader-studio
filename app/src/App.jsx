@@ -13,6 +13,7 @@ import ExportIcon from "./components/ExportIcon.jsx";
 import "./components/HomeNav.css";
 import Preview from "./components/Preview.jsx";
 import ShaderList from "./components/ShaderList.jsx";
+import UserAvatar from "./components/UserAvatar.jsx";
 import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
@@ -42,6 +43,7 @@ import {
   makeSampleVideoBlob,
 } from "./runtime/sample.js";
 import {
+  ANON_YOU_LABEL,
   buildShaderLibraryCards,
   filterShaderLibraryCards,
 } from "./lib/shaderLibrary.js";
@@ -74,7 +76,6 @@ const opaqueContent = { __html: "" };
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
 const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
-const INITIAL_DRAFTS = savedDrafts();
 const DEFAULT_APP_NAV_WIDTH = 240;
 const MIN_APP_NAV_WIDTH = 112;
 const MAX_APP_NAV_WIDTH = 400;
@@ -98,6 +99,7 @@ const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 const THUMBNAIL_SIZE = 512;
+const INITIAL_DRAFTS = savedDrafts();
 
 function dataUrlToObjectUrl(dataUrl) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
@@ -268,6 +270,17 @@ function pushShaderUrl(id) {
   window.history.pushState({}, "", makeShareUrl(id));
 }
 
+function AuthorAvatar({ class: className, tooltip, src, name }) {
+  return (
+    <UserAvatar
+      class={className}
+      tooltip={tooltip ?? name ?? "Anon"}
+      src={src}
+      name={name}
+    />
+  );
+}
+
 function ShaderNavCard({
   src,
   label,
@@ -308,12 +321,11 @@ function ShaderNavCard({
       </fig-preview>
       <fig-footer>
         <label className="fig-card-label">
-          <fig-tooltip text={authorName || "Anon"}>
-            <fig-avatar
-              src={authorAvatarUrl || ""}
-              name={authorName || "Anon"}
-            />
-          </fig-tooltip>
+          <AuthorAvatar
+            tooltip={authorName || "Anon"}
+            src={authorAvatarUrl}
+            name={authorName || "Anon"}
+          />
           <h3>{label}</h3>
         </label>
         {sublabel && (
@@ -623,12 +635,14 @@ export default function App() {
   const currentAuthorName =
     currentShader?.author_name ||
     (currentAuthorIsYou
-      ? user?.user_metadata?.user_name ||
-        user?.user_metadata?.preferred_username ||
-        user?.user_metadata?.full_name ||
-        user?.user_metadata?.name ||
-        user?.email ||
-        "Yours"
+      ? user
+        ? user.user_metadata?.user_name ||
+          user.user_metadata?.preferred_username ||
+          user.user_metadata?.full_name ||
+          user.user_metadata?.name ||
+          user.email ||
+          "Anon"
+        : ANON_YOU_LABEL
       : "Unknown author");
   const currentAuthorAvatarUrl =
     currentShader?.author_avatar_url ||
@@ -908,6 +922,7 @@ export default function App() {
       const preferred = pendingValuesRef.current ?? valuesRef.current;
       pendingValuesRef.current = null;
       const nextValues = mergeValues(loaded.props, preferred);
+      const nextFeatures = inferFeatures(nextSource);
       setProps(loaded.props);
       setRuntimeValues(nextValues);
       setError(null);
@@ -917,7 +932,8 @@ export default function App() {
           { setup: loaded.setup, render: loaded.render },
           {
             isFill: detectKind(nextSource) === "fill",
-            isAnimated: inferFeatures(nextSource).isAnimated,
+            isAnimated: nextFeatures.isAnimated,
+            usesMouse: nextFeatures.usesMouse,
           }
         )
         .then((ok) => {
@@ -1335,6 +1351,7 @@ export default function App() {
         setError(message);
         // Host stops its RAF loop on render errors — keep the play toggle in sync.
         if (message) {
+          playPreferenceRef.current = false;
           setRunning(false);
         }
       },
@@ -1365,17 +1382,6 @@ export default function App() {
       clearObjectUrl();
     };
   }, [clearObjectUrl, compile, restoreSample, viewMode]);
-
-  useEffect(() => {
-    const syncVisibility = () => {
-      hostRef.current?.setActive(
-        viewMode === "editor" && document.visibilityState !== "hidden"
-      );
-    };
-    syncVisibility();
-    document.addEventListener("visibilitychange", syncVisibility);
-    return () => document.removeEventListener("visibilitychange", syncVisibility);
-  }, [viewMode]);
 
   useEffect(() => {
     if (!hostRef.current?.ready) return;
@@ -2851,6 +2857,7 @@ export default function App() {
         .captureThumbnailBlob({
           width: THUMBNAIL_SIZE,
           height: THUMBNAIL_SIZE,
+          shouldResume: () => playPreferenceRef.current,
         })
         .then(async (blob) => {
           if (!blob || gen !== thumbnailCaptureGenRef.current) return;
@@ -3004,6 +3011,11 @@ export default function App() {
                 <fig-field label="Public" direction="horizontal">
                   <fig-switch
                     checked={isPublic}
+                    label={
+                      isPublic
+                        ? "Anyone with the link can view the source and input."
+                        : "Only you can open this cloud shader."
+                    }
                     onInput={(event) => {
                       setIsPublic(event.target.checked);
                       setDirty(true);
@@ -3011,11 +3023,6 @@ export default function App() {
                     dangerouslySetInnerHTML={{ __html: "" }}
                   />
                 </fig-field>
-                <p>
-                  {isPublic
-                    ? "Anyone with the link can view the source and input."
-                    : "Only you can open this cloud shader."}
-                </p>
               </div>
             )}
           </fig-group>
@@ -3103,7 +3110,7 @@ export default function App() {
                 <fig-input-text
                   class="app-nav-search"
                   type="search"
-                  placeholder="Search shaders"
+                  placeholder="Search"
                   value={homeQuery}
                   full=""
                   onInput={(event) => setHomeQuery(event.target.value)}
@@ -3115,7 +3122,7 @@ export default function App() {
                   aria-label="Filter by kind"
                   value={homeKind}
                   options={JSON.stringify([
-                    { value: "all", label: "All types" },
+                    { value: "all", label: "Types" },
                     { value: "effect", label: "Effects" },
                     { value: "fill", label: "Fills" },
                   ])}
@@ -3139,7 +3146,7 @@ export default function App() {
                   aria-label="Filter by author"
                   value={homeAuthor}
                   options={JSON.stringify([
-                    { value: "all", label: "All authors" },
+                    { value: "all", label: "Author" },
                     ...publishedAuthors,
                   ])}
                   disabled={publishedAuthors.length ? undefined : ""}
@@ -3248,38 +3255,14 @@ export default function App() {
               </div>
             </fig-header>
             <div className="app-nav-library-filters">
-              <fig-input-text
-                class="app-nav-search"
-                type="search"
-                placeholder="Search shaders"
-                value={editorQuery}
-                full=""
-                onInput={(event) => setEditorQuery(event.target.value)}
-                dangerouslySetInnerHTML={opaqueContent}
-              />
-              <div className="app-nav-filter-row">
-                <fig-select
-                  ref={editorKindRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by kind"
-                  value={editorKind}
-                  options={JSON.stringify([
-                    { value: "all", label: "All types" },
-                    { value: "effect", label: "Effects" },
-                    { value: "fill", label: "Fills" },
-                  ])}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={editorAuthorRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by author"
-                  value={editorAuthor}
-                  options={JSON.stringify([
-                    { value: "all", label: "All authors" },
-                    ...publishedAuthors,
-                  ])}
-                  disabled={publishedAuthors.length ? undefined : ""}
+              <hstack>
+                <fig-input-text
+                  class="app-nav-search"
+                  type="search"
+                  placeholder="Search"
+                  value={editorQuery}
+                  full=""
+                  onInput={(event) => setEditorQuery(event.target.value)}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
                 <fig-tooltip
@@ -3305,6 +3288,32 @@ export default function App() {
                     <fig-icon name="globe" />
                   </fig-button>
                 </fig-tooltip>
+              </hstack>
+              <div className="app-nav-filter-row">
+                <fig-select
+                  ref={editorKindRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by kind"
+                  value={editorKind}
+                  options={JSON.stringify([
+                    { value: "all", label: "Types" },
+                    { value: "effect", label: "Effects" },
+                    { value: "fill", label: "Fills" },
+                  ])}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-select
+                  ref={editorAuthorRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by author"
+                  value={editorAuthor}
+                  options={JSON.stringify([
+                    { value: "all", label: "Author" },
+                    ...publishedAuthors,
+                  ])}
+                  disabled={publishedAuthors.length ? undefined : ""}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
               </div>
             </div>
           </div>
@@ -3367,13 +3376,12 @@ export default function App() {
               }
             >
                 {showCurrentAuthor && (
-                  <fig-tooltip text={currentAuthorName}>
-                    <fig-avatar
-                      class="shader-author-avatar"
-                      src={currentAuthorAvatarUrl}
-                      name={currentAuthorName}
-                    />
-                  </fig-tooltip>
+                  <AuthorAvatar
+                    class="shader-author-avatar"
+                    tooltip={currentAuthorName}
+                    src={currentAuthorAvatarUrl}
+                    name={currentAuthorName}
+                  />
                 )}
                 <fig-input-text
                   ref={nameInputRef}
@@ -3535,6 +3543,7 @@ export default function App() {
                   <CodePane
                     source={source}
                     theme={theme}
+                    error={error}
                     onSourceChange={onSourceChange}
                   />
                 </Suspense>
@@ -3693,7 +3702,6 @@ export default function App() {
           ) : (
             <Preview
               canvasRef={canvasRef}
-              error={error}
               uploading={uploading}
               props={props}
               values={values}
@@ -4004,9 +4012,8 @@ export default function App() {
             Cancel
           </fig-button>
           <fig-button
-            class="delete-danger-button"
             type="button"
-            variant="danger"
+            variant="destructive"
             disabled={deleting ? "" : undefined}
             onClick={confirmDelete}
           >

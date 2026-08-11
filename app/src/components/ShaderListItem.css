@@ -29,6 +29,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     color: var(--figma-color-text-primary);
+    font-weight: var(--body-medium-strong-fontWeight);
   }
 
   & .shader-list-item-actions {

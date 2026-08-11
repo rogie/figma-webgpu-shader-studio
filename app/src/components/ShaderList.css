@@ -5,6 +5,7 @@ fig-chooser.shader-list {
   --fig-chooser-inline-margin: 0;
   width: 100%;
   overflow-x: hidden;
+  gap: 1px;
 
   > fig-separator:first-of-type {
     margin-block: var(--spacer-1);

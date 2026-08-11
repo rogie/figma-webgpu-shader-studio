@@ -1,12 +1,15 @@
+import { lintGutter, linter } from "@codemirror/lint";
 import CodeMirror from "@uiw/react-codemirror";
-import { javascript } from "@codemirror/lang-javascript";
 import { EditorView } from "@codemirror/view";
 import { xcodeDark, xcodeLight } from "@uiw/codemirror-theme-xcode";
 import interact from "@replit/codemirror-interact";
+import { useEffect, useMemo, useState } from "react";
+import { figmaShaderLanguage } from "../lib/codeLanguage.js";
 
-const extensions = [
-  javascript({ typescript: true, jsx: false }),
+const baseExtensions = [
+  figmaShaderLanguage,
   EditorView.lineWrapping,
+  lintGutter(),
   interact({
     rules: [
       {
@@ -21,21 +24,105 @@ const extensions = [
   }),
 ];
 
-export default function CodePane({ source, onSourceChange, theme }) {
+function errorLocation(error) {
+  const message = String(error || "");
+  const match = message.match(/\((\d+):(\d+)\)(?![\s\S]*\(\d+:\d+\))/);
+  if (!match) return null;
+  return {
+    line: Number(match[1]),
+    column: Number(match[2]),
+  };
+}
+
+export default function CodePane({ source, onSourceChange, theme, error }) {
+  const [expanded, setExpanded] = useState(false);
+  const location = useMemo(() => errorLocation(error), [error]);
+  const extensions = useMemo(() => {
+    const diagnostics = linter(
+      (view) => {
+        if (!error || !location) return [];
+        const lineNumber = Math.min(
+          Math.max(1, location.line),
+          view.state.doc.lines
+        );
+        const line = view.state.doc.line(lineNumber);
+        const from = Math.min(line.to, line.from + Math.max(0, location.column));
+        return [
+          {
+            from,
+            to: Math.min(line.to, from + 1),
+            severity: "error",
+            message: String(error),
+          },
+        ];
+      },
+      { delay: 0 }
+    );
+    return [...baseExtensions, diagnostics];
+  }, [error, location]);
+
+  useEffect(() => {
+    if (error) setExpanded(Boolean(location));
+  }, [error, location]);
+
   return (
-    <CodeMirror
-      value={source}
-      width="100%"
-      height="100%"
-      theme={theme === "dark" ? xcodeDark : xcodeLight}
-      placeholder="Figma shader module"
-      extensions={extensions}
-      onChange={onSourceChange}
-      basicSetup={{
-        lineNumbers: true,
-        foldGutter: true,
-        highlightActiveLine: true,
-      }}
-    />
+    <div className="code-pane">
+      <div className="code-pane-editor">
+        <CodeMirror
+          value={source}
+          width="100%"
+          height="100%"
+          theme={theme === "dark" ? xcodeDark : xcodeLight}
+          placeholder="Figma shader module"
+          extensions={extensions}
+          onChange={onSourceChange}
+          basicSetup={{
+            lineNumbers: true,
+            foldGutter: true,
+            highlightActiveLine: true,
+          }}
+        />
+      </div>
+      {error && (
+        <div className="code-error-panel" role="alert">
+          <div className="code-error-header">
+            <strong>
+              {location
+                ? `Syntax error · Line ${location.line}, column ${location.column + 1}`
+                : "Shader error"}
+            </strong>
+            {!expanded && <span className="code-error-summary">{error}</span>}
+            <fig-button
+              class="code-error-copy"
+              type="button"
+              variant="destructiveSecondary"
+              size="small"
+              onClick={() => navigator.clipboard.writeText(String(error))}
+            >
+              Copy
+            </fig-button>
+            <fig-button
+              class="code-error-toggle"
+              type="button"
+              variant="destructiveGhost"
+              icon="true"
+              size="small"
+              aria-label={expanded ? "Collapse error" : "Expand error"}
+              onClick={() => setExpanded((current) => !current)}
+            >
+              <fig-icon
+                name="chevron"
+                class={
+                  expanded
+                    ? "code-error-chevron"
+                    : "code-error-chevron is-collapsed"
+                }
+              />
+            </fig-button>
+          </div>
+          {expanded && <pre className="code-error-message">{error}</pre>}
+        </div>
+      )}
+    </div>
   );
 }

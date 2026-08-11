@@ -12,7 +12,6 @@ function clampZoom(zoom) {
 
 function Preview({
   canvasRef,
-  error,
   uploading,
   props,
   values,
@@ -27,8 +26,6 @@ function Preview({
   htmlInputRef,
 }) {
   const stageRef = useRef(null);
-  const errorToastRef = useRef(null);
-  const errorCopiedToastRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [overlayBox, setOverlayBox] = useState(null);
@@ -42,16 +39,6 @@ function Preview({
   useEffect(() => {
     onZoomChangeRef.current?.(view.zoom);
   }, [view.zoom]);
-
-  useEffect(() => {
-    const toast = errorToastRef.current;
-    if (!toast) return;
-    if (error) {
-      toast.showToast?.();
-    } else {
-      toast.hideToast?.();
-    }
-  }, [error]);
 
   useEffect(() => {
     if (!zoomRequest || zoomRequest.id === lastZoomRequestId.current) return;
@@ -285,42 +272,6 @@ function Preview({
           <span>Loading input…</span>
         </div>
       )}
-      <dialog
-        is="fig-toast"
-        ref={errorToastRef}
-        class="preview-error-toast"
-        theme="danger"
-        live="assertive"
-        duration="0"
-      >
-        <p className="preview-error-message" title={error || ""}>
-          {error}
-        </p>
-        <fig-button
-          type="button"
-          variant="secondary"
-          onClick={async () => {
-            try {
-              await navigator.clipboard.writeText(String(error || ""));
-              errorToastRef.current?.hideToast?.();
-              errorCopiedToastRef.current?.showToast?.();
-            } catch {
-              // Only confirm the copy after the Clipboard API succeeds.
-            }
-          }}
-        >
-          Copy
-        </fig-button>
-      </dialog>
-      <dialog
-        is="fig-toast"
-        ref={errorCopiedToastRef}
-        theme="dark"
-        live="polite"
-        duration="3200"
-      >
-        Error copied
-      </dialog>
     </div>
   );
 }

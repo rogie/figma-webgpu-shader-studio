@@ -18,6 +18,9 @@ function sanitizeMessage(message) {
     role: message.role,
     content: message.content,
   };
+  if (message.role === "assistant" && message.applied === true) {
+    out.applied = true;
+  }
   const attachments = (
     Array.isArray(message.attachments)
       ? message.attachments
