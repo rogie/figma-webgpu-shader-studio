@@ -57,7 +57,7 @@ test("play advances time uniforms on every animation frame", () => {
   }
 });
 
-test("mouse shaders redraw while paused without advancing time", () => {
+function makeMouseHost() {
   const host = makeHost();
   host.usesMouse = true;
   host.frame.time = 321;
@@ -69,25 +69,120 @@ test("mouse shaders redraw while paused without advancing time", () => {
     width: 100,
     height: 50,
   });
-  let redraws = 0;
-  host.redraw = () => {
-    redraws += 1;
+  return host;
+}
+
+function stubAnimationFrame() {
+  const originalRaf = globalThis.requestAnimationFrame;
+  const originalCancel = globalThis.cancelAnimationFrame;
+  const pending = new Map();
+  let nextId = 0;
+  globalThis.requestAnimationFrame = (callback) => {
+    nextId += 1;
+    pending.set(nextId, callback);
+    return nextId;
   };
+  globalThis.cancelAnimationFrame = (id) => {
+    pending.delete(id);
+  };
+  return {
+    flush() {
+      const callbacks = [...pending.values()];
+      pending.clear();
+      for (const callback of callbacks) callback(0);
+    },
+    restore() {
+      globalThis.requestAnimationFrame = originalRaf;
+      globalThis.cancelAnimationFrame = originalCancel;
+    },
+  };
+}
 
-  host._onMouse({ clientX: 60, clientY: 45 });
-  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
-  assert.equal(host.frame.time, 321);
-  assert.equal(redraws, 1);
+test("mouse shaders redraw while paused without advancing time", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeMouseHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
 
-  host._onMouseLeave();
-  assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
-  assert.equal(host.frame.time, 321);
-  assert.equal(redraws, 2);
+    host._onMouse({ clientX: 60, clientY: 45 });
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+    assert.equal(host.frame.time, 321);
+    assert.equal(redraws, 1);
 
-  host.running = true;
-  host.rafId = 1;
-  host._onMouse({ clientX: 35, clientY: 30 });
-  assert.equal(redraws, 2);
+    host._onMouseLeave();
+    raf.flush();
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
+    assert.equal(host.frame.time, 321);
+    assert.equal(redraws, 2);
+
+    host.running = true;
+    host.rafId = 1;
+    host._onMouse({ clientX: 35, clientY: 30 });
+    assert.equal(redraws, 2);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("moving between canvas and overlay handles keeps mousePosition", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeMouseHost();
+    host.redraw = () => {};
+
+    // Leaving the canvas for a control handle: the overlay move wins.
+    host._onMouseLeave();
+    host._onMouse({ clientX: 60, clientY: 45 });
+    raf.flush();
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+
+    // Leaving the preview entirely still clears the position.
+    host._onMouseLeave();
+    raf.flush();
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
+  } finally {
+    raf.restore();
+  }
+});
+
+test("setPointerSurface tracks the overlay and detaches on destroy", () => {
+  const raf = stubAnimationFrame();
+  const listeners = [];
+  const surface = {
+    addEventListener: (type, handler) => listeners.push([type, handler]),
+    removeEventListener: (type, handler) => {
+      const index = listeners.findIndex(
+        ([listenerType, listenerHandler]) =>
+          listenerType === type && listenerHandler === handler
+      );
+      if (index >= 0) listeners.splice(index, 1);
+    },
+  };
+  try {
+    const host = makeMouseHost();
+    host.redraw = () => {};
+    host.setPointerSurface(surface);
+    assert.deepEqual(
+      listeners.map(([type]) => type),
+      ["pointermove", "pointerleave"]
+    );
+
+    // Repeat calls must not stack duplicate listeners.
+    host.setPointerSurface(surface);
+    assert.equal(listeners.length, 2);
+
+    const move = listeners.find(([type]) => type === "pointermove")[1];
+    move({ clientX: 60, clientY: 45 });
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+
+    host.setPointerSurface(null);
+    assert.equal(listeners.length, 0);
+  } finally {
+    raf.restore();
+  }
 });
 
 test("animated shaders schedule RAF and pause while inactive", () => {

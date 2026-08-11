@@ -589,6 +589,11 @@ export default function App() {
   const onStageSize = useCallback((width, height) => {
     hostRef.current?.setStageCssSize?.(width, height);
   }, []);
+  const pointerSurfaceRef = useRef(null);
+  const onPointerSurface = useCallback((element) => {
+    pointerSurfaceRef.current = element;
+    hostRef.current?.setPointerSurface?.(element);
+  }, []);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const valuesRef = useRef(values);
@@ -1357,6 +1362,8 @@ export default function App() {
       },
     });
     hostRef.current = host;
+    // The overlay mounts before this effect runs, so adopt the surface it reported.
+    host.setPointerSurface(pointerSurfaceRef.current);
 
     (async () => {
       try {
@@ -3717,6 +3724,7 @@ export default function App() {
               inputSource={kind === "effect" ? inputSource : "image"}
               htmlInputRef={htmlInputRef}
               onStageSize={onStageSize}
+              onPointerSurface={onPointerSurface}
               onPickFile={onPreviewFile}
               onDropError={setError}
             />

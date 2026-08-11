@@ -724,10 +724,16 @@ body,
         .canvas-controls-overlay {
           position: absolute;
           z-index: 3;
-          /* Let mouse reach the canvas except on handles (host tracks mousePosition). */
+          /* pointer-events is inherited, so the overlay stays transparent to
+             the canvas by default and only opts specific children back in. */
           pointer-events: none;
 
-          :is(fig-handle, fig-tooltip, svg) {
+          /* Handles and tooltips must be interactive. Do NOT include the SVG
+             roots — their rectangular bounding boxes would swallow canvas hover
+             and freeze mousePosition. FigUI3 already opts the radius/angle hit
+             shapes back in via pointer-events: stroke, which overrides the
+             inherited none regardless. */
+          :is(fig-handle, fig-tooltip) {
             pointer-events: auto;
           }
         }

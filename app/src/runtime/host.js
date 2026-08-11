@@ -62,6 +62,8 @@ export class ShaderHost {
     this.startTime = 0;
     this.lastTime = 0;
     this._playbackGeneration = 0;
+    this._pointerSurface = null;
+    this._mouseResetId = 0;
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
@@ -103,7 +105,25 @@ export class ShaderHost {
     measurePerf("host.init", startedAt);
   }
 
+  /**
+   * Track the pointer on an extra element covering the canvas (the canvas
+   * controls overlay). Handles sit above the canvas, so without this the canvas
+   * stops receiving pointermove as soon as one is hovered or dragged.
+   */
+  setPointerSurface(element) {
+    if (this._pointerSurface === element) return;
+    this._pointerSurface?.removeEventListener?.("pointermove", this._onMouse);
+    this._pointerSurface?.removeEventListener?.(
+      "pointerleave",
+      this._onMouseLeave
+    );
+    this._pointerSurface = element || null;
+    this._pointerSurface?.addEventListener?.("pointermove", this._onMouse);
+    this._pointerSurface?.addEventListener?.("pointerleave", this._onMouseLeave);
+  }
+
   _onMouse(e) {
+    this._cancelMouseReset();
     const rect = this.canvas.getBoundingClientRect();
     const sx = this.canvas.width / rect.width;
     const sy = this.canvas.height / rect.height;
@@ -115,8 +135,20 @@ export class ShaderHost {
   }
 
   _onMouseLeave() {
-    this.frame.mousePosition = { x: 0, y: 0 };
-    this._redrawForMouse();
+    // Moving between the canvas and an overlay handle fires leave before the
+    // next move; defer the reset so the handoff never blanks mousePosition.
+    this._cancelMouseReset();
+    this._mouseResetId = requestAnimationFrame(() => {
+      this._mouseResetId = 0;
+      this.frame.mousePosition = { x: 0, y: 0 };
+      this._redrawForMouse();
+    });
+  }
+
+  _cancelMouseReset() {
+    if (!this._mouseResetId) return;
+    cancelAnimationFrame(this._mouseResetId);
+    this._mouseResetId = 0;
   }
 
   _redrawForMouse() {
@@ -984,6 +1016,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._fillResizeTimer = 0;
     this._teardownState();
     this.clearInput();
+    this._cancelMouseReset();
+    this.setPointerSurface(null);
     this.canvas.removeEventListener?.("pointermove", this._onMouse);
     this.canvas.removeEventListener?.("pointerleave", this._onMouseLeave);
     if (this.device) {

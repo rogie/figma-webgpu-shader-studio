@@ -1,4 +1,12 @@
-import { lazy, memo, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import CanvasControlsOverlay from "./CanvasControlsOverlay.jsx";
 
 const DefaultHtmlInput = lazy(() => import("./DefaultHtmlInput.jsx"));
@@ -22,6 +30,7 @@ function Preview({
   onPickFile,
   onDropError,
   onStageSize,
+  onPointerSurface,
   inputSource = "image",
   htmlInputRef,
 }) {
@@ -34,7 +43,15 @@ function Preview({
   onZoomChangeRef.current = onZoomChange;
   const onStageSizeRef = useRef(onStageSize);
   onStageSizeRef.current = onStageSize;
+  const onPointerSurfaceRef = useRef(onPointerSurface);
+  onPointerSurfaceRef.current = onPointerSurface;
   const lastZoomRequestId = useRef(null);
+
+  // The overlay covers the canvas box, so the host can read mousePosition from
+  // it while a canvas control handle is hovered or dragged.
+  const attachPointerSurface = useCallback((node) => {
+    onPointerSurfaceRef.current?.(node);
+  }, []);
 
   useEffect(() => {
     onZoomChangeRef.current?.(view.zoom);
@@ -241,6 +258,7 @@ function Preview({
       </div>
       {overlayBox && (
         <div
+          ref={attachPointerSurface}
           className="canvas-controls-overlay"
           style={{
             left: overlayBox.left,
