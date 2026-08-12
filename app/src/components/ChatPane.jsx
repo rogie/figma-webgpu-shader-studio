@@ -137,6 +137,7 @@ const ChatPane = forwardRef(function ChatPane(
   const [availableProviderModels, setAvailableProviderModels] = useState({});
   const [undoCount, setUndoCount] = useState(0);
   const [attachments, setAttachments] = useState([]);
+  const [zoomedAttachment, setZoomedAttachment] = useState(null);
   const [latestActivity, setLatestActivity] = useState("");
   const abortRef = useRef(null);
   const listRef = useRef(null);
@@ -145,6 +146,7 @@ const ChatPane = forwardRef(function ChatPane(
   const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
   const pendingAttachmentsRef = useRef(null);
+  const attachmentZoomRef = useRef(null);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
 
@@ -321,6 +323,31 @@ const ChatPane = forwardRef(function ChatPane(
     attachmentList.addEventListener("remove", removeAttachment);
     return () => attachmentList.removeEventListener("remove", removeAttachment);
   }, [attachments.length]);
+
+  useEffect(() => {
+    const attachmentList = pendingAttachmentsRef.current;
+    if (!attachmentList) return;
+    const zoomAttachment = (event) => {
+      if (event.target.closest(".fig-attachment-remove")) return;
+      const tile = event.target.closest("fig-attachment");
+      if (!tile) return;
+      const attachment = attachments[Number(tile.getAttribute("value"))];
+      if (attachment?.previewUrl) setZoomedAttachment(attachment);
+    };
+    attachmentList.addEventListener("click", zoomAttachment);
+    return () => attachmentList.removeEventListener("click", zoomAttachment);
+  }, [attachments]);
+
+  useEffect(() => {
+    const dialog = attachmentZoomRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, [zoomedAttachment]);
+
+  useEffect(() => {
+    if (!zoomedAttachment) return;
+    if (attachments.includes(zoomedAttachment)) return;
+    setZoomedAttachment(null);
+  }, [attachments, zoomedAttachment]);
 
   useEffect(() => {
     const control = modelControlRef.current;
@@ -1031,6 +1058,34 @@ const ChatPane = forwardRef(function ChatPane(
             hidden
             onChange={onAttachmentChosen}
           />
+          {zoomedAttachment && (
+            <dialog
+              ref={attachmentZoomRef}
+              className="chat-attachment-zoom"
+              aria-label={zoomedAttachment.name || "Attachment"}
+              onClose={() => setZoomedAttachment(null)}
+              onClick={(event) => {
+                // Clicks land on the dialog itself only outside the media.
+                if (event.target === event.currentTarget) {
+                  attachmentZoomRef.current?.close();
+                }
+              }}
+            >
+              {zoomedAttachment.kind === "video" ? (
+                <video
+                  className="chat-attachment-zoom-media"
+                  src={zoomedAttachment.previewUrl}
+                  controls
+                />
+              ) : (
+                <img
+                  className="chat-attachment-zoom-media"
+                  src={zoomedAttachment.previewUrl}
+                  alt={zoomedAttachment.name || "Attachment"}
+                />
+              )}
+            </dialog>
+          )}
         </div>
       </div>
     </div>
