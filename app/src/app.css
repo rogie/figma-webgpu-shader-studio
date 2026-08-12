@@ -272,21 +272,15 @@ body,
         align-items: center;
         justify-content: space-between;
         gap: var(--spacer-2);
+        padding-right: var(--spacer-2);
 
         > hstack:last-child {
           flex: 0 0 auto;
           --hstack-gap: var(--spacer-1);
 
-          /* fig-header pulls all ghost icon buttons right by -spacer-2;
-             keep that only on the last control so the pair isn't crushed. */
           fig-button[icon][variant="ghost"] {
             margin-right: 0;
           }
-
-          > :last-child fig-button[icon][variant="ghost"] {
-            margin-right: calc(var(--spacer-2) * -1);
-          }
-
         }
 
         .section-chevron {
@@ -302,10 +296,6 @@ body,
     .shader-viewer-code {
       flex: 1 1 auto;
       min-height: 140px;
-
-      > fig-header {
-        padding-right: var(--spacer-2);
-      }
 
       .code-editor {
         flex: 1 1 auto;

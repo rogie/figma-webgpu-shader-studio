@@ -3110,9 +3110,7 @@ export default function App() {
           sublabel={
             card.origin === "public"
               ? "Published"
-              : card.draft
-                ? "Draft"
-                : "Private"
+              : "Draft"
           }
           selected={selectedKey === card.key}
           published={card.origin === "public"}
