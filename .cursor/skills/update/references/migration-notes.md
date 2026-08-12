@@ -47,6 +47,18 @@ const opaqueContent = { __html: "" };
 
 Use `fig-image` with `src` instead of manually composing `fig-preview`, `img`, and `fig-spinner`. It provides a delayed loading indicator and re-emits bubbling, composed `load` and `error` events from the host.
 
+## fig-card (7.x)
+
+From 7.0+, `fig-card` no longer wraps content in an `<a>` via `href`/`target`. Selection chrome and authored `fig-preview` / `fig-footer` children still work. This app's home cards do not use link attributes, so no migration was required.
+
+`fig-chit` was added as a backwards-compatible alias of `fig-swatch`; prefer `fig-swatch` unless a surface specifically wants the chit name.
+
+## fig-select (8.x)
+
+From 8.0+, `fig-select` / `fig-select-options` / `fig-select-option` register from `fig-editor.js` (styles in `fig-editor.css`), not core `fig.js`. This app already imports both editor entrypoints in `main.jsx`, so selects and `propskit-select` keep working. `propskit-select` falls back to `fig-dropdown` if editor is not loaded.
+
+`fig-editor.js` now also imports `fig-lab.js`, so lab components load transitively with the editor bundle.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:
