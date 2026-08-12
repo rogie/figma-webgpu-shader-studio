@@ -108,15 +108,17 @@
 
       .fig-card-label {
         display: flex;
-        flex: 1 1 auto;
+        flex: 1 1 0;
         align-items: center;
         gap: var(--spacer-2);
+        min-width: 0;
 
         fig-avatar[src=""] {
           background: var(--figma-color-bg-selected);
         }
 
         > h3 {
+          flex: 1 1 auto;
           margin: 0;
           min-width: 0;
           overflow: hidden;
@@ -126,8 +128,11 @@
       }
 
       .fig-card-sublabel {
-        flex: 0 1 auto;
-        min-width: 0;
+        /* FigUI3 defaults this to width: 100% for stacked footers; in our
+           row layout that crowds out the title. Size to content only. */
+        flex: 0 0 auto;
+        width: auto;
+        max-width: none;
         margin-left: auto;
         text-align: right;
         justify-content: flex-end;
