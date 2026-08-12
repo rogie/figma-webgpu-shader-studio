@@ -482,6 +482,7 @@ export default function App() {
   const [pendingMedia, setPendingMedia] = useState(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -636,6 +637,8 @@ export default function App() {
     ? `cloud:${currentShader.id}`
     : `preset:${presetId}`;
   const isOwner = Boolean(user && currentShader?.owner_id === user.id);
+  const protectedPreview = Boolean(currentShader && !isOwner);
+  const effectiveCodeCollapsed = protectedPreview ? false : codeCollapsed;
   const currentAuthorIsYou = Boolean(isOwner || isDraftId(presetId));
   const currentAuthorName =
     currentShader?.author_name ||
@@ -655,6 +658,10 @@ export default function App() {
       ? user?.user_metadata?.avatar_url || user?.user_metadata?.picture || ""
       : "");
   const showCurrentAuthor = Boolean(currentShader || isDraftId(presetId));
+
+  useEffect(() => {
+    if (protectedPreview && renaming) setRenaming(false);
+  }, [protectedPreview, renaming]);
 
   useEffect(() => {
     document.documentElement.style.colorScheme = theme;
@@ -2012,9 +2019,9 @@ export default function App() {
       }
       setRuntimeValues({ ...valuesRef.current, [name]: value });
       setError(null);
-      setDirty(true);
+      if (!protectedPreview) setDirty(true);
     },
-    [setRuntimeValues]
+    [protectedPreview, setRuntimeValues]
   );
 
   const previewControl = useCallback((name, value) => {
@@ -2032,16 +2039,17 @@ export default function App() {
   const resetProperties = useCallback(() => {
     setRuntimeValues(buildDefaults(props));
     setError(null);
-    setDirty(true);
-  }, [props, setRuntimeValues]);
+    if (!protectedPreview) setDirty(true);
+  }, [props, protectedPreview, setRuntimeValues]);
 
   const startRename = useCallback(() => {
+    if (protectedPreview) return;
     setRenaming(true);
     requestAnimationFrame(() => {
       nameInputRef.current?.focus();
       nameInputRef.current?.input?.select();
     });
-  }, []);
+  }, [protectedPreview]);
 
   const finishRename = useCallback(() => {
     const input = nameInputRef.current?.input;
@@ -2083,12 +2091,12 @@ export default function App() {
         const applied = await applyMediaBlob(file, mimeType, generation);
         if (!applied) return;
         setPendingMedia(file);
-        setDirty(true);
+        if (!protectedPreview) setDirty(true);
       } finally {
         if (isInputApplyCurrent(generation)) setUploading(false);
       }
     },
-    [applyMediaBlob, isInputApplyCurrent]
+    [applyMediaBlob, isInputApplyCurrent, protectedPreview]
   );
 
   const onFileInput = useCallback(
@@ -2104,10 +2112,14 @@ export default function App() {
     [pickFile]
   );
 
-  const onSourceChange = useCallback((nextSource) => {
-    setSource(nextSource);
-    setDirty(true);
-  }, []);
+  const onSourceChange = useCallback(
+    (nextSource) => {
+      if (protectedPreview) return;
+      setSource(nextSource);
+      setDirty(true);
+    },
+    [protectedPreview]
+  );
   const openSettings = useCallback(() => setSettingsOpen(true), []);
 
   const onPreviewFile = useCallback(
@@ -2243,6 +2255,12 @@ export default function App() {
 
   const saveShader = useCallback(
     async (options = {}) => {
+      if (protectedPreview) {
+        if (options.background !== true) {
+          showNotice("Duplicate this shader to make changes.");
+        }
+        return null;
+      }
       if (!user) {
         setAuthOpen(true);
         return null;
@@ -2250,6 +2268,7 @@ export default function App() {
       const makePublic = options.makePublic === true;
       const background = options.background === true;
       const publicFlag = makePublic || isPublic;
+      const saveTargetId = presetId;
       const noticeMessage =
         "notice" in options ? options.notice : "Shader saved";
       const saveSnapshot = {
@@ -2347,6 +2366,12 @@ export default function App() {
           saved = await updateShader(saved.id, assetChanges);
         }
 
+        // A save for the previously open shader may finish after navigation.
+        // Let that row finish safely, but never replace the active editor state.
+        if (draftSessionRef.current.presetId !== saveTargetId) {
+          return saved;
+        }
+
         if (makePublic) setIsPublic(true);
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
@@ -2399,6 +2424,7 @@ export default function App() {
       isPublic,
       pendingMedia,
       presetId,
+      protectedPreview,
       setShaderRoute,
       shaderName,
       showNotice,
@@ -2442,67 +2468,79 @@ export default function App() {
   }, [saveShader, showNotice, user]);
 
   const duplicateShader = useCallback(async () => {
-    persistActiveDraft();
-    let mediaFile = pendingMedia;
-    if (!mediaFile && currentShader?.input_path) {
-      try {
-        const blob = await downloadAsset(currentShader.input_path);
-        mediaFile = new File(
-          [blob],
-          currentShader.input_name || "input",
-          { type: currentShader.input_mime_type || blob.type }
-        );
-      } catch {
-        mediaFile = null;
+    if (duplicating) return;
+    setDuplicating(true);
+    try {
+      persistActiveDraft();
+      let mediaFile = pendingMedia;
+      if (!mediaFile && currentShader?.input_path) {
+        try {
+          const blob = await downloadAsset(currentShader.input_path);
+          mediaFile = new File(
+            [blob],
+            currentShader.input_name || "input",
+            { type: currentShader.input_mime_type || blob.type }
+          );
+        } catch {
+          mediaFile = null;
+        }
       }
-    }
-    const id = `draft:${crypto.randomUUID()}`;
-    const name = `${shaderName} Copy`;
-    const draft = {
-      id,
-      name,
-      kind: detectKind(sourceRef.current),
-      source: sourceRef.current,
-      values: { ...valuesRef.current },
-      isPublic: false,
-      pendingMedia: mediaFile,
-    };
-    if (user) {
-      const saved = await createShader({
-        id: cloudIdForDraft(id),
-        owner_id: user.id,
+      const id = `draft:${crypto.randomUUID()}`;
+      const name = `${shaderName} Copy`;
+      const draft = {
+        id,
         name,
-        source: draft.source,
-        kind: draft.kind,
-        parameter_values: draft.values,
-        features: inferFeatures(draft.source),
-        is_public: false,
-      });
-      setCurrentShader(saved);
-      setPresetId(cloudChoiceId(saved.id));
-      setShaderRoute(saved.id);
+        kind: detectKind(sourceRef.current),
+        source: sourceRef.current,
+        values: { ...valuesRef.current },
+        isPublic: false,
+        pendingMedia: mediaFile,
+      };
+      if (user) {
+        const saved = await createShader({
+          id: cloudIdForDraft(id),
+          owner_id: user.id,
+          name,
+          source: draft.source,
+          kind: draft.kind,
+          parameter_values: draft.values,
+          features: inferFeatures(draft.source),
+          is_public: false,
+        });
+        setCurrentShader(saved);
+        setPresetId(cloudChoiceId(saved.id));
+        setShaderRoute(saved.id);
+        setShaderName(name);
+        setIsPublic(false);
+        setPendingMedia(mediaFile);
+        setDirty(true);
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        showNotice("Private draft created");
+        return;
+      }
+      setDrafts((current) => [draft, ...current]);
+      setCurrentShader(null);
+      setPresetId(id);
+      setShaderRoute(id);
       setShaderName(name);
       setIsPublic(false);
       setPendingMedia(mediaFile);
       setDirty(true);
-      setCloudShaders((current) => [
-        saved,
-        ...current.filter((item) => item.id !== saved.id),
-      ]);
-      showNotice("Private draft created");
-      return;
+      showNotice("Unsaved copy created");
+    } catch (duplicateError) {
+      setError(duplicateError.message || String(duplicateError));
+      showNotice(duplicateError.message || "Could not duplicate shader", {
+        error: true,
+      });
+    } finally {
+      setDuplicating(false);
     }
-    setDrafts((current) => [draft, ...current]);
-    setCurrentShader(null);
-    setPresetId(id);
-    setShaderRoute(id);
-    setShaderName(name);
-    setIsPublic(false);
-    setPendingMedia(mediaFile);
-    setDirty(true);
-    showNotice("Unsaved copy created");
   }, [
     currentShader,
+    duplicating,
     pendingMedia,
     persistActiveDraft,
     setShaderRoute,
@@ -2537,6 +2575,15 @@ export default function App() {
     if (!isOwner || !currentShader) return;
     setDeleteTarget({ cloud: currentShader, name: currentShader.name });
   }, [currentShader, isOwner]);
+
+  const copyShaderCode = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(sourceRef.current);
+      showNotice("Code copied to clipboard");
+    } catch (copyError) {
+      showNotice(copyError.message || "Could not copy code", { error: true });
+    }
+  }, [showNotice]);
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTarget || deleting) return;
@@ -2856,10 +2903,12 @@ export default function App() {
   }, [chatHeight]);
 
   useEffect(() => {
+    const gen = ++thumbnailCaptureGenRef.current;
+    if (protectedPreview) return undefined;
+
     const host = hostRef.current;
     if (!host?.ready || !runtimeReady) return undefined;
 
-    const gen = ++thumbnailCaptureGenRef.current;
     const targetId = presetId;
 
     const timer = window.setTimeout(() => {
@@ -2897,7 +2946,14 @@ export default function App() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [presetId, previewRevision, thumbnailRefreshRevision, runtimeReady, viewMode]);
+  }, [
+    presetId,
+    previewRevision,
+    protectedPreview,
+    thumbnailRefreshRevision,
+    runtimeReady,
+    viewMode,
+  ]);
 
   const libraryCards = useMemo(
     () =>
@@ -3018,7 +3074,7 @@ export default function App() {
               onChange={updateControl}
               onInput={previewControl}
             />
-            {user && (
+            {user && !protectedPreview && (
               <div className="sharing-controls">
                 <fig-field label="Public" direction="horizontal">
                   <fig-switch
@@ -3378,8 +3434,10 @@ export default function App() {
         <div
           ref={sidebarRef}
           className="shader-viewer-sidebar"
-          data-code-collapsed={codeCollapsed ? "true" : "false"}
-          data-chat-collapsed={chatCollapsed ? "true" : "false"}
+          data-code-collapsed={effectiveCodeCollapsed ? "true" : "false"}
+          data-chat-collapsed={
+            protectedPreview ? "false" : chatCollapsed ? "true" : "false"
+          }
         >
           <fig-header class="shader-editor-header" borderless>
             <div
@@ -3405,12 +3463,13 @@ export default function App() {
                   full=""
                   readonly={!renaming}
                   onClick={() => {
-                    if (!renaming) startRename();
+                    if (!renaming && !protectedPreview) startRename();
                   }}
                   onBlur={() => {
                     if (renaming) finishRename();
                   }}
                   onInput={(event) => {
+                    if (protectedPreview) return;
                     setShaderName(event.target.value);
                     setDirty(true);
                   }}
@@ -3451,111 +3510,135 @@ export default function App() {
             </div>
             {!renaming && (
               <hstack>
-                <fig-menu
-                  key={user ? "signed-in" : "signed-out"}
-                  position="bottom right"
-                >
-                  <fig-tooltip text="More">
-                    <fig-button
-                      ref={moreMenuAnchorRef}
-                      fig-menu-trigger=""
-                      variant="ghost"
-                      icon="true"
-                      aria-label="More shader actions"
-                    >
-                      <fig-icon name="more" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-menu-item value="rename" onClick={startRename}>
-                    Rename
-                  </fig-menu-item>
-                  <fig-menu-item
-                    value="save"
-                    disabled={saving || Boolean(currentShader && !dirty)}
-                    onClick={() => {
-                      saveShader().catch(() => {});
-                    }}
+                {protectedPreview ? (
+                  <fig-button
+                    type="button"
+                    variant="primary"
+                    disabled={duplicating}
+                    onClick={() => duplicateShader()}
                   >
-                    {saving ? "Saving…" : "Save"}
-                  </fig-menu-item>
-                  {user && (
+                    {duplicating ? "Duplicating…" : "Duplicate"}
+                  </fig-button>
+                ) : (
+                  <fig-menu
+                    key={user ? "signed-in" : "signed-out"}
+                    position="bottom right"
+                  >
+                    <fig-tooltip text="More">
+                      <fig-button
+                        ref={moreMenuAnchorRef}
+                        fig-menu-trigger=""
+                        variant="ghost"
+                        icon="true"
+                        aria-label="More shader actions"
+                      >
+                        <fig-icon name="more" />
+                      </fig-button>
+                    </fig-tooltip>
+                    <fig-menu-item value="rename" onClick={startRename}>
+                      Rename
+                    </fig-menu-item>
                     <fig-menu-item
-                      value="publish"
-                      disabled={saving}
+                      value="save"
+                      disabled={saving || Boolean(currentShader && !dirty)}
                       onClick={() => {
-                        publishAnchorRef.current = moreMenuAnchorRef.current;
-                        setPublishOpen(true);
+                        saveShader().catch(() => {});
                       }}
                     >
-                      Publish…
+                      {saving ? "Saving…" : "Save"}
                     </fig-menu-item>
-                  )}
-                  <fig-separator />
-                  <fig-menu-item value="duplicate" onClick={duplicateShader}>
-                    Duplicate
-                  </fig-menu-item>
-                  <fig-menu-item value="share" onClick={copyShareLink}>
-                    Copy link
-                  </fig-menu-item>
-                  <fig-menu-item
-                    value="delete"
-                    hidden={!isOwner}
-                    disabled={!isOwner}
-                    onClick={removeCurrentShader}
-                  >
-                    Delete
-                  </fig-menu-item>
-                  <fig-separator />
-                  <fig-menu-item value="export" onClick={exportFiles}>
-                    Download
-                  </fig-menu-item>
-                </fig-menu>
+                    {user && (
+                      <fig-menu-item
+                        value="publish"
+                        disabled={saving}
+                        onClick={() => {
+                          publishAnchorRef.current = moreMenuAnchorRef.current;
+                          setPublishOpen(true);
+                        }}
+                      >
+                        Publish…
+                      </fig-menu-item>
+                    )}
+                    <fig-separator />
+                    <fig-menu-item value="duplicate" onClick={duplicateShader}>
+                      Duplicate
+                    </fig-menu-item>
+                    <fig-menu-item value="share" onClick={copyShareLink}>
+                      Copy link
+                    </fig-menu-item>
+                    <fig-menu-item
+                      value="delete"
+                      hidden={!isOwner}
+                      disabled={!isOwner}
+                      onClick={removeCurrentShader}
+                    >
+                      Delete
+                    </fig-menu-item>
+                    <fig-separator />
+                    <fig-menu-item value="export" onClick={exportFiles}>
+                      Download
+                    </fig-menu-item>
+                  </fig-menu>
+                )}
               </hstack>
             )}
           </fig-header>
 
           <section
             className="shader-viewer-code"
-            data-collapsed={codeCollapsed ? "true" : "false"}
+            data-collapsed={effectiveCodeCollapsed ? "true" : "false"}
           >
-            <fig-header borderless aria-expanded={!codeCollapsed}>
-              <h3>Code editor</h3>
+            <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
+              <h3>Code</h3>
               <hstack>
-                <fig-tooltip
-                  text={codeCollapsed ? "Expand code" : "Collapse code"}
-                >
+                {protectedPreview ? (
                   <fig-button
                     type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label={
-                      codeCollapsed ? "Expand code" : "Collapse code"
-                    }
-                    onClick={() => {
-                      if (renaming) finishRename();
-                      setCodeCollapsed((collapsed) => !collapsed);
-                    }}
+                    variant="secondary"
+                    onClick={() => copyShaderCode()}
                   >
-                    <fig-icon
-                      class={
-                        codeCollapsed
-                          ? "section-chevron is-collapsed"
-                          : "section-chevron"
-                      }
-                      name="chevron"
-                      size="medium"
-                    />
+                    Copy
                   </fig-button>
-                </fig-tooltip>
+                ) : (
+                  <fig-tooltip
+                    text={
+                      effectiveCodeCollapsed ? "Expand code" : "Collapse code"
+                    }
+                  >
+                    <fig-button
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label={
+                        effectiveCodeCollapsed ? "Expand code" : "Collapse code"
+                      }
+                      onClick={() => {
+                        if (renaming) finishRename();
+                        setCodeCollapsed((collapsed) => !collapsed);
+                      }}
+                    >
+                      <fig-icon
+                        class={
+                          effectiveCodeCollapsed
+                            ? "section-chevron is-collapsed"
+                            : "section-chevron"
+                        }
+                        name="chevron"
+                        size="medium"
+                      />
+                    </fig-button>
+                  </fig-tooltip>
+                )}
               </hstack>
             </fig-header>
-            <div className="code-editor" hidden={codeCollapsed}>
-              {!codeCollapsed && (
+            <div className="code-editor" hidden={effectiveCodeCollapsed}>
+              {!effectiveCodeCollapsed && (
                 <Suspense fallback={null}>
                   <CodePane
                     source={source}
                     theme={theme}
                     error={error}
+                    readOnly={protectedPreview}
                     onSourceChange={onSourceChange}
                   />
                 </Suspense>
@@ -3563,7 +3646,7 @@ export default function App() {
             </div>
           </section>
 
-          {!codeCollapsed && !chatCollapsed && (
+          {!protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
             <div
               className="pane-resizer pane-resizer-row"
               role="separator"
@@ -3587,72 +3670,74 @@ export default function App() {
             />
           )}
 
-          <section
-            className="shader-viewer-chat"
-            data-collapsed={chatCollapsed ? "true" : "false"}
-          >
-            <fig-header borderless aria-expanded={!chatCollapsed}>
-              <h3>AI chat</h3>
-              <hstack>
-                {!chatCollapsed && (
-                  <fig-tooltip text="Clear chat">
+          {!protectedPreview && (
+            <section
+              className="shader-viewer-chat"
+              data-collapsed={chatCollapsed ? "true" : "false"}
+            >
+              <fig-header borderless aria-expanded={!chatCollapsed}>
+                <h3>AI chat</h3>
+                <hstack>
+                  {!chatCollapsed && (
+                    <fig-tooltip text="Clear chat">
+                      <fig-button
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        aria-label="Clear chat"
+                        disabled={!canClearChat}
+                        onClick={() => chatPaneRef.current?.clearChat()}
+                      >
+                        <TrashIcon />
+                      </fig-button>
+                    </fig-tooltip>
+                  )}
+                  <fig-tooltip
+                    text={chatCollapsed ? "Expand AI chat" : "Collapse AI chat"}
+                  >
                     <fig-button
                       type="button"
                       variant="ghost"
                       icon="true"
-                      aria-label="Clear chat"
-                      disabled={!canClearChat}
-                      onClick={() => chatPaneRef.current?.clearChat()}
+                      aria-label={
+                        chatCollapsed ? "Expand AI chat" : "Collapse AI chat"
+                      }
+                      onClick={() =>
+                        setChatCollapsed((collapsed) => !collapsed)
+                      }
                     >
-                      <TrashIcon />
+                      <fig-icon
+                        class={
+                          chatCollapsed
+                            ? "section-chevron is-collapsed"
+                            : "section-chevron"
+                        }
+                        name="chevron"
+                        size="medium"
+                      />
                     </fig-button>
                   </fig-tooltip>
-                )}
-                <fig-tooltip
-                  text={chatCollapsed ? "Expand AI chat" : "Collapse AI chat"}
-                >
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label={
-                      chatCollapsed ? "Expand AI chat" : "Collapse AI chat"
-                    }
-                    onClick={() =>
-                      setChatCollapsed((collapsed) => !collapsed)
-                    }
-                  >
-                    <fig-icon
-                      class={
-                        chatCollapsed
-                          ? "section-chevron is-collapsed"
-                          : "section-chevron"
-                      }
-                      name="chevron"
-                      size="medium"
-                    />
-                  </fig-button>
-                </fig-tooltip>
-              </hstack>
-            </fig-header>
-            {!chatCollapsed && (
-              <Suspense fallback={null}>
-                <ChatPane
-                  ref={chatPaneRef}
-                  sourceRef={sourceRef}
-                  kind={kind}
-                  fileName={shaderModuleFileName(presetId, shaderName)}
-                  shaderKey={chatShaderKey}
-                  featuresRef={shaderFeaturesRef}
-                  user={user}
-                  onApplySource={onSourceChange}
-                  onOpenSettings={openSettings}
-                  onNotice={showNotice}
-                  onCanClearChange={setCanClearChat}
-                />
-              </Suspense>
-            )}
-          </section>
+                </hstack>
+              </fig-header>
+              {!chatCollapsed && (
+                <Suspense fallback={null}>
+                  <ChatPane
+                    ref={chatPaneRef}
+                    sourceRef={sourceRef}
+                    kind={kind}
+                    fileName={shaderModuleFileName(presetId, shaderName)}
+                    shaderKey={chatShaderKey}
+                    featuresRef={shaderFeaturesRef}
+                    user={user}
+                    onApplySource={onSourceChange}
+                    onOpenSettings={openSettings}
+                    onNotice={showNotice}
+                    onCanClearChange={setCanClearChat}
+                  />
+                </Suspense>
+              )}
+            </section>
+          )}
         </div>
 
         <div

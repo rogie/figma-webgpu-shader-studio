@@ -10,19 +10,20 @@ const baseExtensions = [
   figmaShaderLanguage,
   EditorView.lineWrapping,
   lintGutter(),
-  interact({
-    rules: [
-      {
-        regexp: /-?\b\d+\.?\d*\b/g,
-        cursor: "ew-resize",
-        onDrag: (text, setText, event) => {
-          const value = Number(text) + event.movementX;
-          if (!Number.isNaN(value)) setText(value.toString());
-        },
-      },
-    ],
-  }),
 ];
+
+const numericDragExtension = interact({
+  rules: [
+    {
+      regexp: /-?\b\d+\.?\d*\b/g,
+      cursor: "ew-resize",
+      onDrag: (text, setText, event) => {
+        const value = Number(text) + event.movementX;
+        if (!Number.isNaN(value)) setText(value.toString());
+      },
+    },
+  ],
+});
 
 function errorLocation(error) {
   const message = String(error || "");
@@ -34,7 +35,13 @@ function errorLocation(error) {
   };
 }
 
-export default function CodePane({ source, onSourceChange, theme, error }) {
+export default function CodePane({
+  source,
+  onSourceChange,
+  theme,
+  error,
+  readOnly = false,
+}) {
   const [expanded, setExpanded] = useState(false);
   const location = useMemo(() => errorLocation(error), [error]);
   const extensions = useMemo(() => {
@@ -58,8 +65,12 @@ export default function CodePane({ source, onSourceChange, theme, error }) {
       },
       { delay: 0 }
     );
-    return [...baseExtensions, diagnostics];
-  }, [error, location]);
+    return [
+      ...baseExtensions,
+      readOnly ? EditorView.editable.of(false) : numericDragExtension,
+      diagnostics,
+    ];
+  }, [error, location, readOnly]);
 
   useEffect(() => {
     if (error) setExpanded(Boolean(location));
@@ -75,7 +86,8 @@ export default function CodePane({ source, onSourceChange, theme, error }) {
           theme={theme === "dark" ? xcodeDark : xcodeLight}
           placeholder="Figma shader module"
           extensions={extensions}
-          onChange={onSourceChange}
+          onChange={readOnly ? undefined : onSourceChange}
+          editable={!readOnly}
           basicSetup={{
             lineNumbers: true,
             foldGutter: true,
