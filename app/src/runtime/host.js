@@ -702,14 +702,16 @@ export class ShaderHost {
           /* ignore */
         }
       }
-      // Resume from the caller's play intent when this capture still belongs to
-      // the current module. A newer setModule bumps the generation so stale
-      // captures overlapping a shader switch do not restart the old loop.
+      // Resume from the caller's play intent. A newer setModule bumps the
+      // generation during capture; if that compile's start() already ran we
+      // leave it alone, otherwise bridge the gap so play preference and the
+      // host loop cannot diverge (UI play-on / host stopped).
+      if (!shouldResume() || !this.renderFn) return;
       if (
-        shouldResume() &&
-        playbackGeneration === this._playbackGeneration
+        playbackGeneration === this._playbackGeneration ||
+        !this.running
       ) {
-        this.start();
+        if (!this._isLoopActive()) this.start();
       }
     }
   }

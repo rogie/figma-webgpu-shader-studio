@@ -599,6 +599,7 @@ export default function App() {
   const sourceRef = useRef(source);
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
+  const compileGenerationRef = useRef(0);
   const inputSourceRef = useRef(inputSource);
   const inputApplyGenRef = useRef(0);
   inputSourceRef.current = inputSource;
@@ -919,12 +920,14 @@ export default function App() {
     (nextSource) => {
       const host = hostRef.current;
       if (!host?.ready) return;
+      const compileGeneration = ++compileGenerationRef.current;
       host.stop();
 
       let loaded;
       try {
         loaded = loadModule(nextSource);
       } catch (compileError) {
+        if (compileGeneration !== compileGenerationRef.current) return;
         setError(compileError.message);
         host.stop();
         setRunning(false);
@@ -949,6 +952,13 @@ export default function App() {
           }
         )
         .then((ok) => {
+          // A newer compile or host remount owns playback now.
+          if (
+            compileGeneration !== compileGenerationRef.current ||
+            hostRef.current !== host
+          ) {
+            return;
+          }
           if (!ok) {
             setRunning(false);
             return;
@@ -964,6 +974,9 @@ export default function App() {
             host.stop();
             setRunning(false);
           }
+        })
+        .catch(() => {
+          /* Destroyed hosts / GPU teardown can reject; ignore stale work. */
         });
     },
     [setRuntimeValues]
@@ -1378,7 +1391,8 @@ export default function App() {
         if (cancelled) return;
         await restoreSample();
         if (cancelled) return;
-        compile(sourceRef.current);
+        // Compile via the source/preset effect once runtimeReady flips — avoids
+        // racing a stale sourceRef when opening a shader from the home page.
         setRuntimeReady(true);
       } catch (initError) {
         setFatal(initError.message || String(initError));
@@ -1387,6 +1401,7 @@ export default function App() {
     return () => {
       cancelled = true;
       inputApplyGenRef.current += 1;
+      compileGenerationRef.current += 1;
       if (hostRef.current === host) {
         host.destroy();
         hostRef.current = null;
@@ -1395,10 +1410,10 @@ export default function App() {
       setRuntimeReady(false);
       clearObjectUrl();
     };
-  }, [clearObjectUrl, compile, restoreSample, viewMode]);
+  }, [clearObjectUrl, restoreSample, viewMode]);
 
   useEffect(() => {
-    if (!hostRef.current?.ready) return;
+    if (!runtimeReady || !hostRef.current?.ready) return;
     clearTimeout(compileTimer.current);
     const switchedShader = lastCompiledPresetRef.current !== presetId;
     lastCompiledPresetRef.current = presetId;
@@ -1408,7 +1423,7 @@ export default function App() {
     }
     compileTimer.current = setTimeout(() => compile(source), 350);
     return () => clearTimeout(compileTimer.current);
-  }, [source, presetId, compile]);
+  }, [source, presetId, compile, runtimeReady]);
 
   useEffect(
     () => () => {
@@ -1592,8 +1607,12 @@ export default function App() {
 
   const openCloudShader = useCallback(
     async (shader) => {
-      setShaderRoute(shader.id);
-      if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) return;
+      if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) {
+        setShaderRoute(shader.id);
+        return;
+      }
+      // Resolve source before flipping into the editor so host init / compile
+      // never race a placeholder module from the previous session.
       const fullShader = shader.source
         ? shader
         : { ...shader, ...(await getShader(shader.id)) };
@@ -1609,8 +1628,8 @@ export default function App() {
       setIsPublic(fullShader.is_public);
       setPendingMedia(null);
       setDirty(false);
-      setError(null);
-      if (runtimeReady) {
+      setShaderRoute(fullShader.id);
+      if (hostRef.current?.ready) {
         try {
           await loadMediaForShader(fullShader);
         } catch (mediaError) {
@@ -1618,7 +1637,7 @@ export default function App() {
         }
       }
     },
-    [loadMediaForShader, persistActiveDraft, runtimeReady, setShaderRoute]
+    [loadMediaForShader, persistActiveDraft, setShaderRoute]
   );
 
   const refreshLibrary = useCallback(async () => {
@@ -2157,6 +2176,7 @@ export default function App() {
       height,
       type: "image/webp",
       quality: 0.92,
+      shouldResume: () => playPreferenceRef.current,
     });
     if (!blob) {
       setError("Could not capture the preview image.");
@@ -2325,6 +2345,7 @@ export default function App() {
           thumbnailBlob = await hostRef.current?.captureThumbnailBlob({
             width: THUMBNAIL_SIZE,
             height: THUMBNAIL_SIZE,
+            shouldResume: () => playPreferenceRef.current,
           });
         } catch {
           thumbnailBlob = null;

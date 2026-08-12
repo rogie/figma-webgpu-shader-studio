@@ -238,3 +238,52 @@ test("start restarts RAF when marked running but the loop stopped", () => {
     globalThis.requestAnimationFrame = originalRaf;
   }
 });
+
+test("thumbnail capture resumes play when a newer module left the host stopped", async () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    host.canvas.width = 4;
+    host.canvas.height = 4;
+    host.renderFn = () => {};
+    host._present = () => null;
+    host.start();
+    assert.equal(host.running, true);
+
+    const originalStop = host.stop.bind(host);
+    host.stop = () => {
+      originalStop();
+      // Simulate compile overlapping the capture: generation advances and the
+      // new module's start() has not run yet.
+      host._playbackGeneration += 1;
+    };
+
+    await host.captureThumbnailBlob({
+      shouldResume: () => true,
+    });
+    assert.equal(host.running, true);
+    assert.ok(host.rafId);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("thumbnail capture does not resume when play preference is off", async () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    host.canvas.width = 4;
+    host.canvas.height = 4;
+    host.renderFn = () => {};
+    host._present = () => null;
+    host.start();
+
+    await host.captureThumbnailBlob({
+      shouldResume: () => false,
+    });
+    assert.equal(host.running, false);
+    assert.equal(host.rafId, 0);
+  } finally {
+    raf.restore();
+  }
+});
