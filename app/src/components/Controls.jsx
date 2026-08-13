@@ -5,6 +5,7 @@ import {
   useRef,
 } from "react";
 import {
+  CANVAS_PROP_TYPES,
   colorToHex,
   hexToColor,
   showsInPropertyPanel,
@@ -729,17 +730,33 @@ function PropskitColorPointControl({
     };
   const currentRef = useRef(current);
   currentRef.current = current;
+  // Keep #RRGGBBAA so opacity-only canvas edits still change the serialized
+  // value (6-digit hex would look identical and skip the panel sync).
   const serialized = JSON.stringify({
     x: current.x ?? 50,
     y: current.y ?? 50,
-    color: colorToHex(current.color || { r: 1, g: 1, b: 1, a: 1 }).slice(0, 7),
+    color: colorToHex(current.color || { r: 1, g: 1, b: 1, a: 1 }),
   });
   const mapDetail = useCallback((detail) => {
     const fallback = currentRef.current;
-    const color =
+    let color =
       typeof detail.color === "string"
         ? hexToColor(detail.color)
-        : fallback.color || { r: 1, g: 1, b: 1, a: 1 };
+        : { ...(fallback.color || { r: 1, g: 1, b: 1, a: 1 }) };
+    if (detail.alpha != null && Number.isFinite(Number(detail.alpha))) {
+      color = {
+        ...color,
+        a: Math.max(0, Math.min(1, Number(detail.alpha))),
+      };
+    } else if (
+      detail.opacity != null &&
+      Number.isFinite(Number(detail.opacity))
+    ) {
+      color = {
+        ...color,
+        a: Math.max(0, Math.min(100, Number(detail.opacity))) / 100,
+      };
+    }
     return {
       x: Number(detail.x ?? fallback.x ?? 50),
       y: Number(detail.y ?? fallback.y ?? 50),
@@ -754,6 +771,17 @@ function PropskitColorPointControl({
     onCommit
   );
   useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+
+  // propskit-color-point's inner color control omits alpha; enable it so the
+  // panel can show/edit opacity that canvas color handles emit.
+  useLayoutEffect(() => {
+    const host = controlRef.current;
+    if (!host) return;
+    const color = host.querySelector?.("propskit-color");
+    if (color && color.getAttribute("alpha") !== "true") {
+      color.setAttribute("alpha", "true");
+    }
+  }, []);
 
   return (
     <propskit-color-point
@@ -865,9 +893,15 @@ function Control({ def, value, onChange }) {
 export default function Controls({ props, values, onChange, onInput }) {
   const coalescedChange = useCoalescedPropertyCallback(onChange);
   const coalescedInput = useCoalescedPropertyCallback(onInput);
-  const entries = Object.entries(props || {}).filter(([, def]) =>
-    showsInPropertyPanel(def)
-  );
+  // Spatial/canvas-handle props stay at the bottom so ordinary controls stay
+  // grouped at the top of the panel.
+  const entries = Object.entries(props || {})
+    .filter(([, def]) => showsInPropertyPanel(def))
+    .sort(([, a], [, b]) => {
+      const aCanvas = CANVAS_PROP_TYPES.has(a?.type) ? 1 : 0;
+      const bCanvas = CANVAS_PROP_TYPES.has(b?.type) ? 1 : 0;
+      return aCanvas - bCanvas;
+    });
   if (entries.length === 0) {
     return (
       <fig-field>
