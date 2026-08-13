@@ -30,6 +30,49 @@ test("play schedules RAF even when animation source inference is false", () => {
   }
 });
 
+test("user pause resets time to zero and redraws", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+    host.frame.time = 1500;
+    host.frame.deltaTime = 16;
+    host.frame.frame = 90;
+    host.running = true;
+    host.rafId = 7;
+
+    host.stop({ resetTime: true });
+
+    assert.equal(host.running, false);
+    assert.equal(host.rafId, 0);
+    assert.equal(host.frame.time, 0);
+    assert.equal(host.frame.deltaTime, 0);
+    assert.equal(host.frame.frame, 0);
+    assert.equal(redraws, 1);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("internal stop keeps the current frame time", () => {
+  const host = makeHost();
+  let redraws = 0;
+  host.redraw = () => {
+    redraws += 1;
+  };
+  host.frame.time = 1500;
+  host.frame.frame = 90;
+
+  host.stop();
+
+  assert.equal(host.frame.time, 1500);
+  assert.equal(host.frame.frame, 90);
+  assert.equal(redraws, 0);
+});
+
 test("play advances time uniforms on every animation frame", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   const callbacks = [];
@@ -40,13 +83,13 @@ test("play advances time uniforms on every animation frame", () => {
   try {
     const host = makeHost();
     const presentedTimes = [];
-    host.startTime = 100;
     host._present = () => {
       presentedTimes.push(host.frame.time);
     };
 
     host.start();
-    callbacks[0](150);
+    const t0 = host.startTime;
+    callbacks[0](t0 + 50);
 
     assert.equal(host.frame.time, 50);
     assert.equal(host.frame.frame, 1);

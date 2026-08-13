@@ -65,7 +65,19 @@ From 8.1.0, `fig-editor.css` no longer `@import`s `fig-lab.css`. Propskit / chat
 
 ## Propskit point controls (8.1+)
 
-New lab controls mirror canvas control shapes: `propskit-position`, `propskit-color-point`, `propskit-point-radius`, `propskit-point-radius-angle`, `propskit-point-point`. Properties panel still uses `fig-field` + `VectorControl` for those types until wired up.
+Lab controls mirror canvas control shapes and are wired in `Controls.jsx`:
+
+| defineProperties type | Propskit control |
+|-----------------------|------------------|
+| `point` | `propskit-position` |
+| `color-point` | `propskit-color-point` |
+| `point-radius` | `propskit-point-radius` |
+| `point-angle-radius` | `propskit-point-radius-angle` |
+| `point-point-line` | `propskit-point-point` |
+
+Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coords; radius as a number in app state, `"N%"` strings when propskit `units="percent"`). Keep full `#RRGGBBAA` on color-point sync so opacity-only canvas edits refresh the panel. Canvas-related props sort to the bottom of the properties panel.
+
+`propskit-color-point` does not set `alpha` on its inner `propskit-color`; enable it after mount if the panel must show opacity.
 
 ## Vite cache
 

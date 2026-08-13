@@ -17,6 +17,7 @@ function ShaderListItem({
         alt={label}
         fit="contain"
         aspect-ratio="1/1"
+        loading-indicator="false"
         dangerouslySetInnerHTML={opaqueContent}
       />
       <div className="shader-list-item-text">

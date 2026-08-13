@@ -942,7 +942,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   start() {
     if (!this.renderFn) return;
     this.running = true;
-    this.lastTime = performance.now();
+    const now = performance.now();
+    // Resume from the current frame clock so temporary stop()/start() pairs
+    // (thumbnail capture) do not jump, and a zeroed pause restarts at t=0.
+    this.startTime = now - (Number(this.frame.time) || 0);
+    this.lastTime = now;
     if (this._needsAnimationFrame()) {
       this._scheduleLoop();
     } else {
@@ -958,10 +962,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     return this._present();
   }
 
-  stop() {
+  /**
+   * @param {{ resetTime?: boolean }} [options]
+   *   resetTime — user pause: snap the preview back to t=0. Leave false for
+   *   internal stops (thumbnail capture, compile) that must keep the frame.
+   */
+  stop({ resetTime = false } = {}) {
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    if (!resetTime) return;
+    this.frame.time = 0;
+    this.frame.deltaTime = 0;
+    this.frame.frame = 0;
+    this.startTime = performance.now();
+    this.lastTime = this.startTime;
+    if (this.ready && this.renderFn) this.redraw();
   }
 
   setActive(active) {

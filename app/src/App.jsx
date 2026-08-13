@@ -335,8 +335,19 @@ function ShaderNavCard({
   authorAvatarUrl,
 }) {
   const [loaded, setLoaded] = useState(false);
+  const imgRef = useRef(null);
 
-  useEffect(() => setLoaded(false), [src]);
+  useEffect(() => {
+    const img = imgRef.current;
+    // Cached images often won't re-fire onLoad after a same-src remount or a
+    // signed-URL rotation that the browser still has in cache — avoid flashing
+    // the spinner when the bitmap is already available.
+    if (img?.complete && img.naturalWidth > 0) {
+      setLoaded(true);
+      return;
+    }
+    setLoaded(false);
+  }, [src]);
 
   return (
     <fig-card
@@ -355,6 +366,7 @@ function ShaderNavCard({
         {!loaded && <fig-spinner aria-label={`Loading ${label} preview`} />}
         {src && (
           <img
+            ref={imgRef}
             src={src}
             alt={label}
             onLoad={() => setLoaded(true)}
@@ -1849,8 +1861,12 @@ export default function App() {
     [loadMediaForShader, persistActiveDraft, setShaderRoute]
   );
 
+  const cloudThumbnailPathsRef = useRef({});
+  const userId = user?.id ?? null;
+
   const refreshLibrary = useCallback(async () => {
     if (!authConfigured) {
+      cloudThumbnailPathsRef.current = {};
       setCloudShaders([]);
       setCloudThumbnails({});
       return;
@@ -1863,15 +1879,39 @@ export default function App() {
       const urlsByPath = await getAssetUrls(
         shaders.map((shader) => shader.thumbnail_path)
       );
-      const entries = shaders.map((shader) => [
-        shader.id,
-        urlsByPath[shader.thumbnail_path] || null,
-      ]);
-      setCloudThumbnails(Object.fromEntries(entries));
+      setCloudThumbnails((previous) => {
+        const nextPathById = {};
+        const next = {};
+        let changed =
+          Object.keys(previous).length !== shaders.length;
+        for (const shader of shaders) {
+          const path = shader.thumbnail_path || null;
+          nextPathById[shader.id] = path;
+          // Keep the prior signed URL when the asset path is unchanged so a
+          // routine library refresh (e.g. tab focus / auth churn) does not
+          // force every thumbnail <img> to reload.
+          if (
+            path &&
+            cloudThumbnailPathsRef.current[shader.id] === path &&
+            previous[shader.id]
+          ) {
+            next[shader.id] = previous[shader.id];
+            continue;
+          }
+          const url = path ? urlsByPath[path] || null : null;
+          next[shader.id] = url;
+          if (url !== previous[shader.id]) changed = true;
+        }
+        for (const id of Object.keys(previous)) {
+          if (!(id in next)) changed = true;
+        }
+        cloudThumbnailPathsRef.current = nextPathById;
+        return changed ? next : previous;
+      });
     } catch (libraryError) {
       setError(libraryError.message || String(libraryError));
     }
-  }, [authConfigured, user]);
+  }, [authConfigured, userId]);
 
   useEffect(() => {
     refreshLibrary();
@@ -2322,7 +2362,7 @@ export default function App() {
     if (next) {
       host.start();
     } else {
-      host.stop();
+      host.stop({ resetTime: true });
     }
     setRunning(next);
   }, [running]);

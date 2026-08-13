@@ -27,8 +27,20 @@ export function AuthProvider({ children }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
+    } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      // Token refresh on tab focus must not replace the user object identity —
+      // several effects (library thumbnails, drafts) key off `user` and would
+      // refetch / remount as if the session were new.
+      setSession((previous) => {
+        if (
+          event === "TOKEN_REFRESHED" &&
+          previous?.user?.id &&
+          previous.user.id === nextSession?.user?.id
+        ) {
+          return { ...nextSession, user: previous.user };
+        }
+        return nextSession;
+      });
       setLoading(false);
     });
 
