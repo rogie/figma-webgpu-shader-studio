@@ -5,6 +5,13 @@ import {
   setProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
+import {
+  getFigmaAccessToken,
+  setFigmaAccessToken,
+  subscribeFigmaAccessToken,
+} from "../lib/figmaAccessToken.js";
+import { FIGMA_LIBRARY_UI_ENABLED } from "../lib/figmaLibraryUi.js";
+import { testFigmaConnection } from "../services/figmaShaders.js";
 import { getProfile, saveProfile } from "../services/shaders.js";
 
 function accountDisplayName(user) {
@@ -44,6 +51,11 @@ export default function AccountMenu({
     () => getProviderKeys().anthropic
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
+  const [figmaToken, setFigmaToken] = useState(() => getFigmaAccessToken());
+  const [figmaTestState, setFigmaTestState] = useState(
+    /** @type {"idle" | "testing" | "ok" | "error"} */ ("idle")
+  );
+  const [figmaTestMessage, setFigmaTestMessage] = useState("");
   const [displayName, setDisplayName] = useState(() =>
     accountDisplayName(user)
   );
@@ -61,6 +73,13 @@ export default function AccountMenu({
       setOpenaiKey(keys.openai);
       setAnthropicKey(keys.anthropic);
       setGeminiKey(keys.gemini);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!FIGMA_LIBRARY_UI_ENABLED) return undefined;
+    return subscribeFigmaAccessToken(() => {
+      setFigmaToken(getFigmaAccessToken());
     });
   }, []);
 
@@ -161,12 +180,33 @@ export default function AccountMenu({
       setProviderKey("openai", openaiKey);
       setProviderKey("anthropic", anthropicKey);
       setProviderKey("gemini", geminiKey);
+      if (FIGMA_LIBRARY_UI_ENABLED) {
+        setFigmaAccessToken(figmaToken);
+      }
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
       setSettingsError(saveError.message || String(saveError));
     } finally {
       setSettingsSaving(false);
+    }
+  };
+
+  const testFigma = async () => {
+    setFigmaTestState("testing");
+    setFigmaTestMessage("");
+    try {
+      // Persist the field first so the proxy and home library see the same token.
+      setFigmaAccessToken(figmaToken);
+      const result = await testFigmaConnection({ token: figmaToken });
+      const who = result.handle || result.email || "Figma";
+      setFigmaTestState("ok");
+      setFigmaTestMessage(
+        `REST token OK (${who}). Official MCP still needs OAuth — PAT cannot list/import shaders yet.`
+      );
+    } catch (testError) {
+      setFigmaTestState("error");
+      setFigmaTestMessage(testError.message || String(testError));
     }
   };
 
@@ -372,6 +412,61 @@ export default function AccountMenu({
               />
             </fig-field>
           </fig-group>
+
+          {FIGMA_LIBRARY_UI_ENABLED && (
+            <fig-group name="Figma" collapsible="" open="">
+              <p>
+                Official remote MCP requires OAuth (not a personal access token),
+                and shader library tools currently need an allowlisted MCP
+                client. A PAT can only verify REST identity for now; it cannot
+                unlock list/import against mcp.figma.com. Token stays on this
+                device.
+              </p>
+              <fig-field>
+                <label>Access token (REST)</label>
+                <fig-input-text
+                  type="password"
+                  full=""
+                  value={figmaToken}
+                  placeholder="figd_…"
+                  autocomplete="off"
+                  onInput={(event) => {
+                    setFigmaToken(event.target.value);
+                    setFigmaTestState("idle");
+                    setFigmaTestMessage("");
+                  }}
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+              </fig-field>
+              <hstack>
+                <fig-button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    !figmaToken.trim() || figmaTestState === "testing"
+                      ? ""
+                      : undefined
+                  }
+                  onClick={() => {
+                    testFigma().catch(() => {});
+                  }}
+                >
+                  {figmaTestState === "testing" ? "Testing…" : "Verify token"}
+                </fig-button>
+              </hstack>
+              {figmaTestMessage && (
+                <p
+                  className={
+                    figmaTestState === "error"
+                      ? "form-message error"
+                      : "form-message"
+                  }
+                >
+                  {figmaTestMessage}
+                </p>
+              )}
+            </fig-group>
+          )}
           {settingsError && (
             <p className="form-message error">{settingsError}</p>
           )}

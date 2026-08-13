@@ -4,6 +4,8 @@ import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
   filterShaderLibraryCards,
+  figmaLibraryKey,
+  parseFigmaLibraryKey,
 } from "./shaderLibrary.js";
 
 test("shows drafts, owned cloud drafts, and public shaders without presets", () => {
@@ -91,6 +93,26 @@ test("labels signed-out local drafts as Anon (You)", () => {
   });
 
   assert.equal(draft.authorName, ANON_YOU_LABEL);
+});
+
+test("builds figma library cards and parses keys", () => {
+  const cards = buildShaderLibraryCards({
+    drafts: [],
+    cloudShaders: [],
+    figmaShaders: [
+      { id: "fx-1", name: "CRT", kind: "effect", description: "Retro" },
+    ],
+  });
+  assert.equal(cards.length, 1);
+  assert.equal(cards[0].origin, "figma");
+  assert.equal(cards[0].key, figmaLibraryKey("effect", "fx-1"));
+  assert.deepEqual(parseFigmaLibraryKey(cards[0].key), {
+    kind: "effect",
+    id: "fx-1",
+  });
+  assert.deepEqual(filterShaderLibraryCards(cards, { origin: "figma" }), [
+    cards[0],
+  ]);
 });
 
 test("filters draft and public cards independently", () => {

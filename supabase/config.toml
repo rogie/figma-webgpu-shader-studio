@@ -28,3 +28,7 @@ enabled = false
 [functions.chat]
 # BYOK chat forwards the caller's key; JWT is optional.
 verify_jwt = false
+
+[functions.figma-shaders]
+# BYOK Figma token from Settings; JWT is optional.
+verify_jwt = false

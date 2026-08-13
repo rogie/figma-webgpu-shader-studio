@@ -89,15 +89,40 @@ export function splitAssistantContent(text) {
 }
 
 /**
- * Turn provider/proxy error blobs into a short UI message.
- * @param {unknown} raw
+ * @param {string} [provider]
+ * @returns {"openai" | "anthropic" | "gemini" | null}
  */
-function summarizeProviderError(text) {
+function normalizeProvider(provider) {
+  if (provider === "openai" || provider === "anthropic" || provider === "gemini") {
+    return provider;
+  }
+  return null;
+}
+
+/**
+ * Turn provider/proxy error blobs into a short UI message.
+ * @param {string} text
+ * @param {string} [provider]
+ */
+function summarizeProviderError(text, provider) {
+  const known = normalizeProvider(provider);
   if (/quota|rate.?limit|RESOURCE_EXHAUSTED|429/i.test(text)) {
-    return "API quota or rate limit exceeded. Check your plan/billing (for Gemini: ai.google.dev), or switch model/provider.";
+    if (known === "gemini") {
+      return "API quota or rate limit exceeded. Check your Gemini plan/billing at ai.google.dev, or switch model/provider.";
+    }
+    if (known === "openai") {
+      return "API quota or rate limit exceeded. Check your OpenAI plan/billing, or switch model/provider.";
+    }
+    if (known === "anthropic") {
+      return "API quota or rate limit exceeded. Check your Anthropic plan/billing, or switch model/provider.";
+    }
+    return "API quota or rate limit exceeded. Check your plan/billing for the selected provider, or switch model/provider.";
   }
   if (/no longer available|not available to new users/i.test(text)) {
-    return "That model is no longer available for your API key. Pick a newer Gemini model from the list.";
+    if (known === "gemini") {
+      return "That model is no longer available for your API key. Pick a newer Gemini model from the list.";
+    }
+    return "That model is no longer available for your API key. Pick another model from the list.";
   }
   if (/API key not valid|API_KEY_INVALID|invalid api key/i.test(text)) {
     return "API key is invalid. Update it in Settings.";
@@ -105,11 +130,16 @@ function summarizeProviderError(text) {
   return null;
 }
 
-export function formatChatError(raw) {
+/**
+ * @param {unknown} raw
+ * @param {{ provider?: string }} [options]
+ */
+export function formatChatError(raw, options = {}) {
   const text = String(raw ?? "").trim();
   if (!text) return "Chat failed.";
 
-  const early = summarizeProviderError(text);
+  const provider = options.provider;
+  const early = summarizeProviderError(text, provider);
   if (early) return early;
 
   let message = text;
@@ -127,7 +157,7 @@ export function formatChatError(raw) {
     }
   }
 
-  const summarized = summarizeProviderError(message);
+  const summarized = summarizeProviderError(message, provider);
   if (summarized) return summarized;
 
   if (message.length > 280) return `${message.slice(0, 277)}…`;

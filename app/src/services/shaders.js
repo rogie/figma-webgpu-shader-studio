@@ -43,7 +43,7 @@ export async function listShaders() {
     await client
       .from("shaders")
       .select(
-        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, created_at, updated_at"
+        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, figma_shader_id, figma_shader_kind, figma_shader_version, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
   );

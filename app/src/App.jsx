@@ -46,8 +46,18 @@ import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
   filterShaderLibraryCards,
+  parseFigmaLibraryKey,
 } from "./lib/shaderLibrary.js";
+import {
+  getFigmaAccessToken,
+  subscribeFigmaAccessToken,
+} from "./lib/figmaAccessToken.js";
+import { FIGMA_LIBRARY_UI_ENABLED } from "./lib/figmaLibraryUi.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
+import {
+  getFigmaShader,
+  listFigmaShaders,
+} from "./services/figmaShaders.js";
 import {
   createShader,
   deleteShader,
@@ -153,22 +163,31 @@ function createRafCssWriter(element, property) {
   };
 }
 
-function groupLibraryCards(cards) {
+function groupByKind(cards, effectLabel, fillLabel, keyPrefix) {
   const effects = cards.filter((card) => card.kind === "effect");
   const fills = cards.filter((card) => card.kind === "fill");
   return [
     ...(effects.length
       ? [
-          { key: "separator:effect", separatorLabel: "Shader effect" },
+          { key: `separator:${keyPrefix}:effect`, separatorLabel: effectLabel },
           ...effects,
         ]
       : []),
     ...(fills.length
       ? [
-          { key: "separator:fill", separatorLabel: "Shader fill" },
+          { key: `separator:${keyPrefix}:fill`, separatorLabel: fillLabel },
           ...fills,
         ]
       : []),
+  ];
+}
+
+function groupLibraryCards(cards) {
+  const studio = cards.filter((card) => card.origin !== "figma");
+  const figma = cards.filter((card) => card.origin === "figma");
+  return [
+    ...groupByKind(studio, "Shader effect", "Shader fill", "studio"),
+    ...groupByKind(figma, "Figma effect", "Figma fill", "figma"),
   ];
 }
 
@@ -203,6 +222,16 @@ function serializeDraft(draft, thumbnail = null) {
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
     isPublic: Boolean(draft.isPublic),
     thumbnail: typeof thumbnail === "string" ? thumbnail : null,
+    figma_shader_id:
+      typeof draft.figma_shader_id === "string" ? draft.figma_shader_id : null,
+    figma_shader_kind:
+      draft.figma_shader_kind === "effect" || draft.figma_shader_kind === "fill"
+        ? draft.figma_shader_kind
+        : null,
+    figma_shader_version:
+      typeof draft.figma_shader_version === "string"
+        ? draft.figma_shader_version
+        : null,
   };
 }
 
@@ -232,6 +261,19 @@ function savedDrafts() {
         pendingMedia: null,
         thumbnail:
           typeof draft.thumbnail === "string" ? draft.thumbnail : null,
+        figma_shader_id:
+          typeof draft.figma_shader_id === "string"
+            ? draft.figma_shader_id
+            : null,
+        figma_shader_kind:
+          draft.figma_shader_kind === "effect" ||
+          draft.figma_shader_kind === "fill"
+            ? draft.figma_shader_kind
+            : null,
+        figma_shader_version:
+          typeof draft.figma_shader_version === "string"
+            ? draft.figma_shader_version
+            : null,
       }));
   } catch {
     return [];
@@ -517,6 +559,13 @@ export default function App() {
   const [editorKind, setEditorKind] = useState("all");
   const [editorOrigin, setEditorOrigin] = useState("all");
   const [editorAuthor, setEditorAuthor] = useState("all");
+  const [figmaTokenConfigured, setFigmaTokenConfigured] = useState(
+    () =>
+      FIGMA_LIBRARY_UI_ENABLED ? Boolean(getFigmaAccessToken()) : false
+  );
+  const [figmaShaders, setFigmaShaders] = useState([]);
+  const [figmaLibraryLoading, setFigmaLibraryLoading] = useState(false);
+  const [figmaLibraryError, setFigmaLibraryError] = useState("");
   const [codeCollapsed, setCodeCollapsed] = useState(
     () => savedSidebarSections().codeCollapsed
   );
@@ -668,6 +717,61 @@ export default function App() {
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    if (!FIGMA_LIBRARY_UI_ENABLED) {
+      setFigmaTokenConfigured(false);
+      return undefined;
+    }
+    const syncToken = () => {
+      setFigmaTokenConfigured(Boolean(getFigmaAccessToken()));
+    };
+    syncToken();
+    return subscribeFigmaAccessToken(syncToken);
+  }, []);
+
+  useEffect(() => {
+    if (!FIGMA_LIBRARY_UI_ENABLED && homeOrigin === "figma") {
+      setHomeOrigin("all");
+    }
+  }, [homeOrigin]);
+
+  useEffect(() => {
+    if (!FIGMA_LIBRARY_UI_ENABLED || !figmaTokenConfigured) {
+      setFigmaShaders([]);
+      setFigmaLibraryError("");
+      setFigmaLibraryLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setFigmaLibraryLoading(true);
+    setFigmaLibraryError("");
+
+    (async () => {
+      try {
+        const [effects, fills] = await Promise.all([
+          listFigmaShaders("effect"),
+          listFigmaShaders("fill"),
+        ]);
+        if (cancelled) return;
+        setFigmaShaders([
+          ...effects.items.map((item) => ({ ...item, kind: "effect" })),
+          ...fills.items.map((item) => ({ ...item, kind: "fill" })),
+        ]);
+      } catch (libraryError) {
+        if (cancelled) return;
+        setFigmaShaders([]);
+        setFigmaLibraryError(libraryError.message || String(libraryError));
+      } finally {
+        if (!cancelled) setFigmaLibraryLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [figmaTokenConfigured]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -1605,6 +1709,108 @@ export default function App() {
     ]
   );
 
+  const openFigmaShader = useCallback(
+    async (kind, id) => {
+      const detail = await getFigmaShader(kind, id);
+      const sourceText = detail.mainTs;
+      const name = detail.name || "Figma Shader";
+      const shaderKind = detail.kind === "fill" ? "fill" : "effect";
+      const link = {
+        figma_shader_id: detail.id,
+        figma_shader_kind: shaderKind,
+        figma_shader_version: detail.version || null,
+      };
+
+      persistActiveDraft();
+      pendingValuesRef.current = {};
+      hostRef.current?.stop();
+      setRunning(playPreferenceRef.current);
+      setError(null);
+      setIsPublic(false);
+      setPendingMedia(null);
+      setDirty(true);
+      setShaderName(name);
+      setSource(sourceText);
+
+      if (user) {
+        const existing = cloudShaders.find(
+          (item) =>
+            item.owner_id === user.id &&
+            item.figma_shader_id === detail.id &&
+            item.figma_shader_kind === shaderKind
+        );
+        let saved;
+        if (existing) {
+          saved = await updateShader(existing.id, {
+            name,
+            source: sourceText,
+            kind: shaderKind,
+            parameter_values: {},
+            features: inferFeatures(sourceText),
+            ...link,
+          });
+        } else {
+          saved = await createShader({
+            owner_id: user.id,
+            name,
+            source: sourceText,
+            kind: shaderKind,
+            parameter_values: {},
+            features: inferFeatures(sourceText),
+            is_public: false,
+            ...link,
+          });
+        }
+        setCurrentShader(saved);
+        setPresetId(cloudChoiceId(saved.id));
+        setShaderRoute(saved.id);
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        if (hostRef.current?.ready) {
+          if (shaderKind === "effect") await reapplyPreferredInput();
+          else {
+            clearObjectUrl();
+            hostRef.current.clearInput();
+          }
+        }
+        return;
+      }
+
+      const draftId = `draft:${crypto.randomUUID()}`;
+      const draft = {
+        id: draftId,
+        name,
+        kind: shaderKind,
+        source: sourceText,
+        values: {},
+        isPublic: false,
+        pendingMedia: null,
+        ...link,
+      };
+      setDrafts((current) => [draft, ...current]);
+      setCurrentShader(null);
+      setPresetId(draftId);
+      setShaderRoute(draftId);
+      if (hostRef.current?.ready) {
+        if (shaderKind === "effect") await reapplyPreferredInput();
+        else {
+          clearObjectUrl();
+          hostRef.current.clearInput();
+        }
+      }
+    },
+    [
+      clearObjectUrl,
+      cloudShaders,
+      persistActiveDraft,
+      reapplyPreferredInput,
+      setShaderRoute,
+      user,
+    ]
+  );
+
   const openCloudShader = useCallback(
     async (shader) => {
       if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) {
@@ -1919,6 +2125,15 @@ export default function App() {
 
   const chooseItem = useCallback(
     (id) => {
+      const figmaRef = FIGMA_LIBRARY_UI_ENABLED
+        ? parseFigmaLibraryKey(id)
+        : null;
+      if (figmaRef) {
+        openFigmaShader(figmaRef.kind, figmaRef.id).catch((figmaError) =>
+          setError(figmaError.message || String(figmaError))
+        );
+        return;
+      }
       if (isDraftId(id)) {
         const draft = drafts.find((item) => item.id === id);
         if (draft) openDraft(draft);
@@ -1933,7 +2148,14 @@ export default function App() {
         );
       }
     },
-    [choosePreset, cloudShaders, drafts, openCloudShader, openDraft]
+    [
+      choosePreset,
+      cloudShaders,
+      drafts,
+      openCloudShader,
+      openDraft,
+      openFigmaShader,
+    ]
   );
 
   const openPublishForCard = useCallback(
@@ -2301,6 +2523,9 @@ export default function App() {
       if (!background) setSaving(true);
       setError(null);
       try {
+        const draftLink = isDraftId(presetId)
+          ? drafts.find((item) => item.id === presetId)
+          : null;
         const payload = {
           owner_id: user.id,
           name: shaderName.trim() || "Untitled Shader",
@@ -2309,6 +2534,18 @@ export default function App() {
           parameter_values: valuesRef.current,
           features: inferFeatures(sourceRef.current),
           is_public: publicFlag,
+          figma_shader_id:
+            currentShader?.figma_shader_id ||
+            draftLink?.figma_shader_id ||
+            null,
+          figma_shader_kind:
+            currentShader?.figma_shader_kind ||
+            draftLink?.figma_shader_kind ||
+            null,
+          figma_shader_version:
+            currentShader?.figma_shader_version ||
+            draftLink?.figma_shader_version ||
+            null,
         };
         // Background draft autosaves must never race an explicit publish or
         // unpublish action. Visibility changes are only persisted by Save or
@@ -2441,6 +2678,7 @@ export default function App() {
     },
     [
       currentShader,
+      drafts,
       isOwner,
       isPublic,
       pendingMedia,
@@ -2981,6 +3219,7 @@ export default function App() {
       buildShaderLibraryCards({
         drafts: user ? [] : drafts,
         cloudShaders,
+        figmaShaders: FIGMA_LIBRARY_UI_ENABLED ? figmaShaders : [],
         thumbnails,
         cloudThumbnails,
         liveNames: {
@@ -2992,6 +3231,7 @@ export default function App() {
       cloudShaders,
       cloudThumbnails,
       drafts,
+      figmaShaders,
       presetId,
       shaderName,
       thumbnails,
@@ -3131,7 +3371,9 @@ export default function App() {
           sublabel={
             card.origin === "public"
               ? "Published"
-              : "Draft"
+              : card.origin === "figma"
+                ? "Figma"
+                : "Draft"
           }
           selected={selectedKey === card.key}
           published={card.origin === "public"}
@@ -3224,6 +3466,9 @@ export default function App() {
                     { value: "all", label: "All sources" },
                     { value: "draft", label: "Drafts" },
                     { value: "public", label: "Published" },
+                    ...(FIGMA_LIBRARY_UI_ENABLED
+                      ? [{ value: "figma", label: "Figma" }]
+                      : []),
                   ])}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
@@ -3262,6 +3507,38 @@ export default function App() {
             </hstack>
           </fig-header>
         </div>
+        {FIGMA_LIBRARY_UI_ENABLED &&
+          homeOrigin === "figma" &&
+          !figmaTokenConfigured && (
+          <div className="home-figma-empty">
+            <p>
+              Add a Figma access token in Settings to browse your shader
+              library.
+            </p>
+            <fig-button
+              type="button"
+              variant="secondary"
+              onClick={() => setSettingsOpen(true)}
+            >
+              Open Settings
+            </fig-button>
+          </div>
+        )}
+        {FIGMA_LIBRARY_UI_ENABLED &&
+          homeOrigin === "figma" &&
+          figmaTokenConfigured &&
+          figmaLibraryLoading && (
+          <p className="home-figma-empty">Loading Figma shaders…</p>
+        )}
+        {FIGMA_LIBRARY_UI_ENABLED &&
+          homeOrigin === "figma" &&
+          figmaTokenConfigured &&
+          !figmaLibraryLoading &&
+          figmaLibraryError && (
+            <p className="home-figma-empty form-message error">
+              {figmaLibraryError}
+            </p>
+          )}
         <fig-chooser
           ref={homeChooserRef}
           value=""
@@ -3597,6 +3874,15 @@ export default function App() {
                     <fig-menu-item value="export" onClick={exportFiles}>
                       Download
                     </fig-menu-item>
+                    {FIGMA_LIBRARY_UI_ENABLED && (
+                      <fig-menu-item
+                        value="push-figma"
+                        disabled=""
+                        title="Figma has not shipped create/update for the custom shader library yet."
+                      >
+                        Push to Figma (soon)
+                      </fig-menu-item>
+                    )}
                   </fig-menu>
                 )}
               </hstack>

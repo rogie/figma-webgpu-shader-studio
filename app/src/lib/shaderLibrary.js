@@ -5,9 +5,25 @@
 
 export const ANON_YOU_LABEL = "Anon (You)";
 
+export function figmaLibraryKey(kind, id) {
+  return `figma:${kind}:${id}`;
+}
+
+export function parseFigmaLibraryKey(key) {
+  if (typeof key !== "string" || !key.startsWith("figma:")) return null;
+  const rest = key.slice("figma:".length);
+  const colon = rest.indexOf(":");
+  if (colon <= 0) return null;
+  const kind = rest.slice(0, colon);
+  const id = rest.slice(colon + 1);
+  if ((kind !== "effect" && kind !== "fill") || !id) return null;
+  return { kind, id };
+}
+
 export function buildShaderLibraryCards({
   drafts,
   cloudShaders,
+  figmaShaders = [],
   thumbnails = {},
   cloudThumbnails = {},
   liveNames = {},
@@ -40,6 +56,7 @@ export function buildShaderLibraryCards({
       updatedAt: null,
       draft,
       cloud: null,
+      figma: null,
       canDelete: true,
     });
   });
@@ -68,7 +85,29 @@ export function buildShaderLibraryCards({
       updatedAt: shader.updated_at || null,
       draft: null,
       cloud: shader,
+      figma: null,
       canDelete: owned,
+    });
+  });
+
+  figmaShaders.forEach((shader) => {
+    const kind = shader.kind === "fill" ? "fill" : "effect";
+    const key = figmaLibraryKey(kind, shader.id);
+    cards.push({
+      key,
+      origin: "figma",
+      name: liveNames[key] || shader.name,
+      kind,
+      thumbnailUrl: thumbnails[key] || null,
+      authorId: null,
+      authorLabel: "Figma",
+      authorName: "Figma",
+      authorAvatarUrl: null,
+      updatedAt: null,
+      draft: null,
+      cloud: null,
+      figma: { id: shader.id, kind, description: shader.description || "" },
+      canDelete: false,
     });
   });
 

@@ -947,7 +947,7 @@ const ChatPane = forwardRef(function ChatPane(
       <div className="chat-footer">
         {error && (
           <p className="chat-error" title={error}>
-            {formatChatError(error)}
+            {formatChatError(error, { provider: model.provider })}
           </p>
         )}
         <div className="chat-composer">
