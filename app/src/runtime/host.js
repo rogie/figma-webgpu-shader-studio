@@ -67,6 +67,10 @@ export class ShaderHost {
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
+    // While > 0, setSize defers canvas dimension changes so WebGPU readback
+    // cannot lose its swapchain texture mid-copy (e.g. export menu close).
+    this._captureLock = 0;
+    this._pendingSize = null;
   }
 
   async init() {
@@ -164,6 +168,11 @@ export class ShaderHost {
   setSize(w, h, { cssWidth, cssHeight, clearCssSize = false } = {}) {
     w = Math.max(1, Math.round(w));
     h = Math.max(1, Math.round(h));
+    const opts = { cssWidth, cssHeight, clearCssSize };
+    if (this._captureLock > 0) {
+      this._pendingSize = { w, h, opts };
+      return false;
+    }
     const changed = this.canvas.width !== w || this.canvas.height !== h;
     if (this.canvas.width !== w) this.canvas.width = w;
     if (this.canvas.height !== h) this.canvas.height = h;
@@ -176,6 +185,18 @@ export class ShaderHost {
       this.canvas.style.removeProperty("height");
     }
     return changed;
+  }
+
+  _beginCapture() {
+    this._captureLock += 1;
+  }
+
+  _endCapture() {
+    this._captureLock = Math.max(0, this._captureLock - 1);
+    if (this._captureLock > 0 || !this._pendingSize) return;
+    const pending = this._pendingSize;
+    this._pendingSize = null;
+    this.setSize(pending.w, pending.h, pending.opts);
   }
 
   setStageCssSize(cssWidth, cssHeight) {
@@ -622,7 +643,32 @@ export class ShaderHost {
   }
 
   /**
-   * Snapshot the current preview into a square image blob (default 512²).
+   * Encode a 2D canvas to a blob, falling back when the requested type is
+   * unsupported (e.g. WebP encode returning null in some browsers).
+   */
+  async _canvasToBlob(canvas, type = "image/webp", quality = 0.85) {
+    const candidates = [type, "image/png", "image/jpeg"].filter(
+      (value, index, list) => value && list.indexOf(value) === index
+    );
+    for (const candidate of candidates) {
+      const blob = await new Promise((resolve) => {
+        try {
+          canvas.toBlob(
+            (result) => resolve(result || null),
+            candidate,
+            quality
+          );
+        } catch {
+          resolve(null);
+        }
+      });
+      if (blob) return blob;
+    }
+    throw new Error("Could not encode the preview image.");
+  }
+
+  /**
+   * Snapshot the current preview into an image blob (default 512² cover crop).
    * Reads pixels via copyTextureToBuffer — WebGPU canvas 2D drawImage often
    * returns a cleared/black frame once the browser has composited.
    */
@@ -639,6 +685,8 @@ export class ShaderHost {
     const wasRunning = this.running;
     const playbackGeneration = this._playbackGeneration;
     let readbackBuffer = null;
+    let staging = null;
+    this._beginCapture();
     try {
       if (wasRunning) this.stop();
 
@@ -649,14 +697,38 @@ export class ShaderHost {
       const srcH = texture.height;
       const bytesPerPixel = 4;
       const bytesPerRow = Math.ceil((srcW * bytesPerPixel) / 256) * 256;
+      const bufferSize = bytesPerRow * srcH;
+      const maxBufferSize = this.device.limits?.maxBufferSize;
+      if (maxBufferSize && bufferSize > maxBufferSize) {
+        throw new Error(
+          `Preview is too large to export (${srcW}×${srcH}). Try a smaller stage size.`
+        );
+      }
+
+      // Copy swapchain → owned staging texture first so a later canvas resize
+      // cannot cancel the readback after we yield to the event loop.
+      staging = this.device.createTexture({
+        size: [srcW, srcH],
+        format: this.format,
+        usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC,
+      });
+      const copyEncoder = this.device.createCommandEncoder();
+      copyEncoder.copyTextureToTexture(
+        { texture },
+        { texture: staging },
+        [srcW, srcH]
+      );
+      this.device.queue.submit([copyEncoder.finish()]);
+      await this.device.queue.onSubmittedWorkDone();
+
       readbackBuffer = this.device.createBuffer({
-        size: bytesPerRow * srcH,
+        size: bufferSize,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       });
 
       const encoder = this.device.createCommandEncoder();
       encoder.copyTextureToBuffer(
-        { texture },
+        { texture: staging },
         { buffer: readbackBuffer, bytesPerRow },
         { width: srcW, height: srcH }
       );
@@ -672,6 +744,8 @@ export class ShaderHost {
       readbackBuffer.unmap();
       readbackBuffer.destroy();
       readbackBuffer = null;
+      staging.destroy();
+      staging = null;
 
       const source = document.createElement("canvas");
       source.width = srcW;
@@ -682,18 +756,14 @@ export class ShaderHost {
       thumb.width = width;
       thumb.height = height;
       const ctx = thumb.getContext("2d");
-      if (!ctx) return null;
+      if (!ctx) throw new Error("Could not create an export canvas.");
 
       const scale = Math.max(width / srcW, height / srcH);
       const dw = srcW * scale;
       const dh = srcH * scale;
       ctx.drawImage(source, (width - dw) / 2, (height - dh) / 2, dw, dh);
 
-      return await new Promise((resolve) => {
-        thumb.toBlob((blob) => resolve(blob || null), type, quality);
-      });
-    } catch {
-      return null;
+      return await this._canvasToBlob(thumb, type, quality);
     } finally {
       if (readbackBuffer) {
         try {
@@ -702,16 +772,26 @@ export class ShaderHost {
           /* ignore */
         }
       }
+      if (staging) {
+        try {
+          staging.destroy();
+        } catch {
+          /* ignore */
+        }
+      }
+      this._endCapture();
       // Resume from the caller's play intent. A newer setModule bumps the
       // generation during capture; if that compile's start() already ran we
       // leave it alone, otherwise bridge the gap so play preference and the
       // host loop cannot diverge (UI play-on / host stopped).
-      if (!shouldResume() || !this.renderFn) return;
+      // Avoid bare `return` here — it would swallow errors thrown above.
       if (
-        playbackGeneration === this._playbackGeneration ||
-        !this.running
+        shouldResume() &&
+        this.renderFn &&
+        (playbackGeneration === this._playbackGeneration || !this.running) &&
+        !this._isLoopActive()
       ) {
-        if (!this._isLoopActive()) this.start();
+        this.start();
       }
     }
   }

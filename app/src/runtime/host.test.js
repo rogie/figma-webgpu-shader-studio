@@ -331,3 +331,19 @@ test("thumbnail capture does not resume when play preference is off", async () =
     raf.restore();
   }
 });
+
+test("setSize defers canvas resize while a capture is in progress", async () => {
+  const host = makeHost();
+  host.canvas.width = 8;
+  host.canvas.height = 8;
+
+  host._beginCapture();
+  const changed = host.setSize(16, 16);
+  assert.equal(changed, false);
+  assert.equal(host.canvas.width, 8);
+  assert.equal(host.canvas.height, 8);
+
+  host._endCapture();
+  assert.equal(host.canvas.width, 16);
+  assert.equal(host.canvas.height, 16);
+});

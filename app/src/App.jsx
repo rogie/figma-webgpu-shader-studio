@@ -2443,13 +2443,21 @@ export default function App() {
       return;
     }
 
-    const blob = await host.captureThumbnailBlob({
-      width,
-      height,
-      type: "image/webp",
-      quality: 0.92,
-      shouldResume: () => playPreferenceRef.current,
-    });
+    let blob;
+    try {
+      blob = await host.captureThumbnailBlob({
+        width,
+        height,
+        type: "image/webp",
+        quality: 0.92,
+        shouldResume: () => playPreferenceRef.current,
+      });
+    } catch (captureError) {
+      setError(
+        captureError?.message || "Could not capture the preview image."
+      );
+      return;
+    }
     if (!blob) {
       setError("Could not capture the preview image.");
       return;
@@ -2461,14 +2469,20 @@ export default function App() {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, "-")
         .replace(/^-+|-+$/g, "") || "shader";
+    const extension =
+      blob.type === "image/png"
+        ? "png"
+        : blob.type === "image/jpeg"
+          ? "jpg"
+          : "webp";
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `${baseName}.webp`;
+    link.download = `${baseName}.${extension}`;
     document.body.appendChild(link);
     link.click();
     link.remove();
-    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    URL.revokeObjectURL(url);
   }, [shaderName]);
 
   const exportPreviewVideo = useCallback(async () => {
