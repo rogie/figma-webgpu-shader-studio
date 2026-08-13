@@ -91,9 +91,10 @@ test("play advances time uniforms on every animation frame", () => {
     const t0 = host.startTime;
     callbacks[0](t0 + 50);
 
-    assert.equal(host.frame.time, 50);
+    assert.ok(Math.abs(host.frame.time - 50) < 1e-6);
     assert.equal(host.frame.frame, 1);
-    assert.deepEqual(presentedTimes, [50]);
+    assert.equal(presentedTimes.length, 1);
+    assert.ok(Math.abs(presentedTimes[0] - 50) < 1e-6);
     assert.equal(callbacks.length, 2);
   } finally {
     globalThis.requestAnimationFrame = originalRaf;

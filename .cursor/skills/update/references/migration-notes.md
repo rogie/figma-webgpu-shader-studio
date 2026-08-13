@@ -79,6 +79,19 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 
 `propskit-color-point` does not set `alpha` on its inner `propskit-color`; enable it after mount if the panel must show opacity.
 
+## 8.2.x notes
+
+- Compound spatial propskit controls gained a `disabled` attribute (forwarded to inner controls). No app wiring required unless a surface needs disable-while-busy.
+- Lab adds `<fig-reorder>` for drag-reorder lists. Not adopted here (shader library uses `fig-chooser`).
+- Accessibility/focus token docs expanded; no app CSS changes required for this upgrade.
+
+## 8.3 / 8.4 notes
+
+- `<fig-menu-separator>` is a backwards-compatible alias of `<fig-separator>`; keep using `fig-separator` in app menus/lists.
+- Package now ships bundled `.cursor/skills/` for FigUI3 authors; app integrations still follow this repo's `/update` skill and `app/src` wiring.
+- Explicit `@rogieking/figui3/fig-lab.css` import in `main.jsx` remains required (editor CSS still does not pull lab styles).
+- Color-point still omits `alpha` on its inner `propskit-color`; keep the post-mount enable workaround in `Controls.jsx`.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:
