@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import {
   canvasControlName,
   colorToHex,
@@ -65,7 +65,7 @@ function CanvasControl({
     };
   }, [name, def, onCommit, onInputValue]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const control = controlRef.current;
     if (!control || draggingRef.current) return;
     if (control.getAttribute("value") !== serialized) {
@@ -90,8 +90,6 @@ function CanvasControl({
       ref={controlRef}
       type={type}
       name={canvasControlName(name, def)}
-      value={serialized}
-      {...(colorHex ? { color: colorHex } : {})}
       snapping="modifier"
       drag-surface="parent"
       dangerouslySetInnerHTML={opaqueContent}

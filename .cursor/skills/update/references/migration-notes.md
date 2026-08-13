@@ -59,6 +59,14 @@ From 8.0+, `fig-select` / `fig-select-options` / `fig-select-option` register fr
 
 `fig-editor.js` now also imports `fig-lab.js`, so lab components load transitively with the editor bundle.
 
+## fig-lab.css (8.1+)
+
+From 8.1.0, `fig-editor.css` no longer `@import`s `fig-lab.css`. Propskit / chat / attachment styles must be loaded via an explicit `@rogieking/figui3/fig-lab.css` import in `main.jsx`. Without it, `propskit-*` custom elements still register but render unstyled.
+
+## Propskit point controls (8.1+)
+
+New lab controls mirror canvas control shapes: `propskit-position`, `propskit-color-point`, `propskit-point-radius`, `propskit-point-radius-angle`, `propskit-point-point`. Properties panel still uses `fig-field` + `VectorControl` for those types until wired up.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

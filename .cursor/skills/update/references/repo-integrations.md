@@ -5,8 +5,8 @@
 Loaded in `app/src/main.jsx`:
 
 - `@rogieking/figui3/fig.css` + `fig.js` — core components
-- `@rogieking/figui3/fig-editor.css` + `fig-editor.js` — editor/fill-picker **and** `fig-select` (8.x+); also pulls in `fig-lab.js`
-- `@rogieking/figui3/fig-lab.js` — lab bundle (propskit, chat, attachments); CSS comes through `fig-editor.css` → `fig-lab.css`
+- `@rogieking/figui3/fig-editor.css` + `fig-editor.js` — editor/fill-picker **and** `fig-select` (8.x+); JS also pulls in `fig-lab.js`
+- `@rogieking/figui3/fig-lab.css` + `fig-lab.js` — lab bundle (propskit, chat, attachments). From **8.1+**, lab CSS is **not** imported by `fig-editor.css` — import `fig-lab.css` explicitly.
 
 Vite excludes FigUI3 from dependency prebundle in `app/vite.config.js` (`optimizeDeps.exclude`).
 

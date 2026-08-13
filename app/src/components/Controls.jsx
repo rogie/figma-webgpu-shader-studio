@@ -1,20 +1,14 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
 import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+} from "react";
+import {
+  colorToHex,
   hexToColor,
   showsInPropertyPanel,
 } from "../lib/canvasControls.js";
-
-function toHexByte(value) {
-  return Math.max(0, Math.min(255, Math.round((value ?? 0) * 255)))
-    .toString(16)
-    .padStart(2, "0");
-}
-
-function colorToHex(color) {
-  return `#${toHexByte(color.r)}${toHexByte(color.g)}${toHexByte(
-    color.b
-  )}${toHexByte(color.a ?? 1)}`;
-}
 
 function readNumber(event) {
   const value = event.target.value ?? event.detail;
@@ -390,31 +384,6 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
   );
 }
 
-function ColorControl({ def, value, onChange }) {
-  const current =
-    value || def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
-  return (
-    <fig-input-color
-      value={colorToHex(current)}
-      text="true"
-      alpha="true"
-      onInput={(event) => {
-        const input =
-          event.target.closest?.("fig-input-color") || event.currentTarget;
-        const rgba = input.rgba;
-        if (!rgba) return;
-        onChange({
-          r: rgba.r / 255,
-          g: rgba.g / 255,
-          b: rgba.b / 255,
-          a: rgba.a,
-        });
-      }}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
 function PropskitColorControl({ name, def, value, onChange }) {
   const colorRef = useRef(null);
   const current =
@@ -458,26 +427,341 @@ function PropskitColorControl({ name, def, value, onChange }) {
   );
 }
 
-function VectorControl({ keys, def, value, onChange }) {
-  const current = value || def.defaultValue || {};
+function propskitPositionUnits(def) {
+  const unit = def?.positionUnit || def?.unit || "%";
+  return unit === "%" || unit === "percent" ? "percent" : undefined;
+}
+
+function propskitRadiusUnits(def) {
+  const unit = def?.radiusUnit || def?.positionUnit || def?.unit || "%";
+  return unit === "%" || unit === "percent" ? "percent" : undefined;
+}
+
+function serializePropskitRadius(radius, percentUnits) {
+  const number = Number(radius ?? 0);
+  return percentUnits ? `${number}%` : number;
+}
+
+function parsePropskitRadius(raw) {
+  if (typeof raw === "string" && raw.trim().endsWith("%")) {
+    return Number.parseFloat(raw);
+  }
+  return Number(raw ?? 0);
+}
+
+function readPropskitDetail(event) {
+  const detail = event.detail;
+  if (typeof detail === "string") {
+    try {
+      return JSON.parse(detail);
+    } catch {
+      return null;
+    }
+  }
+  return detail && typeof detail === "object" ? detail : null;
+}
+
+function usePropskitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) {
+  const mapDetailRef = useRef(mapDetail);
+  const onInputRef = useRef(onInputValue);
+  const onCommitRef = useRef(onCommit);
+  const draggingRef = useRef(false);
+  useLayoutEffect(() => {
+    mapDetailRef.current = mapDetail;
+    onInputRef.current = onInputValue;
+    onCommitRef.current = onCommit;
+  }, [mapDetail, onCommit, onInputValue]);
+
+  useEffect(() => {
+    const control = ref.current;
+    if (!control) return;
+    const handleInput = (event) => {
+      draggingRef.current = true;
+      const detail = readPropskitDetail(event);
+      const next = detail ? mapDetailRef.current(detail) : null;
+      if (next) onInputRef.current(name, next);
+    };
+    const handleChange = (event) => {
+      draggingRef.current = false;
+      const detail = readPropskitDetail(event);
+      const next = detail ? mapDetailRef.current(detail) : null;
+      if (next) onCommitRef.current(name, next);
+    };
+    const endDrag = () => {
+      draggingRef.current = false;
+    };
+    control.addEventListener("input", handleInput);
+    control.addEventListener("change", handleChange);
+    control.addEventListener("pointerup", endDrag);
+    control.addEventListener("pointercancel", endDrag);
+    return () => {
+      control.removeEventListener("input", handleInput);
+      control.removeEventListener("change", handleChange);
+      control.removeEventListener("pointerup", endDrag);
+      control.removeEventListener("pointercancel", endDrag);
+    };
+  }, [name, ref]);
+
+  return draggingRef;
+}
+
+/** Avoid rewriting attrs while the control is being scrubbed (same as slider). */
+function useSyncPropskitValueAttr(ref, serialized, draggingRef) {
+  useLayoutEffect(() => {
+    const control = ref.current;
+    if (!control || draggingRef.current) return;
+    if (control.matches(":focus-within")) return;
+    if (control.getAttribute("value") === serialized) return;
+    control.setAttribute("value", serialized);
+  }, [draggingRef, ref, serialized]);
+}
+
+function useSyncPropskitPositionAttrs(ref, x, y, draggingRef) {
+  useLayoutEffect(() => {
+    const control = ref.current;
+    if (!control || draggingRef.current) return;
+    if (control.matches(":focus-within")) return;
+    const nextX = String(x);
+    const nextY = String(y);
+    if (control.getAttribute("x") !== nextX) control.setAttribute("x", nextX);
+    if (control.getAttribute("y") !== nextY) control.setAttribute("y", nextY);
+  }, [draggingRef, ref, x, y]);
+}
+
+function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
+  const controlRef = useRef(null);
+  const current = value || def.defaultValue || { x: 50, y: 50 };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const defaults = def.defaultValue || { x: 50, y: 50 };
+  const units = propskitPositionUnits(def);
+  const mapDetail = useCallback(
+    (detail) => ({
+      x: Number(detail.x ?? currentRef.current.x ?? 50),
+      y: Number(detail.y ?? currentRef.current.y ?? 50),
+    }),
+    []
+  );
+  const draggingRef = usePropskitSpatialEvents(
+    controlRef,
+    name,
+    mapDetail,
+    onInputValue,
+    onCommit
+  );
+  useSyncPropskitPositionAttrs(
+    controlRef,
+    current.x ?? 50,
+    current.y ?? 50,
+    draggingRef
+  );
+
   return (
-    <div className="vector-control">
-      {keys.map((key) => (
-        <fig-input-number
-          key={key}
-          name={key}
-          value={current[key] ?? 0}
-          step={key === "angle" ? 1 : 0.1}
-          units={key === "angle" ? "°" : ""}
-          onInput={(event) =>
-            onChange({ ...current, [key]: readNumber(event) })
-          }
-          dangerouslySetInnerHTML={{
-            __html: `<span slot="prepend">${key[0].toUpperCase()}</span>`,
-          }}
-        />
-      ))}
-    </div>
+    <propskit-position
+      ref={controlRef}
+      label={def.label || name}
+      size="large"
+      default={JSON.stringify({
+        x: defaults.x ?? 50,
+        y: defaults.y ?? 50,
+      })}
+      {...(units ? { units } : {})}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitPointRadiusControl({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current = value || def.defaultValue || { x: 50, y: 50, radius: 0 };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const units = propskitRadiusUnits(def);
+  const serialized = JSON.stringify({
+    x: current.x ?? 50,
+    y: current.y ?? 50,
+    radius: serializePropskitRadius(current.radius, units === "percent"),
+  });
+  const mapDetail = useCallback(
+    (detail) => ({
+      x: Number(detail.x ?? currentRef.current.x ?? 50),
+      y: Number(detail.y ?? currentRef.current.y ?? 50),
+      radius: parsePropskitRadius(detail.radius ?? currentRef.current.radius),
+    }),
+    []
+  );
+  const draggingRef = usePropskitSpatialEvents(
+    controlRef,
+    name,
+    mapDetail,
+    onInputValue,
+    onCommit
+  );
+  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+
+  return (
+    <propskit-point-radius
+      ref={controlRef}
+      label={def.label || name}
+      size="large"
+      {...(units ? { units } : {})}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitPointRadiusAngleControl({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current =
+    value || def.defaultValue || { x: 50, y: 50, radius: 0, angle: 0 };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const units = propskitRadiusUnits(def);
+  const serialized = JSON.stringify({
+    x: current.x ?? 50,
+    y: current.y ?? 50,
+    radius: serializePropskitRadius(current.radius, units === "percent"),
+    angle: current.angle ?? 0,
+  });
+  const mapDetail = useCallback(
+    (detail) => ({
+      x: Number(detail.x ?? currentRef.current.x ?? 50),
+      y: Number(detail.y ?? currentRef.current.y ?? 50),
+      radius: parsePropskitRadius(detail.radius ?? currentRef.current.radius),
+      angle: Number(detail.angle ?? currentRef.current.angle ?? 0),
+    }),
+    []
+  );
+  const draggingRef = usePropskitSpatialEvents(
+    controlRef,
+    name,
+    mapDetail,
+    onInputValue,
+    onCommit
+  );
+  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+
+  return (
+    <propskit-point-radius-angle
+      ref={controlRef}
+      label={def.label || name}
+      size="large"
+      {...(units ? { units } : {})}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitPointPointControl({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current =
+    value || def.defaultValue || { x: 25, y: 25, x2: 75, y2: 75 };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const units = propskitPositionUnits(def);
+  const serialized = JSON.stringify({
+    x: current.x ?? 25,
+    y: current.y ?? 25,
+    x2: current.x2 ?? 75,
+    y2: current.y2 ?? 75,
+  });
+  const mapDetail = useCallback(
+    (detail) => ({
+      x: Number(detail.x ?? currentRef.current.x ?? 25),
+      y: Number(detail.y ?? currentRef.current.y ?? 25),
+      x2: Number(detail.x2 ?? currentRef.current.x2 ?? 75),
+      y2: Number(detail.y2 ?? currentRef.current.y2 ?? 75),
+    }),
+    []
+  );
+  const draggingRef = usePropskitSpatialEvents(
+    controlRef,
+    name,
+    mapDetail,
+    onInputValue,
+    onCommit
+  );
+  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+
+  return (
+    <propskit-point-point
+      ref={controlRef}
+      label={def.label || name}
+      size="large"
+      {...(units ? { units } : {})}
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
+function PropskitColorPointControl({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current =
+    value ||
+    def.defaultValue || {
+      x: 50,
+      y: 50,
+      color: { r: 1, g: 1, b: 1, a: 1 },
+    };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const serialized = JSON.stringify({
+    x: current.x ?? 50,
+    y: current.y ?? 50,
+    color: colorToHex(current.color || { r: 1, g: 1, b: 1, a: 1 }).slice(0, 7),
+  });
+  const mapDetail = useCallback((detail) => {
+    const fallback = currentRef.current;
+    const color =
+      typeof detail.color === "string"
+        ? hexToColor(detail.color)
+        : fallback.color || { r: 1, g: 1, b: 1, a: 1 };
+    return {
+      x: Number(detail.x ?? fallback.x ?? 50),
+      y: Number(detail.y ?? fallback.y ?? 50),
+      color,
+    };
+  }, []);
+  const draggingRef = usePropskitSpatialEvents(
+    controlRef,
+    name,
+    mapDetail,
+    onInputValue,
+    onCommit
+  );
+  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+
+  return (
+    <propskit-color-point
+      ref={controlRef}
+      label={def.label || name}
+      size="large"
+      dangerouslySetInnerHTML={opaqueContent}
+    />
   );
 }
 
@@ -575,69 +859,6 @@ function Control({ def, value, onChange }) {
   if (def.type === "number") {
     return <NumberControl def={def} value={value} onChange={onChange} />;
   }
-  if (def.type === "point") {
-    return (
-      <VectorControl
-        keys={["x", "y"]}
-        def={def}
-        value={value}
-        onChange={onChange}
-      />
-    );
-  }
-  if (def.type === "point-radius") {
-    return (
-      <VectorControl
-        keys={["x", "y", "radius"]}
-        def={def}
-        value={value}
-        onChange={onChange}
-      />
-    );
-  }
-  if (def.type === "point-point-line") {
-    return (
-      <VectorControl
-        keys={["x", "y", "x2", "y2"]}
-        def={def}
-        value={value}
-        onChange={onChange}
-      />
-    );
-  }
-  if (def.type === "point-angle-radius") {
-    return (
-      <VectorControl
-        keys={["x", "y", "radius", "angle"]}
-        def={def}
-        value={value}
-        onChange={onChange}
-      />
-    );
-  }
-  if (def.type === "color-point") {
-    const current = value ||
-      def.defaultValue || {
-        x: 0,
-        y: 0,
-        color: { r: 1, g: 1, b: 1, a: 1 },
-      };
-    return (
-      <div className="compound-control">
-        <VectorControl
-          keys={["x", "y"]}
-          def={def}
-          value={current}
-          onChange={onChange}
-        />
-        <ColorControl
-          def={{ defaultValue: current.color }}
-          value={current.color}
-          onChange={(color) => onChange({ ...current, color })}
-        />
-      </div>
-    );
-  }
   return <code className="unknown-type">{def.type || "unknown"}</code>;
 }
 
@@ -729,6 +950,66 @@ export default function Controls({ props, values, onChange, onInput }) {
     if (def.type === "gradient") {
       return (
         <PropskitGradientControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "point") {
+      return (
+        <PropskitPositionControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "point-radius") {
+      return (
+        <PropskitPointRadiusControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "point-angle-radius") {
+      return (
+        <PropskitPointRadiusAngleControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "point-point-line") {
+      return (
+        <PropskitPointPointControl
+          key={key}
+          name={name}
+          def={def}
+          value={values[name]}
+          onInputValue={coalescedInput}
+          onCommit={coalescedChange}
+        />
+      );
+    }
+    if (def.type === "color-point") {
+      return (
+        <PropskitColorPointControl
           key={key}
           name={name}
           def={def}

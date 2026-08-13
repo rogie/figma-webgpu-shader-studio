@@ -42,6 +42,7 @@ import {
   makeSampleVectorBitmap,
   makeSampleVideoBlob,
 } from "./runtime/sample.js";
+import { CANVAS_PROP_TYPES } from "./lib/canvasControls.js";
 import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
@@ -646,6 +647,7 @@ export default function App() {
   }, []);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
+  const propsRef = useRef(props);
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
   const compileGenerationRef = useRef(0);
@@ -670,6 +672,7 @@ export default function App() {
   });
 
   sourceRef.current = source;
+  propsRef.current = props;
   valuesRef.current = values;
   draftSessionRef.current = {
     presetId,
@@ -2273,7 +2276,14 @@ export default function App() {
     if (previewParamsRafRef.current) return;
     previewParamsRafRef.current = requestAnimationFrame(() => {
       previewParamsRafRef.current = 0;
-      hostRef.current?.setParams(valuesRef.current);
+      const next = valuesRef.current;
+      hostRef.current?.setParams(next);
+      // Canvas handles read React `values`; keep them live while scrubbing
+      // spatial props from the panel (sliders stay ref-only to avoid hitch).
+      const def = propsRef.current?.[name];
+      if (def && CANVAS_PROP_TYPES.has(def.type)) {
+        setValues(next);
+      }
     });
   }, []);
 
