@@ -20,13 +20,6 @@
     background: var(--figma-color-bg-secondary);
   }
 
-  & .streaming-code-filename {
-    overflow: hidden;
-    font-weight: var(--body-medium-strong-fontWeight);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   & fig-spinner.streaming-code-status {
     color: var(--figma-color-text-secondary);
   }

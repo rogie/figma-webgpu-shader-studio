@@ -45,6 +45,7 @@ import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import UserAvatar from "./UserAvatar.jsx";
+import MarkdownProse from "./MarkdownProse.jsx";
 import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
 import "../chat.css";
 
@@ -908,7 +909,11 @@ const ChatPane = forwardRef(function ChatPane(
               key={index}
               from="agent"
             >
-              {prose && <div className="chat-prose">{prose}</div>}
+              {prose && (
+                <div className="chat-prose">
+                  <MarkdownProse>{prose}</MarkdownProse>
+                </div>
+              )}
               <StreamingCodeBlock
                 source={source}
                 pending={Boolean(message.pending)}
