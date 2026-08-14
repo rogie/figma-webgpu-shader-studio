@@ -119,9 +119,13 @@ function Preview({
     if (!canvas || !stage) return;
 
     const sync = () => {
+      const renderScale = Math.max(
+        1,
+        Number(canvas.dataset.renderScale) || 1
+      );
       setCanvasSize({
-        width: canvas.width || 0,
-        height: canvas.height || 0,
+        width: (canvas.width || 0) / renderScale,
+        height: (canvas.height || 0) / renderScale,
       });
       const canvasRect = canvas.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
@@ -144,7 +148,7 @@ function Preview({
     const attrObserver = new MutationObserver(sync);
     attrObserver.observe(canvas, {
       attributes: true,
-      attributeFilter: ["width", "height"],
+      attributeFilter: ["width", "height", "data-render-scale"],
     });
     window.addEventListener("resize", sync);
 
@@ -183,9 +187,12 @@ function Preview({
 
     const onWheel = (event) => {
       event.preventDefault();
+      // Trackpad pinch arrives as a ctrl+wheel gesture with a much smaller
+      // delta than ordinary scrolling, so normalize it to the same feel.
+      const zoomDelta = event.deltaY * (event.ctrlKey ? 3 : 1);
       setView((current) => {
         const nextZoom = clampZoom(
-          current.zoom * Math.exp(-event.deltaY * 0.0015)
+          current.zoom * Math.exp(-zoomDelta * 0.003)
         );
         if (nextZoom === current.zoom) return current;
         // Zoom from canvas center only (no cursor-anchored pan).

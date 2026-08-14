@@ -1,5 +1,6 @@
 import { defineProperties } from "figma:shaders"
 
+// @supports-render-scale
 export default function Effect() {}
 
 export function setup(device, frame) {
@@ -283,9 +284,10 @@ export function render(device, frame) {
   var reg = p.region ?? { x: 50, y: 50, radius: 100, angle: 0 };
   var falloff = (p.falloff ?? 0) / 100;
   var dens = (p.density ?? 100) / 100;
+  var renderScale = frame.renderScale || 1;
 
   s.uniformData.set([
-    frame.output.width, frame.output.height, intensity, grainSize,
+    frame.output.width / renderScale, frame.output.height / renderScale, intensity, grainSize,
     roughness, colorAmount, p.grainStyle ?? 0, p.blendMode ?? 1,
     highlights, midtones, shadows, p.seed ?? 0,
     reg.x / 100, reg.y / 100, reg.radius ?? 100, reg.angle ?? 0,

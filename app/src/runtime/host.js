@@ -2,7 +2,7 @@
 // module contract (`setup(device, frame)` once, `render(device, frame)` per
 // animation frame). See skills/v3.md.tmpl for the frame field semantics.
 
-import { cssSizeToDevicePixels } from "./dpi.js";
+import { adaptiveRenderScale, cssSizeToDevicePixels } from "./dpi.js";
 import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
@@ -23,8 +23,13 @@ export class ShaderHost {
     this.isFill = false;
     this.isAnimated = false;
     this.usesMouse = false;
+    this.supportsRenderScale = false;
     this.effectVisible = true;
     this.active = true;
+    this.previewZoom = 1;
+    this.logicalOutputSize = { width: 1, height: 1 };
+    this.outputCssSize = null;
+    this._zoomResizeTimer = 0;
 
     this.inputTexture = null;
     this.video = null; // HTMLVideoElement when the input is a video
@@ -33,6 +38,7 @@ export class ShaderHost {
     this._htmlFrameDirty = false;
     this._videoFrameDirty = false;
     this._videoFrameCallbackId = 0;
+    this._videoPollId = 0;
     this._lastVideoTime = -1;
     this.stageCssSize = { width: DEFAULT_FILL_CSS, height: DEFAULT_FILL_CSS };
     this._fillResizeTimer = 0;
@@ -53,6 +59,7 @@ export class ShaderHost {
       time: 0,
       deltaTime: 0,
       frame: 0,
+      renderScale: 1,
       mousePosition: { x: 0, y: 0 },
     };
 
@@ -71,6 +78,7 @@ export class ShaderHost {
     // cannot lose its swapchain texture mid-copy (e.g. export menu close).
     this._captureLock = 0;
     this._pendingSize = null;
+    this._pendingAdaptiveResize = false;
   }
 
   async init() {
@@ -129,8 +137,9 @@ export class ShaderHost {
   _onMouse(e) {
     this._cancelMouseReset();
     const rect = this.canvas.getBoundingClientRect();
-    const sx = this.canvas.width / rect.width;
-    const sy = this.canvas.height / rect.height;
+    const renderScale = this.frame.renderScale || 1;
+    const sx = this.canvas.width / rect.width / renderScale;
+    const sy = this.canvas.height / rect.height / renderScale;
     this.frame.mousePosition = {
       x: (e.clientX - rect.left) * sx,
       y: (e.clientY - rect.top) * sy,
@@ -187,16 +196,97 @@ export class ShaderHost {
     return changed;
   }
 
+  _setLogicalOutputSize(w, h, displayCss = null) {
+    this.logicalOutputSize = {
+      width: Math.max(1, Math.round(w)),
+      height: Math.max(1, Math.round(h)),
+    };
+    this.outputCssSize = displayCss
+      ? {
+          width: Math.max(1, Number(displayCss.width) || 1),
+          height: Math.max(1, Number(displayCss.height) || 1),
+        }
+      : null;
+    return this._applyAdaptiveOutputSize();
+  }
+
+  _applyAdaptiveOutputSize() {
+    const base = this.logicalOutputSize;
+    const deviceMax = this.device?.limits?.maxTextureDimension2D || 4096;
+    const renderScale = this.supportsRenderScale
+      ? adaptiveRenderScale(this.previewZoom, base.width, base.height, {
+          maxDimension: Math.min(4096, deviceMax),
+        })
+      : 1;
+    const width = Math.max(1, Math.round(base.width * renderScale));
+    const height = Math.max(1, Math.round(base.height * renderScale));
+    const sizeChanged =
+      this.canvas.width !== width || this.canvas.height !== height;
+    const changed =
+      sizeChanged || Math.abs((this.frame.renderScale || 1) - renderScale) > 1e-6;
+    if (this._captureLock > 0) {
+      this._pendingAdaptiveResize = true;
+      return false;
+    }
+    const cssSize =
+      this.outputCssSize ||
+      (renderScale > 1
+        ? { width: base.width, height: base.height }
+        : null);
+
+    this.setSize(
+      width,
+      height,
+      cssSize
+        ? { cssWidth: cssSize.width, cssHeight: cssSize.height }
+        : { clearCssSize: true }
+    );
+    this.frame.renderScale = renderScale;
+    if (this.canvas.dataset) {
+      this.canvas.dataset.renderScale = String(renderScale);
+    }
+    return changed;
+  }
+
+  setPreviewZoom(zoom) {
+    this.previewZoom = Math.max(0.01, Number(zoom) || 1);
+    clearTimeout(this._zoomResizeTimer);
+    if (!this.ready || !this.supportsRenderScale) return;
+    this._zoomResizeTimer = setTimeout(() => {
+      this._zoomResizeTimer = 0;
+      const changed = this._applyAdaptiveOutputSize();
+      if (!changed || !this.renderFn) return;
+      try {
+        this.resetShaderState();
+      } catch (err) {
+        this.onError(err && err.message ? err.message : String(err));
+      }
+    }, 120);
+  }
+
   _beginCapture() {
     this._captureLock += 1;
   }
 
   _endCapture() {
     this._captureLock = Math.max(0, this._captureLock - 1);
-    if (this._captureLock > 0 || !this._pendingSize) return;
-    const pending = this._pendingSize;
-    this._pendingSize = null;
-    this.setSize(pending.w, pending.h, pending.opts);
+    if (this._captureLock > 0) return;
+    if (this._pendingSize) {
+      const pending = this._pendingSize;
+      this._pendingSize = null;
+      this.setSize(pending.w, pending.h, pending.opts);
+    }
+    if (this._pendingAdaptiveResize) {
+      this._pendingAdaptiveResize = false;
+      const changed = this._applyAdaptiveOutputSize();
+      if (changed && this.renderFn) {
+        try {
+          this.resetShaderState();
+        } catch (err) {
+          this.onError(err && err.message ? err.message : String(err));
+        }
+      }
+    }
   }
 
   setStageCssSize(cssWidth, cssHeight) {
@@ -229,8 +319,8 @@ export class ShaderHost {
       this.inputTexture &&
       this.inputTexture.width === size.width &&
       this.inputTexture.height === size.height &&
-      this.canvas.width === size.width &&
-      this.canvas.height === size.height
+      this.logicalOutputSize.width === size.width &&
+      this.logicalOutputSize.height === size.height
     ) {
       return false;
     }
@@ -249,9 +339,9 @@ export class ShaderHost {
 
   setFillSize(cssWidth, cssHeight) {
     const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
-    return this.setSize(size.width, size.height, {
-      cssWidth: size.cssWidth,
-      cssHeight: size.cssHeight,
+    return this._setLogicalOutputSize(size.width, size.height, {
+      width: size.cssWidth,
+      height: size.cssHeight,
     });
   }
 
@@ -272,15 +362,20 @@ export class ShaderHost {
 
   _teardownState() {
     const s = this.frame.state;
-    for (const key in s) {
-      const v = s[key];
-      if (v && typeof v.destroy === "function") {
-        try {
-          v.destroy();
-        } catch {
-          /* ignore */
-        }
+    const destroy = (value) => {
+      if (Array.isArray(value)) {
+        for (const item of value) destroy(item);
+        return;
       }
+      if (!value || typeof value.destroy !== "function") return;
+      try {
+        value.destroy();
+      } catch {
+        /* ignore */
+      }
+    };
+    for (const key in s) {
+      destroy(s[key]);
     }
     this.frame.state = {};
   }
@@ -332,24 +427,23 @@ export class ShaderHost {
       this._passthroughInputTexture = null;
     }
     this.frame.input = this.inputTexture;
-    let sizeChanged = false;
-    if (displayCss) {
-      sizeChanged = this.setSize(w, h, {
-        cssWidth: displayCss.width,
-        cssHeight: displayCss.height,
-      });
-    } else {
-      sizeChanged = this.setSize(w, h, { clearCssSize: true });
-    }
+    const sizeChanged = this._setLogicalOutputSize(w, h, displayCss);
     return textureChanged || sizeChanged;
   }
 
   // After input size changes, rebuild shader state (many effects size
   // resources from setup) and present immediately — including when paused.
-  _rebindAfterInputChange(sizeChanged) {
+  _rebindAfterInputChange(sizeChanged, { resetState = false } = {}) {
     if (!this.ready || !this.renderFn) return;
-    if (sizeChanged) {
+    if (sizeChanged || resetState) {
       this._teardownState();
+      if (resetState) {
+        this.frame.time = 0;
+        this.frame.deltaTime = 0;
+        this.frame.frame = 0;
+        this.startTime = performance.now();
+        this.lastTime = this.startTime;
+      }
       try {
         this.frame.output = this.context.getCurrentTexture();
         if (this.setupFn) this.setupFn(this.device, this.frame);
@@ -377,7 +471,7 @@ export class ShaderHost {
       { texture: this.inputTexture, premultipliedAlpha: true },
       [w, h]
     );
-    this._rebindAfterInputChange(sizeChanged);
+    this._rebindAfterInputChange(sizeChanged, { resetState: true });
   }
 
   setVideoInput(video) {
@@ -389,8 +483,21 @@ export class ShaderHost {
     this._videoFrameDirty = true;
     this._watchVideoFrames();
     this._uploadVideoFrame();
-    this._rebindAfterInputChange(sizeChanged);
+    this._rebindAfterInputChange(sizeChanged, { resetState: true });
     this._scheduleLoop();
+  }
+
+  // Replace the contents of an existing image input without changing texture
+  // identity or shader state. Video export uses this to preserve temporal
+  // accumulators while supplying one decoded source frame at a time.
+  updateImageInput(source) {
+    if (!source || !this.inputTexture) return false;
+    this.device.queue.copyExternalImageToTexture(
+      { source, flipY: false },
+      { texture: this.inputTexture, premultipliedAlpha: true },
+      [this.inputTexture.width, this.inputTexture.height]
+    );
+    return true;
   }
 
   // HTML-in-Canvas: `element` must be a direct child of this.canvas with
@@ -431,7 +538,7 @@ export class ShaderHost {
     } catch {
       // First snapshot may not exist until the next paint event.
     }
-    this._rebindAfterInputChange(sizeChanged);
+    this._rebindAfterInputChange(sizeChanged, { resetState: true });
   }
 
   _bindHtmlPaint() {
@@ -487,16 +594,42 @@ export class ShaderHost {
 
   _watchVideoFrames() {
     const video = this.video;
-    if (!video || typeof video.requestVideoFrameCallback !== "function") return;
+    if (!video) return;
+    if (typeof video.requestVideoFrameCallback !== "function") {
+      this._videoPollId = setInterval(() => {
+        if (this.video !== video) return;
+        if (
+          Number.isFinite(video.currentTime) &&
+          video.currentTime === this._lastVideoTime
+        ) {
+          return;
+        }
+        this._videoFrameDirty = true;
+        if (this.active && this.renderFn && !this._isLoopActive()) {
+          this.redraw();
+        }
+      }, 1000 / 30);
+      return;
+    }
     const markDirty = () => {
       if (this.video !== video) return;
       this._videoFrameDirty = true;
+      // A changing input must continue to render even when shader playback is
+      // paused. The RAF loop already presents while running; otherwise render
+      // exactly once for each decoded video frame.
+      if (this.active && this.renderFn && !this._isLoopActive()) {
+        this.redraw();
+      }
       this._videoFrameCallbackId = video.requestVideoFrameCallback(markDirty);
     };
     this._videoFrameCallbackId = video.requestVideoFrameCallback(markDirty);
   }
 
   _cancelVideoFrameCallback() {
+    if (this._videoPollId) {
+      clearInterval(this._videoPollId);
+      this._videoPollId = 0;
+    }
     if (
       this.video &&
       this._videoFrameCallbackId &&
@@ -977,13 +1110,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
-  async setModule({ setup, render }, { isFill, isAnimated, usesMouse } = {}) {
+  async setModule(
+    { setup, render },
+    { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
+  ) {
     this._playbackGeneration += 1;
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
+    this.supportsRenderScale = Boolean(supportsRenderScale);
     this._teardownState();
     this.frame.frame = 0;
     this.startTime = performance.now();
@@ -992,6 +1129,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     // Fills have no input — size the target to the preview stage at device DPI.
     if (this.isFill && !this.frame.input) {
       this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
+    } else {
+      this._applyAdaptiveOutputSize();
     }
 
     this.device.pushErrorScope("validation");
@@ -1016,6 +1155,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       return false;
     }
     this.onError(null);
+    return true;
+  }
+
+  resetShaderState({ present = true } = {}) {
+    if (!this.ready || !this.renderFn) return false;
+    this._teardownState();
+    this.frame.time = 0;
+    this.frame.deltaTime = 0;
+    this.frame.frame = 0;
+    this.startTime = performance.now();
+    this.lastTime = this.startTime;
+    this.frame.output = this.context.getCurrentTexture();
+    if (this.setupFn) this.setupFn(this.device, this.frame);
+    if (present) this._present();
     return true;
   }
 
@@ -1112,6 +1265,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.stop();
     clearTimeout(this._fillResizeTimer);
     this._fillResizeTimer = 0;
+    clearTimeout(this._zoomResizeTimer);
+    this._zoomResizeTimer = 0;
     this._teardownState();
     this.clearInput();
     this._cancelMouseReset();

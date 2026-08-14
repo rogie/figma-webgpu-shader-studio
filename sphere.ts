@@ -1,5 +1,6 @@
 import { defineProperties } from "figma:shaders"
 
+// @supports-render-scale
 export default function Effect() {}
 
 export function setup(device, frame) {
@@ -283,8 +284,9 @@ export function render(device, frame) {
   var light = frame.params.light
   var lightH = frame.params.lightHeight
 
-  var w = frame.output.width
-  var h = frame.output.height
+  var renderScale = frame.renderScale || 1
+  var w = frame.output.width / renderScale
+  var h = frame.output.height / renderScale
 
   frame.state.uniformData.set([
     shadowI, lightH, shadowS, baseGray,

@@ -29,6 +29,7 @@ import {
   buildDefaults,
   detectKind,
   inferFeatures,
+  supportsRenderScale,
 } from "./runtime/params.js";
 import {
   HTML_IN_CANVAS_SETUP,
@@ -660,6 +661,10 @@ export default function App() {
     pointerSurfaceRef.current = element;
     hostRef.current?.setPointerSurface?.(element);
   }, []);
+  const onPreviewZoomChange = useCallback((zoom) => {
+    setPreviewZoom(zoom);
+    hostRef.current?.setPreviewZoom?.(zoom);
+  }, []);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const propsRef = useRef(props);
@@ -1107,6 +1112,7 @@ export default function App() {
             isFill: detectKind(nextSource) === "fill",
             isAnimated: nextFeatures.isAnimated,
             usesMouse: nextFeatures.usesMouse,
+            supportsRenderScale: supportsRenderScale(nextSource),
           }
         )
         .then((ok) => {
@@ -1540,6 +1546,7 @@ export default function App() {
       },
     });
     hostRef.current = host;
+    host.setPreviewZoom(previewZoom);
     // The overlay mounts before this effect runs, so adopt the surface it reported.
     host.setPointerSurface(pointerSurfaceRef.current);
 
@@ -2466,8 +2473,8 @@ export default function App() {
 
   const downloadPreviewImage = useCallback(async () => {
     const host = hostRef.current;
-    const width = host?.canvas?.width;
-    const height = host?.canvas?.height;
+    const width = host?.logicalOutputSize?.width;
+    const height = host?.logicalOutputSize?.height;
     if (!host || !width || !height) {
       setError("Preview image is not ready to download.");
       return;
@@ -2537,19 +2544,20 @@ export default function App() {
     );
     const { width, height } = resolveVideoDimensions(
       videoExportSettings.dimensions,
-      canvas.width,
-      canvas.height
+      host.logicalOutputSize?.width || canvas.width,
+      host.logicalOutputSize?.height || canvas.height
     );
 
     setVideoExportOpen(false);
     setVideoExportProgress({ progress: 0 });
 
     try {
+      const inputVideo = kind === "effect" ? host.video : null;
       const inputBitmap =
-        kind === "effect"
+        kind === "effect" && !inputVideo
           ? await host.captureInputBitmap({ width, height })
           : null;
-      if (kind === "effect" && !inputBitmap) {
+      if (kind === "effect" && !inputBitmap && !inputVideo) {
         throw new Error("Could not snapshot the current shader input.");
       }
       const blob = await renderVideoInWorker({
@@ -2557,6 +2565,7 @@ export default function App() {
         values: valuesRef.current,
         isFill: kind === "fill",
         inputBitmap,
+        inputVideo,
         width,
         height,
         duration,
@@ -4302,7 +4311,7 @@ export default function App() {
               values={values}
               onControlInput={previewControl}
               onControlChange={updateControl}
-              onZoomChange={setPreviewZoom}
+              onZoomChange={onPreviewZoomChange}
               zoomRequest={previewZoomRequest}
               inputSource={kind === "effect" ? inputSource : "image"}
               htmlInputRef={htmlInputRef}

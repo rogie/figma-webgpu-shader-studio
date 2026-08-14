@@ -284,6 +284,7 @@ Rules:
 * Buffers written with `queue.writeBuffer` need `GPUBufferUsage.COPY_DST`; textures written with `writeTexture` need `GPUTextureUsage.COPY_DST`.
 * Preserve alpha unless the brief explicitly changes transparency.
 * Clamp UVs before sampling offset coordinates unless the effect intentionally treats out-of-bounds reads as transparent.
+* Opt into Shader Studio's high-resolution zoom preview by adding an exact `// @supports-render-scale` source line and reading `var renderScale = frame.renderScale || 1`. Allocate render targets at the actual `frame.output.width` / `height`, but calculate visual geometry from logical dimensions (`frame.output.width / renderScale`, `frame.output.height / renderScale`). A one-logical-pixel UV step is `renderScale / frame.output.width` or `renderScale / frame.output.height`. The fallback keeps the shader compatible with runtimes that do not provide `renderScale`. Never add the directive without implementing these logical-dimension conversions.
 {{- if .animations }}
 * For cursor-following effects, read `frame.mousePosition` and set `usesMouse: true`; do not use click/drag state.
 {{- end }}
@@ -298,6 +299,7 @@ Rules:
 | --- | --- |
 | `frame.input` | `GPUTexture` or `null`; rasterized child content. Null for fills/no input. |
 | `frame.output` | Target `GPUTexture`; render into `frame.output.createView()`. |
+| `frame.renderScale` | Optional preview supersampling factor; use `frame.renderScale || 1`. Divide physical output dimensions by it to preserve logical pixel sizes. |
 {{- if .animations }}
 | `frame.time` | Elapsed time in ms. |
 | `frame.deltaTime` | Time since last frame in ms. |
@@ -307,7 +309,7 @@ Rules:
 | `frame.params` | Values from `defineProperties`. |
 | `frame.state` | Mutable persistent bag for shader modules, buffers, samplers, layouts, pipelines, etc. |
 
-Use `frame.output.width` / `height` for output dimensions.
+Use `frame.output.width` / `height` for physical texture allocation. Use `frame.output.width / (frame.renderScale || 1)` and the corresponding height for logical visual dimensions.
 
 Available JS globals include GPU enum bitfields, `Float32Array`, SES intrinsics such as `Math`, `JSON`, `Array`, `Object`, `Map`, `Set`, `Promise`, integer typed arrays, etc.
 

@@ -37,11 +37,122 @@ export function supportedWebmMimeType(MediaRecorderClass = window.MediaRecorder)
 
 const VIDEO_EXPORT_STALL_TIMEOUT_MS = 30_000;
 
+export function resolveVideoFrameTime(time, duration) {
+  const requestedTime = Math.max(0, Number(time) || 0);
+  const sourceDuration = Number(duration);
+  return Number.isFinite(sourceDuration) && sourceDuration > 0
+    ? requestedTime % sourceDuration
+    : requestedTime;
+}
+
+function waitForMediaEvent(video, type, errorMessage) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      video.removeEventListener(type, onSuccess);
+      video.removeEventListener("error", onError);
+    };
+    const onSuccess = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(errorMessage));
+    };
+    video.addEventListener(type, onSuccess, { once: true });
+    video.addEventListener("error", onError, { once: true });
+  });
+}
+
+async function createExportVideoFrameSource(sourceVideo) {
+  const src = sourceVideo?.currentSrc || sourceVideo?.src;
+  if (!src) throw new Error("The video input has no source to export.");
+
+  const video = document.createElement("video");
+  video.muted = true;
+  video.defaultMuted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  if (sourceVideo.crossOrigin) video.crossOrigin = sourceVideo.crossOrigin;
+  Object.assign(video.style, {
+    position: "fixed",
+    left: "-9999px",
+    top: "0",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  document.body.appendChild(video);
+  video.src = src;
+
+  try {
+    if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
+      const loaded = waitForMediaEvent(
+        video,
+        "loadeddata",
+        "Failed to decode the video input for export."
+      );
+      video.load();
+      await loaded;
+    }
+    video.pause();
+
+    return {
+      async capture(time, width, height) {
+        const targetTime = resolveVideoFrameTime(time, video.duration);
+        if (Math.abs(video.currentTime - targetTime) > 0.0005) {
+          const seeked = waitForMediaEvent(
+            video,
+            "seeked",
+            "Failed to seek the video input for export."
+          );
+          video.currentTime = targetTime;
+          await seeked;
+        }
+        const sourceWidth = video.videoWidth;
+        const sourceHeight = video.videoHeight;
+        if (!sourceWidth || !sourceHeight) {
+          throw new Error("The video input has no decoded frame.");
+        }
+        const scale = Math.max(width / sourceWidth, height / sourceHeight);
+        const cropWidth = Math.max(1, width / scale);
+        const cropHeight = Math.max(1, height / scale);
+        return createImageBitmap(
+          video,
+          Math.max(0, (sourceWidth - cropWidth) / 2),
+          Math.max(0, (sourceHeight - cropHeight) / 2),
+          cropWidth,
+          cropHeight,
+          {
+            resizeWidth: width,
+            resizeHeight: height,
+            resizeQuality: "high",
+          }
+        );
+      },
+      dispose() {
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        video.remove();
+      },
+    };
+  } catch (error) {
+    video.removeAttribute("src");
+    video.load();
+    video.remove();
+    throw error;
+  }
+}
+
 export async function renderVideoInWorker({
   source,
   values,
   isFill,
   inputBitmap = null,
+  inputVideo = null,
   width,
   height,
   duration,
@@ -83,7 +194,14 @@ export async function renderVideoInWorker({
   let recorder = null;
   let timeout = 0;
   let disposeWorker = null;
+  let videoFrameSource = null;
+  let workerInputBitmap = inputBitmap;
   try {
+    if (inputVideo) {
+      videoFrameSource = await createExportVideoFrameSource(inputVideo);
+      workerInputBitmap = await videoFrameSource.capture(0, width, height);
+    }
+
     stream = canvas.captureStream(frameRate);
     const offscreen = canvas.transferControlToOffscreen();
     worker = new Worker(new URL("./videoExportWorker.js", import.meta.url), {
@@ -133,7 +251,32 @@ export async function renderVideoInWorker({
     const rendered = new Promise((resolve, reject) => {
       worker.addEventListener("message", (event) => {
         const message = event.data || {};
-        if (message.type === "ready") {
+        if (message.type === "input-frame-request") {
+          if (!videoFrameSource) {
+            reject(new Error("The export requested a video frame without a video input."));
+            return;
+          }
+          videoFrameSource
+            .capture(message.time, width, height)
+            .then((bitmap) => {
+              worker.postMessage(
+                {
+                  type: "input-frame",
+                  requestId: message.requestId,
+                  bitmap,
+                },
+                [bitmap]
+              );
+            })
+            .catch((error) => {
+              worker.postMessage({
+                type: "input-frame-error",
+                requestId: message.requestId,
+                message: error?.message || String(error),
+              });
+              reject(error);
+            });
+        } else if (message.type === "ready") {
           refreshTimeout();
           const startRendering = () => {
             refreshTimeout();
@@ -176,7 +319,7 @@ export async function renderVideoInWorker({
       });
 
     const transfer = [offscreen];
-    if (inputBitmap) transfer.push(inputBitmap);
+    if (workerInputBitmap) transfer.push(workerInputBitmap);
     worker.postMessage(
       {
         type: "init",
@@ -184,7 +327,8 @@ export async function renderVideoInWorker({
         source,
         values,
         isFill,
-        inputBitmap,
+        inputBitmap: workerInputBitmap,
+        dynamicVideoInput: Boolean(videoFrameSource),
         width,
         height,
         duration,
@@ -215,6 +359,8 @@ export async function renderVideoInWorker({
     await disposeWorker?.();
     worker?.terminate();
     canvas.remove();
-    inputBitmap?.close?.();
+    workerInputBitmap?.close?.();
+    if (workerInputBitmap !== inputBitmap) inputBitmap?.close?.();
+    videoFrameSource?.dispose();
   }
 }

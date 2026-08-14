@@ -73,6 +73,163 @@ test("internal stop keeps the current frame time", () => {
   assert.equal(redraws, 0);
 });
 
+test("decoded video frames redraw while shader playback is paused", () => {
+  const host = makeHost();
+  let videoFrameCallback = null;
+  let callbackId = 0;
+  const video = {
+    requestVideoFrameCallback(callback) {
+      videoFrameCallback = callback;
+      callbackId += 1;
+      return callbackId;
+    },
+  };
+  host.video = video;
+  let redraws = 0;
+  host.redraw = () => {
+    redraws += 1;
+  };
+
+  host._watchVideoFrames();
+  videoFrameCallback();
+  assert.equal(host._videoFrameDirty, true);
+  assert.equal(redraws, 1);
+
+  host.running = true;
+  host.rafId = 1;
+  videoFrameCallback();
+  assert.equal(redraws, 1);
+});
+
+test("video polling redraws paused previews without video frame callbacks", () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let poll = null;
+  let cleared = 0;
+  globalThis.setInterval = (callback) => {
+    poll = callback;
+    return 42;
+  };
+  globalThis.clearInterval = (id) => {
+    cleared = id;
+  };
+  try {
+    const host = makeHost();
+    host.video = { currentTime: 0 };
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+
+    host._watchVideoFrames();
+    poll();
+    assert.equal(redraws, 1);
+
+    host._lastVideoTime = 0;
+    poll();
+    assert.equal(redraws, 1);
+
+    host.video.currentTime = 0.1;
+    poll();
+    assert.equal(redraws, 2);
+
+    host._cancelVideoFrameCallback();
+    assert.equal(cleared, 42);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
+test("replacing an input resets temporal shader state at the same size", () => {
+  const host = makeHost();
+  let destroyed = 0;
+  let setupCalls = 0;
+  let redraws = 0;
+  host.context = { getCurrentTexture: () => ({}) };
+  host.device = {};
+  host.frame.state = {
+    resources: [
+      {
+        destroy() {
+          destroyed += 1;
+        },
+      },
+      {
+        destroy() {
+          destroyed += 1;
+        },
+      },
+    ],
+  };
+  host.setupFn = () => {
+    setupCalls += 1;
+  };
+  host.frame.time = 100;
+  host.frame.deltaTime = 16;
+  host.frame.frame = 6;
+  host.redraw = () => {
+    redraws += 1;
+  };
+
+  host._rebindAfterInputChange(false, { resetState: true });
+
+  assert.equal(destroyed, 2);
+  assert.equal(setupCalls, 1);
+  assert.equal(redraws, 1);
+  assert.equal(host.frame.time, 0);
+  assert.equal(host.frame.deltaTime, 0);
+  assert.equal(host.frame.frame, 0);
+});
+
+test("resetShaderState can clear validation history without presenting", () => {
+  const host = makeHost();
+  host.context = { getCurrentTexture: () => ({}) };
+  host.device = {};
+  host.frame.state = { old: true };
+  host.frame.time = 100;
+  host.frame.deltaTime = 16;
+  host.frame.frame = 6;
+  let setupCalls = 0;
+  let presents = 0;
+  host.setupFn = () => {
+    setupCalls += 1;
+  };
+  host._present = () => {
+    presents += 1;
+  };
+
+  assert.equal(host.resetShaderState({ present: false }), true);
+  assert.equal(setupCalls, 1);
+  assert.equal(presents, 0);
+  assert.equal(host.frame.time, 0);
+  assert.equal(host.frame.deltaTime, 0);
+  assert.equal(host.frame.frame, 0);
+});
+
+test("updating image contents preserves input texture identity and state", () => {
+  const host = makeHost();
+  const texture = { width: 320, height: 180 };
+  const state = { history: true };
+  let copy = null;
+  host.inputTexture = texture;
+  host.frame.input = texture;
+  host.frame.state = state;
+  host.device = {
+    queue: {
+      copyExternalImageToTexture(source, destination, size) {
+        copy = { source, destination, size };
+      },
+    },
+  };
+  const source = {};
+
+  assert.equal(host.updateImageInput(source), true);
+  assert.equal(host.frame.input, texture);
+  assert.equal(host.frame.state, state);
+  assert.deepEqual(copy.size, [320, 180]);
+});
+
 test("play advances time uniforms on every animation frame", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   const callbacks = [];
@@ -190,6 +347,18 @@ test("moving between canvas and overlay handles keeps mousePosition", () => {
   } finally {
     raf.restore();
   }
+});
+
+test("mousePosition stays in logical pixels while supersampled", () => {
+  const host = makeMouseHost();
+  host.canvas.width = 400;
+  host.canvas.height = 200;
+  host.frame.renderScale = 2;
+  host.redraw = () => {};
+
+  host._onMouse({ clientX: 60, clientY: 45 });
+
+  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
 });
 
 test("setPointerSurface tracks the overlay and detaches on destroy", () => {
@@ -346,4 +515,86 @@ test("setSize defers canvas resize while a capture is in progress", async () => 
   host._endCapture();
   assert.equal(host.canvas.width, 16);
   assert.equal(host.canvas.height, 16);
+});
+
+test("supported shaders supersample after zoom settles without replacing input", () => {
+  const originalSetTimeout = globalThis.setTimeout;
+  const originalClearTimeout = globalThis.clearTimeout;
+  let resize = null;
+  globalThis.setTimeout = (callback) => {
+    resize = callback;
+    return 7;
+  };
+  globalThis.clearTimeout = () => {};
+  try {
+    const host = makeHost();
+    host.canvas.width = 1000;
+    host.canvas.height = 500;
+    host.canvas.style = {
+      values: {},
+      removeProperty(name) {
+        delete this.values[name];
+      },
+      set width(value) {
+        this.values.width = value;
+      },
+      set height(value) {
+        this.values.height = value;
+      },
+    };
+    host.canvas.dataset = {};
+    host.logicalOutputSize = { width: 1000, height: 500 };
+    host.supportsRenderScale = true;
+    host.device = { limits: { maxTextureDimension2D: 8192 } };
+    const input = {};
+    host.inputTexture = input;
+    host.frame.input = input;
+    let resets = 0;
+    host.resetShaderState = () => {
+      resets += 1;
+    };
+
+    host.setPreviewZoom(2);
+    assert.equal(host.canvas.width, 1000);
+    resize();
+
+    assert.equal(host.canvas.width, 2000);
+    assert.equal(host.canvas.height, 1000);
+    assert.equal(host.canvas.style.values.width, "1000px");
+    assert.equal(host.canvas.style.values.height, "500px");
+    assert.equal(host.frame.renderScale, 2);
+    assert.equal(host.canvas.dataset.renderScale, "2");
+    assert.equal(host.frame.input, input);
+    assert.equal(resets, 1);
+  } finally {
+    globalThis.setTimeout = originalSetTimeout;
+    globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("capture lock defers adaptive size and shader reset together", () => {
+  const host = makeHost();
+  host.canvas.width = 1000;
+  host.canvas.height = 500;
+  host.canvas.style = { removeProperty() {} };
+  host.canvas.dataset = {};
+  host.logicalOutputSize = { width: 1000, height: 500 };
+  host.supportsRenderScale = true;
+  host.previewZoom = 2;
+  host.device = { limits: { maxTextureDimension2D: 8192 } };
+  let resets = 0;
+  host.resetShaderState = () => {
+    resets += 1;
+  };
+
+  host._beginCapture();
+  assert.equal(host._applyAdaptiveOutputSize(), false);
+  assert.equal(host.canvas.width, 1000);
+  assert.equal(host.frame.renderScale, 1);
+  assert.equal(resets, 0);
+
+  host._endCapture();
+  assert.equal(host.canvas.width, 2000);
+  assert.equal(host.frame.renderScale, 2);
+  assert.equal(resets, 1);
 });

@@ -1,5 +1,6 @@
 import { defineProperties } from "figma:shaders"
 
+// @supports-render-scale
 export default function Effect() {}
 
 export function setup(device, frame) {
@@ -244,11 +245,12 @@ export function render(device, frame) {
   } else {
     pixelSizeY *= stretchAmount;
   }
+  var renderScale = frame.renderScale || 1;
 
   s.uniformData.set([
     reg.x / 100, reg.y / 100, reg.radius ?? 75, reg.angle ?? 90,
     pixelSizeX, pixelSizeY,
-    frame.output.width, frame.output.height,
+    frame.output.width / renderScale, frame.output.height / renderScale,
     p.colorLevels ?? 4, p.pixelShape ?? 0, p.knockout ? 1 : 0, p.gap ?? 0,
     (p.dissolve ?? 0) / 100, p.dissolveMode ?? 0,
   ]);

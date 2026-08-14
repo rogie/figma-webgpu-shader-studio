@@ -21,3 +21,29 @@ export function cssSizeToDevicePixels(cssWidth, cssHeight, maxDim = 2048) {
   }
   return { width, height, dpr, cssWidth: cssW, cssHeight: cssH };
 }
+
+/**
+ * Choose a stable supersampling tier for the current preview zoom.
+ * Never downsample below the shader's logical output size.
+ */
+export function adaptiveRenderScale(
+  zoom,
+  baseWidth,
+  baseHeight,
+  {
+    maxScale = 2,
+    maxPixels = 8 * 1024 * 1024,
+    maxDimension = 4096,
+  } = {}
+) {
+  const z = Math.max(1, Number(zoom) || 1);
+  const width = Math.max(1, Number(baseWidth) || 1);
+  const height = Math.max(1, Number(baseHeight) || 1);
+  const tier = z < 1.25 ? 1 : z < 1.75 ? 1.5 : 2;
+  const pixelScale = Math.sqrt(maxPixels / (width * height));
+  const dimensionScale = maxDimension / Math.max(width, height);
+  return Math.max(
+    1,
+    Math.min(tier, maxScale, pixelScale, dimensionScale)
+  );
+}

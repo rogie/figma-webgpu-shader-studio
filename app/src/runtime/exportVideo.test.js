@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  resolveVideoFrameTime,
   resolveVideoDimensions,
   supportedWebmMimeType,
 } from "./exportVideo.js";
@@ -33,4 +34,10 @@ test("supportedWebmMimeType selects the first supported codec", () => {
     supportedWebmMimeType(fakeRecorder),
     "video/webm;codecs=vp8"
   );
+});
+
+test("resolveVideoFrameTime seeks exact timestamps and loops at duration", () => {
+  assert.equal(resolveVideoFrameTime(1.25, 3), 1.25);
+  assert.equal(resolveVideoFrameTime(3.25, 3), 0.25);
+  assert.equal(resolveVideoFrameTime(-1, 3), 0);
 });

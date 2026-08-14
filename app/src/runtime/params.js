@@ -23,3 +23,9 @@ export function inferFeatures(source) {
     usesMouse: /frame\.mousePosition\b/.test(stripped),
   };
 }
+
+// Adaptive preview supersampling is opt-in because older raw shaders use the
+// physical output dimensions as their logical pixel coordinate system.
+export function supportsRenderScale(source) {
+  return /^\s*\/\/\s*@supports-render-scale\s*$/m.test(source);
+}

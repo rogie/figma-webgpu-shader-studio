@@ -1,5 +1,6 @@
 import { defineProperties } from "figma:shaders"
 
+// @supports-render-scale
 export default function Effect() {}
 
 /*
@@ -533,8 +534,9 @@ export function render(device, frame) {
   if (frame.input == null) return
   var s = frame.state
 
-  var dimX = frame.input.width
-  var dimY = frame.input.height
+  var renderScale = frame.renderScale || 1
+  var dimX = frame.output.width / renderScale
+  var dimY = frame.output.height / renderScale
   if (!dimX || !dimY) return
 
   var pixelSize = frame.params.pixelSize
