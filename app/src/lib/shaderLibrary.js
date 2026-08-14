@@ -20,6 +20,14 @@ export function parseFigmaLibraryKey(key) {
   return { kind, id };
 }
 
+function hasFigmaShaderLink(shader) {
+  return (
+    typeof shader?.figma_shader_id === "string" &&
+    (shader.figma_shader_kind === "effect" ||
+      shader.figma_shader_kind === "fill")
+  );
+}
+
 export function buildShaderLibraryCards({
   drafts,
   cloudShaders,
@@ -57,6 +65,7 @@ export function buildShaderLibraryCards({
       draft,
       cloud: null,
       figma: null,
+      figmaLinked: hasFigmaShaderLink(draft),
       canDelete: true,
     });
   });
@@ -86,6 +95,7 @@ export function buildShaderLibraryCards({
       draft: null,
       cloud: shader,
       figma: null,
+      figmaLinked: hasFigmaShaderLink(shader),
       canDelete: owned,
     });
   });
@@ -107,6 +117,7 @@ export function buildShaderLibraryCards({
       draft: null,
       cloud: null,
       figma: { id: shader.id, kind, description: shader.description || "" },
+      figmaLinked: true,
       canDelete: false,
     });
   });

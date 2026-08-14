@@ -15,11 +15,30 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const MCP_URL = Deno.env.get("FIGMA_MCP_URL") || "https://mcp.figma.com/mcp";
-const FIGMA_API = "https://api.figma.com/v1";
+const MCP_URL =
+  Deno.env.get("FIGMA_MCP_URL") || "https://mcp.staging.figma.com/mcp";
+const FIGMA_OAUTH_AUTHORIZE =
+  Deno.env.get("FIGMA_OAUTH_AUTHORIZE_URL") ||
+  "https://staging.figma.com/oauth/mcp";
+const FIGMA_OAUTH_TOKEN =
+  Deno.env.get("FIGMA_OAUTH_TOKEN_URL") ||
+  "https://api.staging.figma.com/v1/oauth/token";
+const FIGMA_MCP_SCOPE = "mcp:connect";
+const DEFAULT_REDIRECT_URIS = [
+  "https://shader-studio.pages.dev/figma/oauth/callback",
+  "http://localhost:5173/figma/oauth/callback",
+];
 
 type ShaderKind = "effect" | "fill";
-type Op = "list" | "get" | "test" | "create" | "update";
+type Op =
+  | "list"
+  | "get"
+  | "test"
+  | "create"
+  | "update"
+  | "oauth-authorize"
+  | "oauth-exchange"
+  | "oauth-refresh";
 
 type RequestBody = {
   op?: Op;
@@ -28,6 +47,12 @@ type RequestBody = {
   version?: string;
   cursor?: string;
   token?: string;
+  redirectUri?: string;
+  state?: string;
+  codeChallenge?: string;
+  code?: string;
+  codeVerifier?: string;
+  refreshToken?: string;
 };
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
@@ -50,6 +75,94 @@ function listTool(kind: ShaderKind): string {
 
 function getTool(kind: ShaderKind): string {
   return kind === "fill" ? "get_shader_fill" : "get_shader_effect";
+}
+
+function oauthCredentials(): { clientId: string; clientSecret: string } {
+  const clientId = Deno.env.get("FIGMA_OAUTH_CLIENT_ID")?.trim() || "";
+  const clientSecret = Deno.env.get("FIGMA_OAUTH_CLIENT_SECRET")?.trim() || "";
+  if (!clientId || !clientSecret) {
+    throw Object.assign(
+      new Error("Figma OAuth is not configured on the server."),
+      { code: "figma_oauth_not_configured", status: 503 },
+    );
+  }
+  return { clientId, clientSecret };
+}
+
+function allowedRedirectUris(): string[] {
+  const configured = Deno.env.get("FIGMA_OAUTH_REDIRECT_URIS")
+    ?.split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return configured?.length ? configured : DEFAULT_REDIRECT_URIS;
+}
+
+function requireRedirectUri(value?: string): string {
+  const redirectUri = value?.trim() || "";
+  if (!allowedRedirectUris().includes(redirectUri)) {
+    throw Object.assign(new Error("OAuth redirect URI is not allowed."), {
+      code: "oauth_redirect_not_allowed",
+      status: 400,
+    });
+  }
+  return redirectUri;
+}
+
+function basicAuth(clientId: string, clientSecret: string): string {
+  return `Basic ${btoa(`${clientId}:${clientSecret}`)}`;
+}
+
+async function exchangeOAuthToken(
+  params: Record<string, string>,
+): Promise<Record<string, unknown>> {
+  const { clientId, clientSecret } = oauthCredentials();
+  const response = await fetch(FIGMA_OAUTH_TOKEN, {
+    method: "POST",
+    headers: {
+      Authorization: basicAuth(clientId, clientSecret),
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
+    body: new URLSearchParams({
+      ...params,
+      resource: MCP_URL,
+    }),
+  });
+  const payload = await response.json().catch(() => ({})) as Record<
+    string,
+    unknown
+  >;
+  if (!response.ok) {
+    const message =
+      typeof payload.error_description === "string"
+        ? payload.error_description
+        : typeof payload.error === "string"
+          ? payload.error
+          : `Figma OAuth token request failed (${response.status})`;
+    throw Object.assign(new Error(message), {
+      code: "figma_oauth_token_error",
+      status: response.status,
+    });
+  }
+  if (typeof payload.access_token !== "string") {
+    throw Object.assign(new Error("Figma OAuth returned no access token."), {
+      code: "figma_oauth_missing_token",
+      status: 502,
+    });
+  }
+  return {
+    accessToken: payload.access_token,
+    refreshToken:
+      typeof payload.refresh_token === "string"
+        ? payload.refresh_token
+        : undefined,
+    expiresIn:
+      typeof payload.expires_in === "number" ? payload.expires_in : undefined,
+    userId:
+      typeof payload.user_id_string === "string"
+        ? payload.user_id_string
+        : undefined,
+  };
 }
 
 type JsonRpc = {
@@ -115,7 +228,6 @@ class McpClient {
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
       Authorization: `Bearer ${this.#token}`,
-      "X-Figma-Token": this.#token,
     };
     if (this.#sessionId) headers["Mcp-Session-Id"] = this.#sessionId;
 
@@ -131,9 +243,9 @@ class McpClient {
     if (response.status === 401 || response.status === 403) {
       throw Object.assign(
         new Error(
-          "Official Figma remote MCP rejects personal access tokens. It requires OAuth from an allowlisted MCP client (mcp:connect). Shader list/import is blocked until Figma exposes REST or allowlists this app.",
+          "Figma MCP authorization failed. Reconnect Figma and confirm this OAuth client is approved for mcp:connect.",
         ),
-        { code: "figma_mcp_oauth_required", status: response.status },
+        { code: "figma_mcp_unauthorized", status: response.status },
       );
     }
 
@@ -186,7 +298,6 @@ class McpClient {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
           Authorization: `Bearer ${this.#token}`,
-          "X-Figma-Token": this.#token,
           ...(this.#sessionId ? { "Mcp-Session-Id": this.#sessionId } : {}),
         },
         body: JSON.stringify({
@@ -272,30 +383,6 @@ function extractToolPayload(result: unknown): Record<string, unknown> {
     return record;
   }
   return {};
-}
-
-async function verifyRestIdentity(token: string): Promise<{
-  email?: string;
-  handle?: string;
-}> {
-  const response = await fetch(`${FIGMA_API}/me`, {
-    headers: { "X-Figma-Token": token },
-  });
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw Object.assign(
-      new Error(
-        typeof payload?.err === "string"
-          ? payload.err
-          : `Figma token check failed (${response.status})`,
-      ),
-      { code: "figma_token_invalid", status: response.status === 403 ? 401 : response.status },
-    );
-  }
-  return {
-    email: typeof payload.email === "string" ? payload.email : undefined,
-    handle: typeof payload.handle === "string" ? payload.handle : undefined,
-  };
 }
 
 async function listShaders(
@@ -412,6 +499,87 @@ Deno.serve(async (req) => {
     });
   }
 
+  if (op === "oauth-authorize") {
+    try {
+      const { clientId } = oauthCredentials();
+      const redirectUri = requireRedirectUri(body.redirectUri);
+      const state = body.state?.trim() || "";
+      const codeChallenge = body.codeChallenge?.trim() || "";
+      if (!state || !codeChallenge) {
+        return jsonResponse(400, {
+          error: "state and codeChallenge are required",
+          code: "invalid_oauth_request",
+        });
+      }
+      const url = new URL(FIGMA_OAUTH_AUTHORIZE);
+      url.searchParams.set("client_id", clientId);
+      url.searchParams.set("redirect_uri", redirectUri);
+      url.searchParams.set("scope", FIGMA_MCP_SCOPE);
+      url.searchParams.set("state", state);
+      url.searchParams.set("response_type", "code");
+      url.searchParams.set("code_challenge", codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+      url.searchParams.set("resource", MCP_URL);
+      return jsonResponse(200, { authorizationUrl: url.toString() });
+    } catch (error) {
+      const err = error as { message?: string; code?: string; status?: number };
+      return jsonResponse(err.status || 502, {
+        error: err.message || String(error),
+        code: err.code || "figma_oauth_error",
+      });
+    }
+  }
+
+  if (op === "oauth-exchange") {
+    try {
+      const redirectUri = requireRedirectUri(body.redirectUri);
+      const code = body.code?.trim() || "";
+      const codeVerifier = body.codeVerifier?.trim() || "";
+      if (!code || !codeVerifier) {
+        return jsonResponse(400, {
+          error: "code and codeVerifier are required",
+          code: "invalid_oauth_exchange",
+        });
+      }
+      const tokens = await exchangeOAuthToken({
+        grant_type: "authorization_code",
+        code,
+        code_verifier: codeVerifier,
+        redirect_uri: redirectUri,
+      });
+      return jsonResponse(200, tokens);
+    } catch (error) {
+      const err = error as { message?: string; code?: string; status?: number };
+      return jsonResponse(err.status || 502, {
+        error: err.message || String(error),
+        code: err.code || "figma_oauth_error",
+      });
+    }
+  }
+
+  if (op === "oauth-refresh") {
+    try {
+      const refreshToken = body.refreshToken?.trim() || "";
+      if (!refreshToken) {
+        return jsonResponse(400, {
+          error: "refreshToken is required",
+          code: "invalid_oauth_refresh",
+        });
+      }
+      const tokens = await exchangeOAuthToken({
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
+      });
+      return jsonResponse(200, tokens);
+    } catch (error) {
+      const err = error as { message?: string; code?: string; status?: number };
+      return jsonResponse(err.status || 502, {
+        error: err.message || String(error),
+        code: err.code || "figma_oauth_error",
+      });
+    }
+  }
+
   const token = readToken(req, body);
   if (!token) {
     return jsonResponse(401, {
@@ -422,15 +590,9 @@ Deno.serve(async (req) => {
 
   try {
     if (op === "test") {
-      // PATs work for REST /me only. Official mcp.figma.com needs OAuth and
-      // is allowlisted — do not treat MCP success as part of token verify.
-      const identity = await verifyRestIdentity(token);
-      return jsonResponse(200, {
-        ok: true,
-        ...identity,
-        mcpNote:
-          "REST token is valid. Official remote MCP still requires OAuth from an allowlisted client; PAT cannot list/import shaders.",
-      });
+      const client = new McpClient(token);
+      await listShaders(client, "effect");
+      return jsonResponse(200, { ok: true });
     }
 
     if (op === "list") {

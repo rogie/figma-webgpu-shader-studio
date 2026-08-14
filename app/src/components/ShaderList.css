@@ -29,6 +29,14 @@ fig-chooser.shader-list {
       .shader-list-item-menu {
         visibility: visible;
       }
+
+      .shader-list-item-actions {
+        display: grid;
+      }
+
+      .shader-list-item-figma {
+        display: none;
+      }
     }
   }
 }

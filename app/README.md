@@ -113,6 +113,26 @@ menu next to Send; media is sent as multimodal context for that turn (max 3 MB).
 Chat still needs `VITE_SUPABASE_URL` + publishable key so the browser can reach
 `/functions/v1/chat`. Sign-in is not required for chat.
 
+## Figma shader library OAuth
+
+The Figma source filter lists shader effects and fills through Figma's staging
+remote MCP server (`mcp.staging.figma.com`). Configure these exact callback URLs
+on the allowlisted staging OAuth client:
+
+- `https://shader-studio.pages.dev/figma/oauth/callback`
+- `http://localhost:5173/figma/oauth/callback`
+
+Store `FIGMA_OAUTH_CLIENT_ID` and `FIGMA_OAUTH_CLIENT_SECRET` as Supabase Edge
+Function secrets, then deploy the proxy:
+
+```bash
+supabase functions deploy figma-shaders
+```
+
+The browser uses authorization code + PKCE. The Edge Function performs token
+exchange and refresh so the client secret is never included in the frontend
+bundle. The OAuth client must be approved for the `mcp:connect` scope.
+
 ## Notes / limitations
 
 - Close, not pixel-exact, match to Figma's compositor (canvas uses the preferred format, input is `rgba8unorm`).

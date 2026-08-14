@@ -32,10 +32,27 @@
     font-weight: var(--body-medium-strong-fontWeight);
   }
 
+  & .shader-list-item-sublabel {
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+    color: var(--figma-color-text-secondary);
+    font-size: var(--body-small-fontSize);
+  }
+
+  & .shader-list-item-figma {
+    margin-left: auto;
+    color: var(--figma-color-icon-tertiary);
+  }
+
   & .shader-list-item-actions {
     display: none;
     flex: 0 0 auto;
     margin-left: auto;
+    grid-auto-flow: column;
+    gap: var(--spacer-1);
     place-items: center;
   }
 
@@ -49,6 +66,10 @@
     }
     .shader-list-item-actions {
       display: grid;
+    }
+    /* The actions take over this slot on hover. */
+    .shader-list-item-figma {
+      display: none;
     }
   }
 }

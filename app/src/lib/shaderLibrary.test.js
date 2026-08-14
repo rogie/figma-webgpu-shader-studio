@@ -134,6 +134,43 @@ test("filters draft and public cards independently", () => {
   ]);
 });
 
+test("marks studio cards linked to a Figma shader", () => {
+  const cards = buildShaderLibraryCards({
+    drafts: [
+      {
+        id: "draft:linked",
+        name: "Linked draft",
+        kind: "effect",
+        figma_shader_id: "fx-1",
+        figma_shader_kind: "effect",
+      },
+    ],
+    cloudShaders: [
+      {
+        id: "cloud-linked",
+        owner_id: "user-1",
+        name: "Linked cloud",
+        kind: "fill",
+        is_public: false,
+        figma_shader_id: "fill-1",
+        figma_shader_kind: "fill",
+      },
+      {
+        id: "cloud-plain",
+        owner_id: "user-1",
+        name: "Plain cloud",
+        kind: "effect",
+        is_public: false,
+      },
+    ],
+    user: { id: "user-1", email: "owner@example.com" },
+  });
+
+  assert.equal(cards[0].figmaLinked, true);
+  assert.equal(cards[1].figmaLinked, true);
+  assert.equal(cards[2].figmaLinked, false);
+});
+
 test("filters published shaders by author", () => {
   const cards = [
     {

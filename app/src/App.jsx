@@ -46,8 +46,8 @@ import { CANVAS_PROP_TYPES } from "./lib/canvasControls.js";
 import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
+  figmaLibraryKey,
   filterShaderLibraryCards,
-  parseFigmaLibraryKey,
 } from "./lib/shaderLibrary.js";
 import {
   getFigmaAccessToken,
@@ -57,7 +57,7 @@ import { FIGMA_LIBRARY_UI_ENABLED } from "./lib/figmaLibraryUi.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
   getFigmaShader,
-  listFigmaShaders,
+  listAllFigmaShaders,
 } from "./services/figmaShaders.js";
 import {
   createShader,
@@ -111,6 +111,10 @@ const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 const THUMBNAIL_SIZE = 512;
 const INITIAL_DRAFTS = savedDrafts();
+const FIGMA_SHADER_CATEGORIES = [
+  { kind: "effect", label: "Shader effect" },
+  { kind: "fill", label: "Shader fill" },
+];
 
 function dataUrlToObjectUrl(dataUrl) {
   if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
@@ -184,12 +188,7 @@ function groupByKind(cards, effectLabel, fillLabel, keyPrefix) {
 }
 
 function groupLibraryCards(cards) {
-  const studio = cards.filter((card) => card.origin !== "figma");
-  const figma = cards.filter((card) => card.origin === "figma");
-  return [
-    ...groupByKind(studio, "Shader effect", "Shader fill", "studio"),
-    ...groupByKind(figma, "Figma effect", "Figma fill", "figma"),
-  ];
+  return groupByKind(cards, "Shader effect", "Shader fill", "studio");
 }
 
 function mergeValues(definitions, candidate = {}) {
@@ -214,6 +213,24 @@ function cloudIdForDraft(id) {
   return isDraftId(id) ? id.slice("draft:".length) : id;
 }
 
+function figmaShaderLink(shader) {
+  return {
+    figma_shader_id:
+      typeof shader?.figma_shader_id === "string"
+        ? shader.figma_shader_id
+        : null,
+    figma_shader_kind:
+      shader?.figma_shader_kind === "effect" ||
+      shader?.figma_shader_kind === "fill"
+        ? shader.figma_shader_kind
+        : null,
+    figma_shader_version:
+      typeof shader?.figma_shader_version === "string"
+        ? shader.figma_shader_version
+        : null,
+  };
+}
+
 function serializeDraft(draft, thumbnail = null) {
   return {
     id: draft.id,
@@ -223,16 +240,7 @@ function serializeDraft(draft, thumbnail = null) {
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
     isPublic: Boolean(draft.isPublic),
     thumbnail: typeof thumbnail === "string" ? thumbnail : null,
-    figma_shader_id:
-      typeof draft.figma_shader_id === "string" ? draft.figma_shader_id : null,
-    figma_shader_kind:
-      draft.figma_shader_kind === "effect" || draft.figma_shader_kind === "fill"
-        ? draft.figma_shader_kind
-        : null,
-    figma_shader_version:
-      typeof draft.figma_shader_version === "string"
-        ? draft.figma_shader_version
-        : null,
+    ...figmaShaderLink(draft),
   };
 }
 
@@ -262,19 +270,7 @@ function savedDrafts() {
         pendingMedia: null,
         thumbnail:
           typeof draft.thumbnail === "string" ? draft.thumbnail : null,
-        figma_shader_id:
-          typeof draft.figma_shader_id === "string"
-            ? draft.figma_shader_id
-            : null,
-        figma_shader_kind:
-          draft.figma_shader_kind === "effect" ||
-          draft.figma_shader_kind === "fill"
-            ? draft.figma_shader_kind
-            : null,
-        figma_shader_version:
-          typeof draft.figma_shader_version === "string"
-            ? draft.figma_shader_version
-            : null,
+        ...figmaShaderLink(draft),
       }));
   } catch {
     return [];
@@ -579,6 +575,10 @@ export default function App() {
   const [figmaShaders, setFigmaShaders] = useState([]);
   const [figmaLibraryLoading, setFigmaLibraryLoading] = useState(false);
   const [figmaLibraryError, setFigmaLibraryError] = useState("");
+  const [figmaImportOpen, setFigmaImportOpen] = useState(false);
+  const [figmaImportProgress, setFigmaImportProgress] = useState(null);
+  const [figmaImportCheckedKeys, setFigmaImportCheckedKeys] = useState([]);
+  const [figmaImportKind, setFigmaImportKind] = useState("all");
   const [codeCollapsed, setCodeCollapsed] = useState(
     () => savedSidebarSections().codeCollapsed
   );
@@ -646,6 +646,9 @@ export default function App() {
   const videoFrameRateRef = useRef(null);
   const videoBitrateRef = useRef(null);
   const deleteDialogRef = useRef(null);
+  const figmaImportDialogRef = useRef(null);
+  const figmaImportChooserRef = useRef(null);
+  const figmaImportKindRef = useRef(null);
   const propertiesPanelRef = useRef(null);
   const visualizerRef = useRef(null);
   const hostRef = useRef(null);
@@ -674,6 +677,11 @@ export default function App() {
   const mediaUrlRef = useRef(null);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
+  const activeFigmaLink = figmaShaderLink(
+    isDraftId(presetId)
+      ? drafts.find((draft) => draft.id === presetId)
+      : currentShader
+  );
   const draftSessionRef = useRef({
     presetId,
     shaderName,
@@ -681,6 +689,7 @@ export default function App() {
     values,
     isPublic,
     pendingMedia,
+    ...activeFigmaLink,
   });
 
   sourceRef.current = source;
@@ -693,6 +702,7 @@ export default function App() {
     values,
     isPublic,
     pendingMedia,
+    ...activeFigmaLink,
   };
   const kind = useMemo(() => detectKind(source), [source]);
   const shaderFeatures = useMemo(() => inferFeatures(source), [source]);
@@ -746,13 +756,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!FIGMA_LIBRARY_UI_ENABLED && homeOrigin === "figma") {
-      setHomeOrigin("all");
-    }
-  }, [homeOrigin]);
-
-  useEffect(() => {
-    if (!FIGMA_LIBRARY_UI_ENABLED || !figmaTokenConfigured) {
+    if (!FIGMA_LIBRARY_UI_ENABLED || !figmaImportOpen || !figmaTokenConfigured) {
       setFigmaShaders([]);
       setFigmaLibraryError("");
       setFigmaLibraryLoading(false);
@@ -766,13 +770,13 @@ export default function App() {
     (async () => {
       try {
         const [effects, fills] = await Promise.all([
-          listFigmaShaders("effect"),
-          listFigmaShaders("fill"),
+          listAllFigmaShaders("effect"),
+          listAllFigmaShaders("fill"),
         ]);
         if (cancelled) return;
         setFigmaShaders([
-          ...effects.items.map((item) => ({ ...item, kind: "effect" })),
-          ...fills.items.map((item) => ({ ...item, kind: "fill" })),
+          ...effects.map((item) => ({ ...item, kind: "effect" })),
+          ...fills.map((item) => ({ ...item, kind: "fill" })),
         ]);
       } catch (libraryError) {
         if (cancelled) return;
@@ -786,7 +790,41 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [figmaTokenConfigured]);
+  }, [figmaImportOpen, figmaTokenConfigured]);
+
+  useEffect(() => {
+    const dialog = figmaImportDialogRef.current;
+    if (!dialog) return;
+    if (figmaImportOpen) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+    if (!figmaImportOpen) {
+      setFigmaImportCheckedKeys([]);
+      setFigmaImportKind("all");
+      setFigmaImportProgress(null);
+    }
+  }, [figmaImportOpen]);
+
+  useEffect(() => {
+    const control = figmaImportKindRef.current;
+    if (!control) return undefined;
+    const onKind = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "all");
+      if (
+        value === "all" ||
+        value === "effect" ||
+        value === "fill" ||
+        value === "imported"
+      ) {
+        setFigmaImportKind(value);
+        setFigmaImportCheckedKeys([]);
+      }
+    };
+    control.addEventListener("input", onKind);
+    return () => control.removeEventListener("input", onKind);
+  }, [figmaImportOpen, figmaLibraryLoading, figmaTokenConfigured]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -867,6 +905,7 @@ export default function App() {
               isPublic: session.isPublic,
               pendingMedia: null,
               thumbnail: null,
+              ...figmaShaderLink(session),
             },
             ...current,
           ];
@@ -1954,6 +1993,7 @@ export default function App() {
             parameter_values: session.values || draft.values || {},
             features: inferFeatures(session.source || draft.source),
             is_public: false,
+            ...figmaShaderLink(editorActive ? session : draft),
           });
 
           const assetChanges = {};
@@ -2168,15 +2208,6 @@ export default function App() {
 
   const chooseItem = useCallback(
     (id) => {
-      const figmaRef = FIGMA_LIBRARY_UI_ENABLED
-        ? parseFigmaLibraryKey(id)
-        : null;
-      if (figmaRef) {
-        openFigmaShader(figmaRef.kind, figmaRef.id).catch((figmaError) =>
-          setError(figmaError.message || String(figmaError))
-        );
-        return;
-      }
       if (isDraftId(id)) {
         const draft = drafts.find((item) => item.id === id);
         if (draft) openDraft(draft);
@@ -2197,7 +2228,6 @@ export default function App() {
       drafts,
       openCloudShader,
       openDraft,
-      openFigmaShader,
     ]
   );
 
@@ -2598,18 +2628,7 @@ export default function App() {
           parameter_values: valuesRef.current,
           features: inferFeatures(sourceRef.current),
           is_public: publicFlag,
-          figma_shader_id:
-            currentShader?.figma_shader_id ||
-            draftLink?.figma_shader_id ||
-            null,
-          figma_shader_kind:
-            currentShader?.figma_shader_kind ||
-            draftLink?.figma_shader_kind ||
-            null,
-          figma_shader_version:
-            currentShader?.figma_shader_version ||
-            draftLink?.figma_shader_version ||
-            null,
+          ...figmaShaderLink(currentShader || draftLink),
         };
         // Background draft autosaves must never race an explicit publish or
         // unpublish action. Visibility changes are only persisted by Save or
@@ -2818,6 +2837,9 @@ export default function App() {
         values: { ...valuesRef.current },
         isPublic: false,
         pendingMedia: mediaFile,
+        // A duplicate is a new local shader, not a second writer for the same
+        // remote Figma resource. Only the imported original keeps its link.
+        ...figmaShaderLink(null),
       };
       if (user) {
         const saved = await createShader({
@@ -2829,6 +2851,7 @@ export default function App() {
           parameter_values: draft.values,
           features: inferFeatures(draft.source),
           is_public: false,
+          ...figmaShaderLink(null),
         });
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
@@ -3283,7 +3306,6 @@ export default function App() {
       buildShaderLibraryCards({
         drafts: user ? [] : drafts,
         cloudShaders,
-        figmaShaders: FIGMA_LIBRARY_UI_ENABLED ? figmaShaders : [],
         thumbnails,
         cloudThumbnails,
         liveNames: {
@@ -3295,7 +3317,6 @@ export default function App() {
       cloudShaders,
       cloudThumbnails,
       drafts,
-      figmaShaders,
       presetId,
       shaderName,
       thumbnails,
@@ -3340,6 +3361,144 @@ export default function App() {
       ),
     [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
+
+  const figmaImportedKeys = useMemo(() => {
+    const keys = new Set();
+    for (const shader of cloudShaders) {
+      if (
+        user &&
+        shader.owner_id === user.id &&
+        typeof shader.figma_shader_id === "string" &&
+        (shader.figma_shader_kind === "effect" ||
+          shader.figma_shader_kind === "fill")
+      ) {
+        keys.add(
+          figmaLibraryKey(shader.figma_shader_kind, shader.figma_shader_id)
+        );
+      }
+    }
+    for (const draft of drafts) {
+      if (
+        typeof draft.figma_shader_id === "string" &&
+        (draft.figma_shader_kind === "effect" ||
+          draft.figma_shader_kind === "fill")
+      ) {
+        keys.add(figmaLibraryKey(draft.figma_shader_kind, draft.figma_shader_id));
+      }
+    }
+    return keys;
+  }, [cloudShaders, drafts, user]);
+
+  const figmaImportCards = useMemo(
+    () =>
+      FIGMA_SHADER_CATEGORIES.filter(
+        ({ kind }) =>
+          figmaImportKind === "all" ||
+          figmaImportKind === "imported" ||
+          figmaImportKind === kind
+      ).flatMap(({ kind, label }) => {
+        const items = figmaShaders.filter((shader) => {
+          if (shader.kind !== kind) return false;
+          const key = figmaLibraryKey(kind, shader.id);
+          const imported = figmaImportedKeys.has(key);
+          if (figmaImportKind === "imported") return imported;
+          return !imported;
+        });
+        if (!items.length) return [];
+        const showSeparators =
+          figmaImportKind === "all" || figmaImportKind === "imported";
+        return [
+          ...(showSeparators
+            ? [{ key: `separator:figma:${kind}`, separatorLabel: label }]
+            : []),
+          ...items.map((shader) => {
+            const key = figmaLibraryKey(kind, shader.id);
+            return {
+              key,
+              name: shader.name,
+              description: shader.description || "",
+              kind,
+              id: shader.id,
+              imported: figmaImportedKeys.has(key),
+            };
+          }),
+        ];
+      }),
+    [figmaImportKind, figmaImportedKeys, figmaShaders]
+  );
+  const figmaImportCheckedCards = useMemo(
+    () =>
+      figmaImportCards.filter((card) =>
+        figmaImportCheckedKeys.includes(card.key)
+      ),
+    [figmaImportCards, figmaImportCheckedKeys]
+  );
+  const figmaImportCheckedCount = figmaImportCheckedCards.length;
+  const figmaImportSelectionIsUpdate =
+    figmaImportCheckedCount > 0 &&
+    figmaImportCheckedCards.every((card) => card.imported);
+  const figmaImportBusy = Boolean(
+    figmaLibraryLoading || figmaImportProgress
+  );
+
+  const toggleFigmaImportChecked = useCallback((key, checked) => {
+    setFigmaImportCheckedKeys((current) => {
+      const hasKey = current.includes(key);
+      if (checked && !hasKey) return [...current, key];
+      if (!checked && hasKey) return current.filter((item) => item !== key);
+      return current;
+    });
+  }, []);
+
+  useEffect(() => {
+    const chooser = figmaImportChooserRef.current;
+    if (!chooser) return undefined;
+    // The row click mirrors the checkbox, so a click anywhere on a choice
+    // toggles it. Clicks on the checkbox itself are left to the checkbox.
+    const onClick = (event) => {
+      if (figmaImportBusy) return;
+      if (event.target.closest?.("fig-checkbox")) return;
+      const key = event.target.closest?.("fig-choice")?.getAttribute("value");
+      if (!key) return;
+      setFigmaImportCheckedKeys((current) =>
+        current.includes(key)
+          ? current.filter((item) => item !== key)
+          : [...current, key]
+      );
+    };
+    chooser.addEventListener("click", onClick);
+    return () => chooser.removeEventListener("click", onClick);
+  }, [
+    figmaImportBusy,
+    figmaImportOpen,
+    figmaLibraryLoading,
+    figmaTokenConfigured,
+    figmaImportKind,
+  ]);
+
+  const importSelectedFigmaShaders = useCallback(async () => {
+    const selected = figmaImportCards.filter((card) =>
+      figmaImportCheckedKeys.includes(card.key)
+    );
+    if (!selected.length) return;
+    setFigmaLibraryError("");
+    setFigmaImportProgress({ current: 0, total: selected.length });
+    try {
+      for (let index = 0; index < selected.length; index += 1) {
+        const card = selected[index];
+        setFigmaImportProgress({
+          current: index + 1,
+          total: selected.length,
+        });
+        await openFigmaShader(card.kind, card.id);
+      }
+      setFigmaImportOpen(false);
+    } catch (importError) {
+      setFigmaLibraryError(importError.message || String(importError));
+    } finally {
+      setFigmaImportProgress(null);
+    }
+  }, [figmaImportCards, figmaImportCheckedKeys, openFigmaShader]);
 
   const propertiesPanel = (
     <aside
@@ -3432,13 +3591,7 @@ export default function App() {
         <ShaderNavCard
           src={card.thumbnailUrl}
           label={card.name}
-          sublabel={
-            card.origin === "public"
-              ? "Published"
-              : card.origin === "figma"
-                ? "Figma"
-                : "Draft"
-          }
+          sublabel={card.origin === "public" ? "Published" : "Draft"}
           selected={selectedKey === card.key}
           published={card.origin === "public"}
           authorName={card.authorName || card.authorLabel}
@@ -3530,9 +3683,6 @@ export default function App() {
                     { value: "all", label: "All sources" },
                     { value: "draft", label: "Drafts" },
                     { value: "public", label: "Published" },
-                    ...(FIGMA_LIBRARY_UI_ENABLED
-                      ? [{ value: "figma", label: "Figma" }]
-                      : []),
                   ])}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
@@ -3571,38 +3721,6 @@ export default function App() {
             </hstack>
           </fig-header>
         </div>
-        {FIGMA_LIBRARY_UI_ENABLED &&
-          homeOrigin === "figma" &&
-          !figmaTokenConfigured && (
-          <div className="home-figma-empty">
-            <p>
-              Add a Figma access token in Settings to browse your shader
-              library.
-            </p>
-            <fig-button
-              type="button"
-              variant="secondary"
-              onClick={() => setSettingsOpen(true)}
-            >
-              Open Settings
-            </fig-button>
-          </div>
-        )}
-        {FIGMA_LIBRARY_UI_ENABLED &&
-          homeOrigin === "figma" &&
-          figmaTokenConfigured &&
-          figmaLibraryLoading && (
-          <p className="home-figma-empty">Loading Figma shaders…</p>
-        )}
-        {FIGMA_LIBRARY_UI_ENABLED &&
-          homeOrigin === "figma" &&
-          figmaTokenConfigured &&
-          !figmaLibraryLoading &&
-          figmaLibraryError && (
-            <p className="home-figma-empty form-message error">
-              {figmaLibraryError}
-            </p>
-          )}
         <fig-chooser
           ref={homeChooserRef}
           value=""
@@ -3661,6 +3779,17 @@ export default function App() {
                   >
                     Shader fill
                   </fig-menu-item>
+                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
+                    <>
+                      <fig-separator />
+                      <fig-menu-item
+                        value="from-figma"
+                        onClick={() => setFigmaImportOpen(true)}
+                      >
+                        From Figma…
+                      </fig-menu-item>
+                    </>
+                  )}
                 </fig-menu>
                 <AccountMenu
                   open={authOpen}
@@ -4487,6 +4616,168 @@ export default function App() {
             {deleting ? "Deleting…" : "Delete"}
           </fig-button>
         </fig-footer>
+      </dialog>
+
+      <dialog
+        is="fig-dialog"
+        ref={figmaImportDialogRef}
+        class="figma-import-dialog"
+        title="Add from Figma"
+        modal=""
+        closedby="any"
+        position="center center"
+        autoresize=""
+        onClose={() => setFigmaImportOpen(false)}
+        onCancel={() => setFigmaImportOpen(false)}
+      >
+        {!figmaTokenConfigured ? (
+          <div className="figma-import-message">
+            <p>Connect Figma in Settings to browse your shader library.</p>
+            <fig-button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setFigmaImportOpen(false);
+                setSettingsOpen(true);
+              }}
+            >
+              Open Settings
+            </fig-button>
+          </div>
+        ) : (
+          <>
+            {figmaLibraryError && (
+              <p className="figma-import-message form-message error">
+                {figmaLibraryError}
+              </p>
+            )}
+            {!figmaLibraryLoading && (
+              <fig-segmented-control
+                ref={figmaImportKindRef}
+                class="figma-import-kind"
+                full=""
+                sizing="equal"
+                value={figmaImportKind}
+                aria-label="Filter Figma shaders"
+              >
+                <fig-segment value="all" selected={figmaImportKind === "all"}>
+                  All
+                </fig-segment>
+                <fig-segment
+                  value="effect"
+                  selected={figmaImportKind === "effect"}
+                >
+                  Effects
+                </fig-segment>
+                <fig-segment value="fill" selected={figmaImportKind === "fill"}>
+                  Fills
+                </fig-segment>
+                <fig-segment
+                  value="imported"
+                  selected={figmaImportKind === "imported"}
+                >
+                  Imported
+                </fig-segment>
+              </fig-segmented-control>
+            )}
+            {!figmaLibraryLoading &&
+              (figmaImportCards.length === 0 && !figmaLibraryError ? (
+                <p className="figma-import-message">
+                  {figmaImportKind === "effect"
+                    ? "No new shader effects to import."
+                    : figmaImportKind === "fill"
+                      ? "No new shader fills to import."
+                      : figmaImportKind === "imported"
+                        ? "No imported Figma shaders yet."
+                        : "No new Figma shaders to import."}
+                </p>
+              ) : (
+                <ShaderList
+                  ref={figmaImportChooserRef}
+                  className="figma-import-list"
+                  value=""
+                  cards={figmaImportCards}
+                  showPreview={false}
+                  renderActions={(card) => {
+                    const checked = figmaImportCheckedKeys.includes(card.key);
+                    return (
+                      <>
+                        {card.imported && figmaImportKind !== "imported" && (
+                          <span className="figma-import-in-studio">
+                            In studio
+                          </span>
+                        )}
+                        <fig-checkbox
+                          class="figma-import-checkbox"
+                          checked={checked ? "" : undefined}
+                          aria-label={
+                            card.imported
+                              ? `Select ${card.name} to update`
+                              : `Select ${card.name}`
+                          }
+                          disabled={figmaImportBusy ? "" : undefined}
+                          onInput={(event) => {
+                            event.stopPropagation();
+                            const next =
+                              typeof event.detail?.checked === "boolean"
+                                ? event.detail.checked
+                                : !checked;
+                            toggleFigmaImportChecked(card.key, next);
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                          dangerouslySetInnerHTML={{ __html: "" }}
+                        />
+                      </>
+                    );
+                  }}
+                />
+              ))}
+            <fig-footer sticky="">
+              {figmaLibraryLoading || figmaImportProgress ? (
+                <label>
+                  <fig-spinner
+                    aria-label={
+                      figmaImportProgress
+                        ? figmaImportSelectionIsUpdate
+                          ? "Updating shaders"
+                          : "Importing shaders"
+                        : "Loading Figma shaders"
+                    }
+                  />{" "}
+                  <strong>
+                    {figmaImportProgress
+                      ? `${figmaImportProgress.current} of ${figmaImportProgress.total} shaders`
+                      : "Loading shaders"}
+                  </strong>
+                </label>
+              ) : (
+                <>
+                  <label>
+                    {figmaImportCheckedCount
+                      ? `${
+                          figmaImportSelectionIsUpdate ? "Update" : "Import"
+                        } ${figmaImportCheckedCount} shader${
+                          figmaImportCheckedCount === 1 ? "" : "s"
+                        }`
+                      : figmaImportKind === "imported"
+                        ? "Choose to update"
+                        : "Choose to import"}
+                  </label>
+                  <fig-button
+                    type="button"
+                    variant="primary"
+                    disabled={!figmaImportCheckedCount ? "" : undefined}
+                    onClick={() => {
+                      importSelectedFigmaShaders().catch(() => {});
+                    }}
+                  >
+                    {figmaImportSelectionIsUpdate ? "Update" : "Add"}
+                  </fig-button>
+                </>
+              )}
+            </fig-footer>
+          </>
+        )}
       </dialog>
 
       <dialog

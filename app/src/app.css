@@ -904,6 +904,61 @@ dialog.embed-dialog {
   }
 }
 
+dialog.figma-import-dialog {
+  width: min(320px, calc(100vw - var(--spacer-6)));
+
+  .figma-import-message {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--spacer-2);
+    margin: 0;
+    padding: var(--spacer-3);
+    color: var(--figma-color-text-secondary);
+
+    p {
+      margin: 0;
+    }
+  }
+
+  .figma-import-kind {
+    flex: 0 0 auto;
+    margin: var(--spacer-3);
+    margin-bottom: var(--spacer-2);
+    width: calc(100% - var(--spacer-3) * 2);
+  }
+
+  fig-chooser.figma-import-list {
+    max-height: min(60vh, 32rem);
+
+    .shader-list-item {
+      padding: var(--spacer-3);
+    }
+
+    .shader-list-item-actions {
+      display: grid;
+    }
+
+    .figma-import-in-studio {
+      color: var(--figma-color-text-secondary);
+      font-size: var(--body-small-fontSize);
+      white-space: nowrap;
+    }
+
+    > fig-separator {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding-block: var(--spacer-2) var(--fig-chooser-gap);
+      background: var(--figma-color-bg);
+    }
+  }
+
+  > fig-footer[sticky] {
+    flex-shrink: 0;
+  }
+}
+
 dialog.video-export-toast,
 dialog.video-exported-toast {
   .video-export-progress,

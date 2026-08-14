@@ -3,13 +3,21 @@ import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
 
 const ShaderList = forwardRef(function ShaderList(
-  { cards, value, onPublish, onDelete },
+  {
+    cards,
+    value,
+    onPublish,
+    onDelete,
+    className,
+    showPreview = true,
+    renderActions,
+  },
   ref
 ) {
   return (
     <fig-chooser
       ref={ref}
-      class="shader-list"
+      class={className ? `shader-list ${className}` : "shader-list"}
       value={value}
       layout="vertical"
       overflow="scrollbar"
@@ -25,6 +33,10 @@ const ShaderList = forwardRef(function ShaderList(
           <ShaderListItem
             src={card.thumbnailUrl}
             label={card.name}
+            sublabel={card.description}
+            showPreview={showPreview}
+            figmaLinked={Boolean(card.figmaLinked)}
+            actions={renderActions?.(card)}
             onPublish={
               card.canDelete
                 ? (anchor) => onPublish?.(card, anchor)

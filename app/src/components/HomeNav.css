@@ -168,17 +168,6 @@
     }
   }
 
-  .home-figma-empty {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--spacer-2);
-    padding: 0 var(--spacer-3) var(--spacer-3);
-    margin: 0;
-    color: var(--fig-color-text-secondary, inherit);
-    max-width: 36rem;
-  }
-
   @media (min-width: 1400px) {
     fig-chooser {
       --fig-chooser-grid-columns: 6;

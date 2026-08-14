@@ -7,11 +7,14 @@ import {
 } from "../lib/providerKeys.js";
 import {
   getFigmaAccessToken,
-  setFigmaAccessToken,
   subscribeFigmaAccessToken,
 } from "../lib/figmaAccessToken.js";
 import { FIGMA_LIBRARY_UI_ENABLED } from "../lib/figmaLibraryUi.js";
-import { testFigmaConnection } from "../services/figmaShaders.js";
+import {
+  beginFigmaOAuth,
+  disconnectFigma,
+  testFigmaConnection,
+} from "../services/figmaShaders.js";
 import { getProfile, saveProfile } from "../services/shaders.js";
 
 function accountDisplayName(user) {
@@ -51,7 +54,9 @@ export default function AccountMenu({
     () => getProviderKeys().anthropic
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
-  const [figmaToken, setFigmaToken] = useState(() => getFigmaAccessToken());
+  const [figmaConnected, setFigmaConnected] = useState(
+    () => Boolean(getFigmaAccessToken())
+  );
   const [figmaTestState, setFigmaTestState] = useState(
     /** @type {"idle" | "testing" | "ok" | "error"} */ ("idle")
   );
@@ -79,7 +84,7 @@ export default function AccountMenu({
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) return undefined;
     return subscribeFigmaAccessToken(() => {
-      setFigmaToken(getFigmaAccessToken());
+      setFigmaConnected(Boolean(getFigmaAccessToken()));
     });
   }, []);
 
@@ -180,9 +185,6 @@ export default function AccountMenu({
       setProviderKey("openai", openaiKey);
       setProviderKey("anthropic", anthropicKey);
       setProviderKey("gemini", geminiKey);
-      if (FIGMA_LIBRARY_UI_ENABLED) {
-        setFigmaAccessToken(figmaToken);
-      }
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
@@ -192,22 +194,35 @@ export default function AccountMenu({
     }
   };
 
+  const connectFigma = async () => {
+    setFigmaTestState("testing");
+    setFigmaTestMessage("");
+    try {
+      await beginFigmaOAuth();
+    } catch (oauthError) {
+      setFigmaTestState("error");
+      setFigmaTestMessage(oauthError.message || String(oauthError));
+    }
+  };
+
   const testFigma = async () => {
     setFigmaTestState("testing");
     setFigmaTestMessage("");
     try {
-      // Persist the field first so the proxy and home library see the same token.
-      setFigmaAccessToken(figmaToken);
-      const result = await testFigmaConnection({ token: figmaToken });
-      const who = result.handle || result.email || "Figma";
+      await testFigmaConnection();
       setFigmaTestState("ok");
-      setFigmaTestMessage(
-        `REST token OK (${who}). Official MCP still needs OAuth — PAT cannot list/import shaders yet.`
-      );
+      setFigmaTestMessage("Figma MCP connection verified.");
     } catch (testError) {
       setFigmaTestState("error");
       setFigmaTestMessage(testError.message || String(testError));
     }
+  };
+
+  const removeFigmaConnection = () => {
+    disconnectFigma();
+    setFigmaConnected(false);
+    setFigmaTestState("idle");
+    setFigmaTestMessage("Figma disconnected from this device.");
   };
 
   // fig-menu relocates items into its popup. Remount on auth changes so React
@@ -416,44 +431,48 @@ export default function AccountMenu({
           {FIGMA_LIBRARY_UI_ENABLED && (
             <fig-group name="Figma" collapsible="" open="">
               <p>
-                Official remote MCP requires OAuth (not a personal access token),
-                and shader library tools currently need an allowlisted MCP
-                client. A PAT can only verify REST identity for now; it cannot
-                unlock list/import against mcp.figma.com. Token stays on this
-                device.
+                Connect with OAuth to browse and import your Figma shader effects
+                and fills. OAuth tokens stay on this device; the client secret
+                stays in the server function.
               </p>
-              <fig-field>
-                <label>Access token (REST)</label>
-                <fig-input-text
-                  type="password"
-                  full=""
-                  value={figmaToken}
-                  placeholder="figd_…"
-                  autocomplete="off"
-                  onInput={(event) => {
-                    setFigmaToken(event.target.value);
-                    setFigmaTestState("idle");
-                    setFigmaTestMessage("");
-                  }}
-                  dangerouslySetInnerHTML={{ __html: "" }}
-                />
-              </fig-field>
-              <hstack>
-                <fig-button
-                  type="button"
-                  variant="secondary"
-                  disabled={
-                    !figmaToken.trim() || figmaTestState === "testing"
-                      ? ""
-                      : undefined
-                  }
-                  onClick={() => {
-                    testFigma().catch(() => {});
-                  }}
-                >
-                  {figmaTestState === "testing" ? "Testing…" : "Verify token"}
-                </fig-button>
-              </hstack>
+              <fig-footer borderless="">
+                {figmaConnected ? (
+                  <>
+                    <fig-button
+                      type="button"
+                      variant="secondary"
+                      disabled={figmaTestState === "testing" ? "" : undefined}
+                      onClick={() => {
+                        testFigma().catch(() => {});
+                      }}
+                    >
+                      {figmaTestState === "testing"
+                        ? "Checking…"
+                        : "Check connection"}
+                    </fig-button>
+                    <fig-button
+                      type="button"
+                      variant="destructiveSecondary"
+                      onClick={removeFigmaConnection}
+                    >
+                      Disconnect
+                    </fig-button>
+                  </>
+                ) : (
+                  <fig-button
+                    type="button"
+                    variant="primary"
+                    disabled={figmaTestState === "testing" ? "" : undefined}
+                    onClick={() => {
+                      connectFigma().catch(() => {});
+                    }}
+                  >
+                    {figmaTestState === "testing"
+                      ? "Connecting…"
+                      : "Connect to Figma"}
+                  </fig-button>
+                )}
+              </fig-footer>
               {figmaTestMessage && (
                 <p
                   className={
