@@ -1,6 +1,6 @@
 .streaming-code-block {
   min-width: 0;
-  margin-top: var(--spacer-2);
+  margin-top: var(--spacer-3);
   padding: 0;
   overflow: hidden;
   color: var(--figma-color-text);
