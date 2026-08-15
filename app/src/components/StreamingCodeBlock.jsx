@@ -25,6 +25,7 @@ export default function StreamingCodeBlock({
   source,
   pending,
   applied,
+  incomplete,
   defaultExpanded = Boolean(pending),
 }) {
   const groupRef = useRef(null);
@@ -82,12 +83,20 @@ export default function StreamingCodeBlock({
 
   if (!source) return null;
 
-  const status = pending ? "Writing module…" : applied ? "Applied" : "Generated";
+  const status = pending
+    ? "Writing module…"
+    : incomplete
+      ? "Incomplete"
+      : applied
+        ? "Applied"
+        : "Generated";
   const filenameLabel = pending
     ? "Writing main.ts"
-    : applied
-      ? "Applied main.ts"
-      : "Didn't apply main.ts";
+    : incomplete
+      ? "Incomplete main.ts"
+      : applied
+        ? "Applied main.ts"
+        : "Didn't apply main.ts";
 
   return (
     <fig-group
@@ -96,6 +105,7 @@ export default function StreamingCodeBlock({
       collapsible=""
       open={pending ? "true" : undefined}
       data-pending={pending ? "true" : undefined}
+      data-incomplete={incomplete ? "true" : undefined}
     >
       <fig-header class="streaming-code-header" borderless compact="">
         <h3 className="streaming-code-title">
@@ -113,6 +123,15 @@ export default function StreamingCodeBlock({
             size="small"
             aria-label={status}
           />
+        ) : incomplete ? (
+          <fig-tooltip text="Response ended before code was complete">
+            <fig-icon
+              class="streaming-code-status"
+              name="warning"
+              size="small"
+              aria-label="Incomplete module"
+            />
+          </fig-tooltip>
         ) : applied ? (
           <fig-icon
             class="streaming-code-status"

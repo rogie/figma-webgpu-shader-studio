@@ -78,14 +78,16 @@ export function validateModuleSource(source) {
 export function splitAssistantContent(text) {
   const source = extractModuleSource(text, { allowIncomplete: true });
   if (!source) {
-    return { prose: text.trim(), source: null };
+    return { prose: text.trim(), source: null, incomplete: false };
   }
+  const completeSource = extractModuleSource(text, { allowIncomplete: false });
+  const incomplete = completeSource == null;
   OPEN_FENCE_RE.lastIndex = 0;
   const openMatch = OPEN_FENCE_RE.exec(text);
   const fenceIndex = openMatch ? openMatch.index : -1;
   const prose =
     fenceIndex >= 0 ? text.slice(0, fenceIndex).trim() : text.trim();
-  return { prose, source };
+  return { prose, source, incomplete };
 }
 
 export function chatApplyTargetStatus({

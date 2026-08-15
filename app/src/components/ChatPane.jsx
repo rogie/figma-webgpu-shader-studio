@@ -213,9 +213,9 @@ const ChatPane = forwardRef(function ChatPane(
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (message.role !== "assistant" || message.pending) continue;
-      const { source } = splitAssistantContent(message.content);
+      const { source, incomplete } = splitAssistantContent(message.content);
       if (!source) continue;
-      if (!message.applied && source !== sourceRef.current) {
+      if (!incomplete && !message.applied && source !== sourceRef.current) {
         pendingApply = { message, source };
       }
       break;
@@ -994,10 +994,11 @@ const ChatPane = forwardRef(function ChatPane(
               </fig-chat-message>
             );
           }
-          const { prose, source } = splitAssistantContent(message.content);
+          const { prose, source, incomplete } = splitAssistantContent(message.content);
           const applied = Boolean(
-            message.applied ||
-              (!message.pending && source && source === sourceRef.current)
+            !incomplete &&
+            (message.applied ||
+              (!message.pending && source && source === sourceRef.current))
           );
           return (
             <fig-chat-message
@@ -1013,6 +1014,7 @@ const ChatPane = forwardRef(function ChatPane(
                 source={source}
                 pending={Boolean(message.pending)}
                 applied={applied}
+                incomplete={incomplete}
               />
               {(applied || (message.pending && !source)) && (
                 <div className="chat-code-note">

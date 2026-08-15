@@ -127,6 +127,19 @@ export default function StreamingCodeBlockPlayground() {
             </StateExample>
 
             <StateExample
+              title="Incomplete"
+              description="Response ended before the code fence was closed."
+            >
+              <StreamingCodeBlock
+                source={MOCK_SOURCE.slice(0, 360)}
+                pending={false}
+                applied={false}
+                incomplete
+                defaultExpanded
+              />
+            </StateExample>
+
+            <StateExample
               title="Applied"
               description="Complete code successfully applied to the editor."
             >

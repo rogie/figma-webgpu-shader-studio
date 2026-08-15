@@ -20,6 +20,17 @@
     background: var(--figma-color-bg-secondary);
   }
 
+  &[data-incomplete="true"],
+  &[data-incomplete="true"][open]:not([open="false"]) {
+    outline: 1px solid var(--figma-color-border-danger);
+    outline-offset: -1px;
+  }
+
+  &[data-incomplete="true"] .streaming-code-header {
+    color: var(--figma-color-text-danger);
+    background: var(--figma-color-bg-danger-tertiary);
+  }
+
   & fig-spinner.streaming-code-status {
     color: var(--figma-color-text-secondary);
   }
@@ -32,6 +43,10 @@
 
   & .streaming-code-status[name="hidden"] {
     color: var(--figma-color-text-tertiary);
+  }
+
+  & .streaming-code-status[name="warning"] {
+    color: var(--figma-color-text-danger);
   }
 
   & .streaming-code-status {
