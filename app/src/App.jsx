@@ -110,8 +110,30 @@ const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
 const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const PLAY_STORAGE_KEY = "figma-shader-studio:play";
+const INPUT_SOURCE_STORAGE_KEY = "figma-shader-studio:input-sources";
 const THUMBNAIL_SIZE = 512;
 const INITIAL_DRAFTS = savedDrafts();
+
+function savedInputSource(presetId) {
+  try {
+    const map = JSON.parse(
+      localStorage.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}"
+    );
+    return map[presetId] || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistInputSource(presetId, source) {
+  try {
+    const map = JSON.parse(
+      localStorage.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}"
+    );
+    map[presetId] = source;
+    localStorage.setItem(INPUT_SOURCE_STORAGE_KEY, JSON.stringify(map));
+  } catch {}
+}
 const FIGMA_SHADER_CATEGORIES = [
   { kind: "effect", label: "Shader effect" },
   { kind: "fill", label: "Shader fill" },
@@ -503,6 +525,7 @@ function savedPlayState() {
   return true;
 }
 
+
 export default function App() {
   const {
     user,
@@ -674,6 +697,9 @@ export default function App() {
   const inputSourceRef = useRef(inputSource);
   const inputApplyGenRef = useRef(0);
   inputSourceRef.current = inputSource;
+  useEffect(() => {
+    if (presetId) persistInputSource(presetId, inputSource);
+  }, [presetId, inputSource]);
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
@@ -1676,6 +1702,9 @@ export default function App() {
       setIsPublic(Boolean(draft.isPublic));
       setPendingMedia(draft.pendingMedia || null);
       setDirty(true);
+      const restoredSource = savedInputSource(draft.id) || "image";
+      setInputSource(restoredSource);
+      inputSourceRef.current = restoredSource;
       if (hostRef.current?.ready) {
         if (draft.kind === "effect") {
           if (draft.pendingMedia) {
@@ -1906,6 +1935,9 @@ export default function App() {
       setIsPublic(fullShader.is_public);
       setPendingMedia(null);
       setDirty(false);
+      const restoredSource = savedInputSource(cloudChoiceId(fullShader.id)) || "image";
+      setInputSource(restoredSource);
+      inputSourceRef.current = restoredSource;
       setShaderRoute(fullShader.id);
       if (hostRef.current?.ready) {
         try {
@@ -2131,6 +2163,9 @@ export default function App() {
       setIsPublic(false);
       setPendingMedia(null);
       setDirty(false);
+      const restoredSource = savedInputSource(preset.id) || "image";
+      setInputSource(restoredSource);
+      inputSourceRef.current = restoredSource;
       if (hostRef.current?.ready) {
         if (preset.kind === "effect") await reapplyPreferredInput();
         else {

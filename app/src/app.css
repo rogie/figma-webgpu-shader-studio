@@ -716,6 +716,8 @@ body,
         .canvas-controls-overlay {
           position: absolute;
           z-index: 3;
+          opacity: 0;
+          transition: opacity 150ms ease;
           /* pointer-events is inherited, so the overlay stays transparent to
              the canvas by default and only opts specific children back in. */
           pointer-events: none;
@@ -728,6 +730,11 @@ body,
           :is(fig-handle, fig-tooltip) {
             pointer-events: auto;
           }
+        }
+
+        &:hover > .canvas-controls-overlay,
+        .canvas-controls-overlay:focus-within {
+          opacity: 1;
         }
 
         .drop-overlay {
