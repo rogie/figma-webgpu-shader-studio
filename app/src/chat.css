@@ -161,18 +161,36 @@
         --fig-ai-prompt-margin-inline: var(--spacer-3);
 
         > .chat-latest-activity {
-          display: flex;
-          justify-content: center;
           margin: var(--spacer-2) var(--spacer-2) 0;
-
-          > fig-button {
-            max-width: 100%;
-          }
         }
 
         > fig-attachments {
           margin-inline: var(--spacer-2);
         }
+      }
+
+      .chat-latest-activity,
+      .chat-context-action {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: var(--spacer-2);
+        min-width: 0;
+
+        > fig-shimmer,
+        > span {
+          min-width: 0;
+          flex: 1 1 auto;
+        }
+
+        > fig-button {
+          flex: 0 0 auto;
+          max-width: 100%;
+        }
+      }
+
+      fig-ai-context:has(+ fig-ai-prompt) {
+        margin-bottom: calc(-1 * var(--spacer-4));
       }
     }
 
@@ -302,6 +320,26 @@
       line-height: var(--line-height);
     }
   }
+}
+
+.chat-composer-playground-example {
+  display: flex;
+  min-height: 18rem;
+  flex-direction: column;
+}
+
+.chat-composer-playground-stage {
+  width: min(100%, 369px);
+  margin: auto;
+  overflow: hidden;
+  background: var(--figma-color-bg);
+  border: 1px solid var(--figma-color-border);
+  border-radius: var(--radius-medium);
+  box-shadow: var(--figma-elevation-200);
+}
+
+.chat-composer-playground-stage .chat-composer {
+  padding-bottom: var(--spacer-3);
 }
 
 @media (max-width: 800px) {

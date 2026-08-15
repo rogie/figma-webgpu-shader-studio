@@ -14,12 +14,20 @@ import "@rogieking/figui3/fig-lab.css";
 import "@rogieking/figui3/fig-lab.js";
 import "./app.css";
 
-const showStreamingCodePlayground =
-  import.meta.env.DEV &&
-  new URLSearchParams(window.location.search).get("playground") ===
-    "streaming-code";
+const playground = import.meta.env.DEV
+  ? new URLSearchParams(window.location.search).get("playground")
+  : null;
+const showStreamingCodePlayground = playground === "streaming-code";
+const showChatComposerPlayground = playground === "chat-composer";
+const showToastPlayground = playground === "toasts";
 const StreamingCodeBlockPlayground = showStreamingCodePlayground
   ? lazy(() => import("./components/StreamingCodeBlockPlayground.jsx"))
+  : null;
+const ChatComposerPlayground = showChatComposerPlayground
+  ? lazy(() => import("./components/ChatComposerPlayground.jsx"))
+  : null;
+const ToastPlayground = showToastPlayground
+  ? lazy(() => import("./components/ToastPlayground.jsx"))
   : null;
 
 createRoot(document.getElementById("root")).render(
@@ -27,6 +35,14 @@ createRoot(document.getElementById("root")).render(
     {showStreamingCodePlayground ? (
       <Suspense fallback={null}>
         <StreamingCodeBlockPlayground />
+      </Suspense>
+    ) : showChatComposerPlayground ? (
+      <Suspense fallback={null}>
+        <ChatComposerPlayground />
+      </Suspense>
+    ) : showToastPlayground ? (
+      <Suspense fallback={null}>
+        <ToastPlayground />
       </Suspense>
     ) : (
       <AuthProvider>

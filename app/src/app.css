@@ -76,6 +76,7 @@ body,
       flex-direction: row;
       align-items: center;
       gap: var(--spacer-1);
+      margin-right: calc(-1 * var(--spacer-1));
     }
 
     .app-nav-library-filters {
@@ -844,19 +845,99 @@ dialog[is="fig-popup"].publish-popup {
   }
 }
 
-dialog[is="fig-toast"] {
-  /* Keep notifications above the 40px preview toolbar. FigUI applies its
-     default bottom position inline, so this app-level offset must win. */
-  bottom: calc(2.5rem + var(--spacer-2) * 2) !important;
+/* Toast playground: keep previews in-flow so every state is visible at once. */
+.toast-playground-example {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-3);
+}
+
+.toast-playground-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spacer-2);
+  min-height: 4.5rem;
+  padding: var(--spacer-4) var(--spacer-3);
+  background:
+    linear-gradient(
+      45deg,
+      color-mix(in srgb, var(--figma-color-bg-secondary) 70%, transparent) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      -45deg,
+      color-mix(in srgb, var(--figma-color-bg-secondary) 70%, transparent) 25%,
+      transparent 25%
+    ),
+    linear-gradient(
+      45deg,
+      transparent 75%,
+      color-mix(in srgb, var(--figma-color-bg-secondary) 70%, transparent) 75%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 75%,
+      color-mix(in srgb, var(--figma-color-bg-secondary) 70%, transparent) 75%
+    );
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+  border: 1px dashed var(--figma-color-border);
+  border-radius: var(--radius-medium);
+}
+
+.toast-playground-stage dialog[is="fig-toast"].toast-playground-preview {
+  position: relative !important;
+  inset: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  transform: none !important;
+  margin: 0 auto !important;
+  max-width: min(100%, 28rem);
+}
+
+.toast-playground-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-2);
+  min-width: 0;
+
+  code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--figma-color-text-secondary);
+    font-size: 11px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+}
+
+.toast-playground-examples {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacer-1);
+  min-width: 0;
+}
+
+.toast-playground-example-label {
+  margin: 0;
+  color: var(--figma-color-text-secondary);
+  font-size: 11px;
+}
+
+.toast-playground-example-copy {
+  margin: 0;
+  color: var(--figma-color-text);
+  font-size: var(--body-medium-fontSize);
+  line-height: var(--line-height);
+  word-break: break-word;
 }
 
 dialog[is="fig-toast"].publish-toast {
-  .publish-toast-body {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacer-2);
-  }
-
   a {
     color: inherit;
     text-decoration: underline;
@@ -956,16 +1037,6 @@ dialog.figma-import-dialog {
 
   > fig-footer[sticky] {
     flex-shrink: 0;
-  }
-}
-
-dialog.video-export-toast,
-dialog.video-exported-toast {
-  .video-export-progress,
-  .video-export-toast-body {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--spacer-2);
   }
 }
 

@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import {
+  chatApplyTargetStatus,
   extractModuleSource,
   formatChatError,
   splitAssistantContent,
@@ -148,10 +149,13 @@ const ChatPane = forwardRef(function ChatPane(
   const imageInputRef = useRef(null);
   const pendingAttachmentsRef = useRef(null);
   const attachmentZoomRef = useRef(null);
+  const activeRequestRef = useRef(null);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
 
   const threadId = messageKey(shaderKey);
+  const activeThreadIdRef = useRef(threadId);
+  activeThreadIdRef.current = threadId;
   const messages = useMemo(
     () => pruneEmptyAssistants(threads[threadId] || []),
     [threads, threadId]
@@ -199,6 +203,22 @@ const ChatPane = forwardRef(function ChatPane(
         undoMessageIndex = index;
         break;
       }
+    }
+  }
+
+  // The newest generated module that never made it into the editor, either
+  // because another shader was open or the source moved while the agent ran.
+  let pendingApply = null;
+  if (!streaming) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message.role !== "assistant" || message.pending) continue;
+      const { source } = splitAssistantContent(message.content);
+      if (!source) continue;
+      if (!message.applied && source !== sourceRef.current) {
+        pendingApply = { message, source };
+      }
+      break;
     }
   }
 
@@ -272,6 +292,22 @@ const ChatPane = forwardRef(function ChatPane(
     });
     return () => cancelAnimationFrame(frame);
   }, [threadId]);
+
+  useEffect(() => {
+    const request = activeRequestRef.current;
+    if (
+      !request ||
+      request.threadId === threadId ||
+      request.notifiedAway
+    ) {
+      return;
+    }
+    request.notifiedAway = true;
+    onNotice?.(
+      `Agent is still working on ${request.fileName}. Changes will only apply while that shader is open.`,
+      { brand: true }
+    );
+  }, [threadId, onNotice]);
 
   useEffect(() => {
     onCanClearChange?.(messages.length > 0);
@@ -392,6 +428,27 @@ const ChatPane = forwardRef(function ChatPane(
     setUndoCount(undoStackRef.current.length);
     onApplySource(previous);
     onNotice?.("Reverted last chat edit.");
+  };
+
+  const applyPendingUpdate = () => {
+    if (!pendingApply) return;
+    const check = validateModuleSource(pendingApply.source);
+    if (!check.ok) {
+      setError(check.reason);
+      return;
+    }
+    undoStackRef.current.push(sourceRef.current);
+    if (undoStackRef.current.length > MAX_UNDO) {
+      undoStackRef.current.shift();
+    }
+    setUndoCount(undoStackRef.current.length);
+    onApplySource(pendingApply.source);
+    updateThread((current) =>
+      current.map((entry) =>
+        entry === pendingApply.message ? { ...entry, applied: true } : entry
+      )
+    );
+    onNotice?.("Applied the generated main.ts.");
   };
 
   const clearCurrentChat = () => {
@@ -524,8 +581,26 @@ const ChatPane = forwardRef(function ChatPane(
     let lastApplied = null;
     let didPushUndo = false;
     const baselineSource = sourceRef.current;
+    const requestThreadId = threadId;
+    const requestFileName = fileName;
+    activeRequestRef.current = {
+      threadId: requestThreadId,
+      fileName: requestFileName,
+      notifiedAway: false,
+    };
     const features = featuresRef.current;
     let lastStreamUiAt = 0;
+    let blockedApplyReason = null;
+
+    const notifyBlockedApply = () => {
+      if (!blockedApplyReason) return;
+      const message =
+        blockedApplyReason === "different-shader"
+          ? `Agent finished changes for ${requestFileName}. They were not applied because another shader is open. Reopen ${requestFileName} to review the generated main.ts.`
+          : `Agent finished changes for ${requestFileName}, but its source changed while the agent was working. Review the generated main.ts before applying it.`;
+      onNotice?.(message, { brand: true });
+      blockedApplyReason = null;
+    };
 
     const updateLastAssistant = (patch) => {
       updateThread((current) => {
@@ -574,6 +649,17 @@ const ChatPane = forwardRef(function ChatPane(
       const check = validateModuleSource(moduleSource);
       measurePerf("chat.validateModule", validationStartedAt);
       if (!check.ok) return false;
+      const targetStatus = chatApplyTargetStatus({
+        requestShaderKey: requestThreadId,
+        activeShaderKey: activeThreadIdRef.current,
+        baselineSource,
+        currentSource: sourceRef.current,
+      });
+      if (targetStatus !== "current") {
+        blockedApplyReason = targetStatus;
+        lastApplied = moduleSource;
+        return false;
+      }
       if (!didPushUndo) {
         undoStackRef.current.push(baselineSource);
         if (undoStackRef.current.length > MAX_UNDO) {
@@ -678,7 +764,11 @@ const ChatPane = forwardRef(function ChatPane(
           check.ok &&
           tryApplyModule(repairedText, { allowIncomplete: true });
         finishAssistant(repairedText, { applied });
-        if (applied) return true;
+        if (applied) return "applied";
+        if (blockedApplyReason) {
+          notifyBlockedApply();
+          return "deferred";
+        }
 
         brokenSource = candidate || brokenSource;
         reason = check.reason;
@@ -688,7 +778,7 @@ const ChatPane = forwardRef(function ChatPane(
           { role: "assistant", content: repairedText },
         ];
       }
-      return false;
+      return null;
     };
 
     try {
@@ -766,9 +856,9 @@ const ChatPane = forwardRef(function ChatPane(
             if (!check.ok && check.autoHealable) {
               onNotice?.("Syntax error detected. Repairing code…");
               const healed = await autoHealSyntaxError(candidate, check.reason);
-              if (healed) {
+              if (healed === "applied") {
                 onNotice?.("Syntax error fixed automatically.");
-              } else {
+              } else if (healed !== "deferred") {
                 onNotice?.(
                   `Automatic repair failed: ${check.reason}`,
                   { error: true }
@@ -776,6 +866,8 @@ const ChatPane = forwardRef(function ChatPane(
               }
             } else if (!check.ok) {
               onNotice?.(check.reason, { error: true });
+            } else if (blockedApplyReason) {
+              notifyBlockedApply();
             }
           }
         }
@@ -787,6 +879,9 @@ const ChatPane = forwardRef(function ChatPane(
       finishAssistant(assembled, { applied: false });
     } finally {
       abortRef.current = null;
+      if (activeRequestRef.current?.threadId === requestThreadId) {
+        activeRequestRef.current = null;
+      }
       setStreaming(false);
     }
   };
@@ -956,37 +1051,71 @@ const ChatPane = forwardRef(function ChatPane(
           </p>
         )}
         <div className="chat-composer">
+          {(attachments.length > 0 ||
+            !hasKey ||
+            pendingApply ||
+            latestActivity) && (
+            <fig-ai-context aria-label="Prompt context">
+              {attachments.length > 0 && (
+                <fig-attachments ref={pendingAttachmentsRef}>
+                  {attachments.map((attachment, index) => (
+                    <fig-attachment
+                      key={`${attachment.name}:${attachment.size}:${index}`}
+                      src={
+                        attachment.kind === "image"
+                          ? attachment.previewUrl
+                          : undefined
+                      }
+                      name={attachment.name}
+                      value={String(index)}
+                      disabled={streaming ? "" : undefined}
+                      dangerouslySetInnerHTML={{ __html: "" }}
+                    />
+                  ))}
+                </fig-attachments>
+              )}
+              {!hasKey && (
+                <hstack className="chat-context-action">
+                  <span>Connect provider</span>
+                  <fig-button
+                    type="button"
+                    variant="secondary"
+                    onClick={onOpenSettings}
+                  >
+                    Add API key
+                  </fig-button>
+                </hstack>
+              )}
+              {pendingApply && (
+                <hstack className="chat-context-action">
+                  <span>Generated main.ts wasn't applied</span>
+                  <fig-button
+                    type="button"
+                    variant="secondary"
+                    onClick={applyPendingUpdate}
+                  >
+                    Apply
+                  </fig-button>
+                </hstack>
+              )}
+              {latestActivity && (
+                <div className="chat-latest-activity" aria-live="polite">
+                  <fig-shimmer>
+                    <span>{latestActivity}</span>
+                  </fig-shimmer>
+                  <fig-button
+                    type="button"
+                    variant="secondary"
+                    size="small"
+                    onClick={jumpToLatest}
+                  >
+                    View latest
+                  </fig-button>
+                </div>
+              )}
+            </fig-ai-context>
+          )}
           <fig-ai-prompt>
-            {latestActivity && (
-              <div className="chat-latest-activity" aria-live="polite">
-                <fig-button
-                  type="button"
-                  variant="secondary"
-                  size="small"
-                  onClick={jumpToLatest}
-                >
-                  {latestActivity} · View latest
-                </fig-button>
-              </div>
-            )}
-            {attachments.length > 0 && (
-              <fig-attachments ref={pendingAttachmentsRef}>
-                {attachments.map((attachment, index) => (
-                  <fig-attachment
-                    key={`${attachment.name}:${attachment.size}:${index}`}
-                    src={
-                      attachment.kind === "image"
-                        ? attachment.previewUrl
-                        : undefined
-                    }
-                    name={attachment.name}
-                    value={String(index)}
-                    disabled={streaming ? "" : undefined}
-                    dangerouslySetInnerHTML={{ __html: "" }}
-                  />
-                ))}
-              </fig-attachments>
-            )}
             <fig-input-text
               class="chat-input"
               multiline=""
@@ -1013,19 +1142,9 @@ const ChatPane = forwardRef(function ChatPane(
                 </fig-button>
               </fig-tooltip>
               <hstack>
-                {hasKey ? (
-                  <fig-tooltip text={`Model: ${model.label}`}>
-                    {modelSelect}
-                  </fig-tooltip>
-                ) : (
-                  <fig-button
-                    type="button"
-                    variant="secondary"
-                    onClick={onOpenSettings}
-                  >
-                    Add API key
-                  </fig-button>
-                )}
+                <fig-tooltip text={`Model: ${model.label}`}>
+                  {modelSelect}
+                </fig-tooltip>
                 {streaming ? (
                   <fig-tooltip text="Stop">
                     <fig-button

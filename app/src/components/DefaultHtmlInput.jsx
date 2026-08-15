@@ -23,10 +23,23 @@ export default function DefaultHtmlInput() {
       }
     };
 
+    // Stop the sample video decoding while the tab is backgrounded, then
+    // resume when it returns. The autoplay/loop element otherwise keeps
+    // decoding frames even though requestPaint() is visibility-guarded.
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        video.pause();
+      } else {
+        Promise.resolve(video.play()).catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     if (typeof video.requestVideoFrameCallback === "function") {
       video.requestVideoFrameCallback(paint);
       return () => {
         active = false;
+        document.removeEventListener("visibilitychange", onVisibilityChange);
       };
     }
 
@@ -35,6 +48,7 @@ export default function DefaultHtmlInput() {
     }, 1000 / 30);
     return () => {
       active = false;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       window.clearInterval(id);
     };
   }, []);

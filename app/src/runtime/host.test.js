@@ -207,6 +207,43 @@ test("resetShaderState can clear validation history without presenting", () => {
   assert.equal(host.frame.frame, 0);
 });
 
+test("teardown preserves host textures cached in shader state", () => {
+  const host = makeHost();
+  let inputDestroyed = 0;
+  let outputDestroyed = 0;
+  let ownedDestroyed = 0;
+  const input = {
+    destroy() {
+      inputDestroyed += 1;
+    },
+  };
+  const output = {
+    destroy() {
+      outputDestroyed += 1;
+    },
+  };
+  const owned = {
+    destroy() {
+      ownedDestroyed += 1;
+    },
+  };
+  host.inputTexture = input;
+  host.frame.input = input;
+  host.frame.output = output;
+  host.frame.state = {
+    bindGroupInput: input,
+    cachedOutput: output,
+    ownedResources: [owned, owned],
+  };
+
+  host._teardownState();
+
+  assert.equal(inputDestroyed, 0);
+  assert.equal(outputDestroyed, 0);
+  assert.equal(ownedDestroyed, 1);
+  assert.deepEqual(host.frame.state, {});
+});
+
 test("updating image contents preserves input texture identity and state", () => {
   const host = makeHost();
   const texture = { width: 320, height: 180 };

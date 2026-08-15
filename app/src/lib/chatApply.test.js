@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatChatError, validateModuleSource } from "./chatApply.js";
+import {
+  chatApplyTargetStatus,
+  formatChatError,
+  validateModuleSource,
+} from "./chatApply.js";
 
 test("validates agent module syntax before applying it", () => {
   assert.deepEqual(
@@ -30,4 +34,34 @@ test("rate-limit errors mention the selected provider, not Gemini by default", (
   const gemini = formatChatError("RESOURCE_EXHAUSTED", { provider: "gemini" });
   assert.match(gemini, /Gemini/);
   assert.match(gemini, /ai\.google\.dev/);
+});
+
+test("only applies chat output to its unchanged target shader", () => {
+  assert.equal(
+    chatApplyTargetStatus({
+      requestShaderKey: "grain",
+      activeShaderKey: "grain",
+      baselineSource: "before",
+      currentSource: "before",
+    }),
+    "current"
+  );
+  assert.equal(
+    chatApplyTargetStatus({
+      requestShaderKey: "grain",
+      activeShaderKey: "dither",
+      baselineSource: "before",
+      currentSource: "other",
+    }),
+    "different-shader"
+  );
+  assert.equal(
+    chatApplyTargetStatus({
+      requestShaderKey: "grain",
+      activeShaderKey: "grain",
+      baselineSource: "before",
+      currentSource: "edited",
+    }),
+    "source-changed"
+  );
 });

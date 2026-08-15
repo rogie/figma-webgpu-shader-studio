@@ -1065,6 +1065,7 @@ export default function App() {
     setNotice({
       message,
       error: options.error === true,
+      brand: options.brand === true,
     });
   }, []);
 
@@ -1550,10 +1551,19 @@ export default function App() {
     // The overlay mounts before this effect runs, so adopt the surface it reported.
     host.setPointerSurface(pointerSurfaceRef.current);
 
+    // Pause the render loop and video decode while the tab is backgrounded so a
+    // hidden Shader Studio stops driving the GPU and video decoder.
+    const onVisibilityChange = () => {
+      host.setActive(document.visibilityState === "visible");
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
     (async () => {
       try {
         await host.init();
         if (cancelled) return;
+        // A tab opened in the background starts inactive.
+        host.setActive(document.visibilityState === "visible");
         await restoreSample();
         if (cancelled) return;
         // Compile via the source/preset effect once runtimeReady flips — avoids
@@ -1567,6 +1577,7 @@ export default function App() {
       cancelled = true;
       inputApplyGenRef.current += 1;
       compileGenerationRef.current += 1;
+      document.removeEventListener("visibilitychange", onVisibilityChange);
       if (hostRef.current === host) {
         host.destroy();
         hostRef.current = null;
@@ -4567,13 +4578,12 @@ export default function App() {
         theme="dark"
         live="polite"
         duration="0"
+        offset="24"
       >
-        <span className="video-export-progress">
-          <fig-spinner aria-label="Exporting video" />
-          <span>
-            Exporting video…{" "}
-            {Math.round((videoExportProgress?.progress || 0) * 100)}%
-          </span>
+        <fig-spinner aria-label="Exporting video" />
+        <span>
+          Exporting video…{" "}
+          {Math.round((videoExportProgress?.progress || 0) * 100)}%
         </span>
       </dialog>
 
@@ -4584,11 +4594,10 @@ export default function App() {
         theme="brand"
         live="polite"
         duration="3200"
+        offset="24"
+        icon="checkmark"
       >
-        <span className="video-export-toast-body">
-          <fig-icon name="checkmark" size="small" />
-          <span>Video exported</span>
-        </span>
+        <span>Video exported</span>
       </dialog>
 
       <dialog
@@ -4793,22 +4802,14 @@ export default function App() {
         is="fig-toast"
         ref={noticeToastRef}
         class="notice-toast"
-        theme={notice?.error ? "danger" : "dark"}
+        theme={notice?.error ? "danger" : notice?.brand ? "brand" : "dark"}
         live={notice?.error ? "assertive" : "polite"}
-        duration={notice?.error ? "0" : "3200"}
+        duration={notice?.error ? "0" : notice?.brand ? "5000" : "3200"}
+        offset="24"
+        dismiss={notice?.error ? "" : undefined}
         onClose={() => setNotice(null)}
       >
         <span>{notice?.message}</span>
-        {notice?.error && (
-          <fig-button
-            variant="ghost"
-            icon="true"
-            aria-label="Dismiss notification"
-            onClick={() => noticeToastRef.current?.hideToast?.()}
-          >
-            <fig-icon name="x" />
-          </fig-button>
-        )}
       </dialog>
       <dialog
         is="fig-popup"
@@ -4857,13 +4858,14 @@ export default function App() {
         class="publish-toast"
         theme="brand"
         duration="0"
+        offset="24"
         onClose={() => setPublishToast(null)}
       >
         {publishToast?.phase === "publishing" ? (
-          <span className="publish-toast-body">
+          <>
             <fig-spinner aria-label="Publishing" />
-            Publishing…
-          </span>
+            <span>Publishing…</span>
+          </>
         ) : publishToast?.phase === "done" ? (
           <span className="publish-toast-body">
             Published to{" "}

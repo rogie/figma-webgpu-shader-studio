@@ -362,12 +362,24 @@ export class ShaderHost {
 
   _teardownState() {
     const s = this.frame.state;
+    const borrowedResources = new Set(
+      [
+        this.device,
+        this.context,
+        this.inputTexture,
+        this.frame.input,
+        this.frame.output,
+      ].filter(Boolean)
+    );
+    const destroyedResources = new Set();
     const destroy = (value) => {
       if (Array.isArray(value)) {
         for (const item of value) destroy(item);
         return;
       }
       if (!value || typeof value.destroy !== "function") return;
+      if (borrowedResources.has(value) || destroyedResources.has(value)) return;
+      destroyedResources.add(value);
       try {
         value.destroy();
       } catch {
@@ -1214,11 +1226,23 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   setActive(active) {
-    this.active = Boolean(active);
+    const next = Boolean(active);
+    if (next === this.active) return;
+    this.active = next;
     if (!this.active) {
       if (this.rafId) cancelAnimationFrame(this.rafId);
       this.rafId = 0;
+      // Stop the video decoder so a hidden tab quiets the CPU/GPU. Frame
+      // callbacks are re-armed on resume.
+      this._cancelVideoFrameCallback();
+      this.video?.pause?.();
       return;
+    }
+    if (this.video) {
+      this._videoFrameDirty = true;
+      this._watchVideoFrames();
+      // play() can reject if interrupted; playback simply resumes on next frame.
+      Promise.resolve(this.video.play?.()).catch(() => {});
     }
     if (this.running) {
       this.lastTime = performance.now();

@@ -88,6 +88,17 @@ export function splitAssistantContent(text) {
   return { prose, source };
 }
 
+export function chatApplyTargetStatus({
+  requestShaderKey,
+  activeShaderKey,
+  baselineSource,
+  currentSource,
+}) {
+  if (requestShaderKey !== activeShaderKey) return "different-shader";
+  if (baselineSource !== currentSource) return "source-changed";
+  return "current";
+}
+
 /**
  * @param {string} [provider]
  * @returns {"openai" | "anthropic" | "gemini" | null}
