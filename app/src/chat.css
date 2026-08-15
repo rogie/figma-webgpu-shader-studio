@@ -28,7 +28,7 @@
       overflow-y: auto;
       /* Same as code editor: inset scrollbar from the pane border. */
       margin-right: var(--spacer-2);
-      padding: var(--spacer-3) var(--spacer-5);
+      padding: var(--spacer-3);
       display: flex;
       flex-direction: column;
       scrollbar-width: thin;
