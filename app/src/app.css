@@ -232,6 +232,12 @@ body,
       > hstack:last-child {
         flex: 0 0 auto;
       }
+
+      .shader-version-select {
+        width: 11rem;
+        max-width: 11rem;
+        --fig-select-trigger-width: 11rem;
+      }
     }
 
     .shader-viewer-sidebar:is(

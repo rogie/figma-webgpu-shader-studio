@@ -92,6 +92,11 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - Explicit `@rogieking/figui3/fig-lab.css` import in `main.jsx` remains required (editor CSS still does not pull lab styles).
 - Color-point still omits `alpha` on its inner `propskit-color`; keep the post-mount enable workaround in `Controls.jsx`.
 
+## 8.9.0 notes
+
+- Adds a `copy` icon name to `fig-icon` (`--icon-24-copy` / `--icon-16-copy`). Lab/editor bundles and README are otherwise unchanged from 8.8.1.
+- `<propskit-oscillator>` remains available but is unused here — Figma `defineProperties` has no oscillator type, and `Controls.jsx` has nothing to wire it to.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

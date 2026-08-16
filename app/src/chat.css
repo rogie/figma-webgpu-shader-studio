@@ -53,59 +53,12 @@
       }
     }
 
+    /* Markdown element styles live in MarkdownProse.css; this only covers
+       plain-text messages that reuse the same container. */
     .chat-prose {
       min-width: 0;
       overflow-wrap: anywhere;
       white-space: normal;
-
-      > :first-child {
-        margin-top: 0;
-      }
-
-      > :last-child {
-        margin-bottom: 0;
-      }
-
-      p,
-      ul,
-      ol,
-      blockquote,
-      pre {
-        margin: 0 0 var(--spacer-2);
-      }
-
-      ul,
-      ol {
-        padding-left: var(--spacer-5);
-      }
-
-      code {
-        font-family: var(--font-family-monospace, ui-monospace, monospace);
-      }
-
-      :not(pre) > code {
-        padding: 1px var(--spacer-1);
-        background: var(--figma-color-bg-secondary);
-        border-radius: var(--radius-small);
-      }
-
-      pre {
-        padding: var(--spacer-2);
-        overflow: auto;
-        background: var(--figma-color-bg-secondary);
-        border-radius: var(--radius-medium);
-      }
-
-      a {
-        color: inherit;
-        text-decoration: underline;
-      }
-
-      blockquote {
-        padding-left: var(--spacer-3);
-        color: var(--figma-color-text-secondary);
-        border-left: 1px solid var(--figma-color-border);
-      }
     }
 
     .chat-code-note {

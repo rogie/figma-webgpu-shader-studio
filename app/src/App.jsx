@@ -51,6 +51,14 @@ import {
   saveLocalPlan,
 } from "./lib/chatPlans.js";
 import {
+  hasUncheckpointedShaderState,
+  isShaderStateConflict,
+  sanitizeVersionSummary,
+  summarizeManualVersion,
+  versionOptionLabel,
+} from "./lib/shaderVersions.js";
+import { validateModuleSource } from "./lib/chatApply.js";
+import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
   figmaLibraryKey,
@@ -73,14 +81,19 @@ import {
   getAssetUrl,
   getAssetUrls,
   getShader,
+  getShaderMaybe,
+  getShaderVersion,
   getShaderRouteId,
+  listAllShaderVersions,
+  listShaderVersions,
   listShaders,
   makeHomeUrl,
   makeShareUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
   removeShaderPlan,
-  upsertShader,
+  restoreShaderVersion,
+  saveShaderState,
   updateShader,
   uploadAsset,
   uploadShaderPlan,
@@ -581,6 +594,10 @@ export default function App() {
   const [pendingMedia, setPendingMedia] = useState(null);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [shaderVersions, setShaderVersions] = useState([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [restoringVersion, setRestoringVersion] = useState(false);
+  const [pendingAgentCheckpoint, setPendingAgentCheckpoint] = useState(null);
   const [duplicating, setDuplicating] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -681,6 +698,8 @@ export default function App() {
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
+  const versionSelectRef = useRef(null);
+  const versionLoadGenerationRef = useRef(0);
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
@@ -700,6 +719,13 @@ export default function App() {
   const propertiesPanelRef = useRef(null);
   const visualizerRef = useRef(null);
   const hostRef = useRef(null);
+  const lastSuccessfulCompileRef = useRef({
+    presetId: INITIAL.id,
+    source: INITIAL.source,
+    values: INITIAL_VALUES,
+  });
+  const pendingAgentCheckpointRef = useRef(null);
+  const agentCheckpointSavingRef = useRef(false);
   const onStageSize = useCallback((width, height) => {
     hostRef.current?.setStageCssSize?.(width, height);
   }, []);
@@ -768,6 +794,13 @@ export default function App() {
     : `preset:${presetId}`;
   const isOwner = Boolean(user && currentShader?.owner_id === user.id);
   const protectedPreview = Boolean(currentShader && !isOwner);
+  const hasUncheckpointedChanges =
+    isOwner && hasUncheckpointedShaderState(currentShader);
+  const versionSelectValue = dirty
+    ? "__unsaved"
+    : hasUncheckpointedChanges
+      ? "__autosaved"
+      : shaderVersions[0]?.id || "";
   const effectiveCodeCollapsed = protectedPreview ? false : codeCollapsed;
   const currentAuthorIsYou = Boolean(isOwner || isDraftId(presetId));
   const currentAuthorName =
@@ -792,6 +825,36 @@ export default function App() {
   useEffect(() => {
     if (protectedPreview && renaming) setRenaming(false);
   }, [protectedPreview, renaming]);
+
+  const refreshShaderVersions = useCallback(async () => {
+    const generation = ++versionLoadGenerationRef.current;
+    if (!isOwner || !currentShader?.id) {
+      setShaderVersions([]);
+      setVersionsLoading(false);
+      return [];
+    }
+    setVersionsLoading(true);
+    try {
+      const versions = await listAllShaderVersions(currentShader.id);
+      if (generation === versionLoadGenerationRef.current) {
+        setShaderVersions(versions);
+      }
+      return versions;
+    } catch (versionError) {
+      if (generation !== versionLoadGenerationRef.current) return [];
+      throw versionError;
+    } finally {
+      if (generation === versionLoadGenerationRef.current) {
+        setVersionsLoading(false);
+      }
+    }
+  }, [currentShader?.id, isOwner]);
+
+  useEffect(() => {
+    refreshShaderVersions().catch((versionError) => {
+      setError(versionError.message || String(versionError));
+    });
+  }, [refreshShaderVersions]);
 
   useEffect(() => {
     document.documentElement.style.colorScheme = theme;
@@ -1177,6 +1240,22 @@ export default function App() {
           if (!ok) {
             setRunning(false);
             return;
+          }
+          lastSuccessfulCompileRef.current = {
+            presetId: draftSessionRef.current.presetId,
+            source: nextSource,
+            values: nextValues,
+          };
+          if (
+            pendingAgentCheckpointRef.current?.presetId ===
+              draftSessionRef.current.presetId &&
+            pendingAgentCheckpointRef.current?.source === nextSource
+          ) {
+            setPendingAgentCheckpoint({
+              ...pendingAgentCheckpointRef.current,
+              values: nextValues,
+            });
+            pendingAgentCheckpointRef.current = null;
           }
           // Capture code edits only after the new module has compiled,
           // validated, and presented successfully.
@@ -1866,12 +1945,21 @@ export default function App() {
         );
         let saved;
         if (existing) {
-          saved = await updateShader(existing.id, {
-            name,
+          const current = existing.source
+            ? existing
+            : { ...existing, ...(await getShader(existing.id)) };
+          await saveShaderState({
+            shaderId: existing.id,
+            expectedStateRevision: current.state_revision,
             source: sourceText,
             kind: shaderKind,
-            parameter_values: {},
+            parameterValues: {},
             features: inferFeatures(sourceText),
+            checkpointKind: "manual",
+            summary: `Imported ${name} from Figma`,
+          });
+          saved = await updateShader(existing.id, {
+            name,
             ...link,
           });
         } else {
@@ -2058,8 +2146,9 @@ export default function App() {
           editorActive || draft.id === activeRouteId;
         const session = editorActive ? draftSessionRef.current : draft;
         try {
-          let saved = await upsertShader({
-            id: cloudIdForDraft(draft.id),
+          const cloudId = cloudIdForDraft(draft.id);
+          const payload = {
+            id: cloudId,
             owner_id: user.id,
             name: session.shaderName || draft.name || "Untitled Shader",
             source: session.source || draft.source,
@@ -2068,7 +2157,27 @@ export default function App() {
             features: inferFeatures(session.source || draft.source),
             is_public: false,
             ...figmaShaderLink(editorActive ? session : draft),
-          });
+          };
+          const existing = await getShaderMaybe(cloudId);
+          let saved;
+          if (existing) {
+            await saveShaderState({
+              shaderId: existing.id,
+              expectedStateRevision: existing.state_revision,
+              source: payload.source,
+              kind: payload.kind,
+              parameterValues: payload.parameter_values,
+              features: payload.features,
+              checkpointKind: "manual",
+              summary: "Migrated local draft",
+            });
+            saved = await updateShader(existing.id, {
+              name: payload.name,
+              ...figmaShaderLink(editorActive ? session : draft),
+            });
+          } else {
+            saved = await createShader(payload);
+          }
           await migrateLocalPlanToCloud(
             `preset:${draft.id}`,
             user.id,
@@ -2687,14 +2796,22 @@ export default function App() {
       }
       const makePublic = options.makePublic === true;
       const background = options.background === true;
+      const checkpointKind =
+        options.checkpointKind ||
+        (!background ? (makePublic ? "publish" : "manual") : null);
       const publicFlag = makePublic || isPublic;
       const saveTargetId = presetId;
+      const saveSource =
+        typeof options.sourceOverride === "string"
+          ? options.sourceOverride
+          : sourceRef.current;
+      const saveValues = options.valuesOverride || valuesRef.current;
       const noticeMessage =
         "notice" in options ? options.notice : "Shader saved";
       const saveSnapshot = {
         name: shaderName.trim() || "Untitled Shader",
-        source: sourceRef.current,
-        values: JSON.stringify(valuesRef.current),
+        source: saveSource,
+        values: JSON.stringify(saveValues),
         isPublic: publicFlag,
         pendingMedia,
       };
@@ -2707,10 +2824,10 @@ export default function App() {
         const payload = {
           owner_id: user.id,
           name: shaderName.trim() || "Untitled Shader",
-          source: sourceRef.current,
-          kind: detectKind(sourceRef.current),
-          parameter_values: valuesRef.current,
-          features: inferFeatures(sourceRef.current),
+          source: saveSource,
+          kind: detectKind(saveSource),
+          parameter_values: saveValues,
+          features: inferFeatures(saveSource),
           is_public: publicFlag,
           ...figmaShaderLink(currentShader || draftLink),
         };
@@ -2721,10 +2838,37 @@ export default function App() {
           delete payload.is_public;
         }
 
-        let saved =
-          isOwner && currentShader
-            ? await updateShader(currentShader.id, payload)
-            : await createShader(payload);
+        let saved;
+        if (isOwner && currentShader) {
+          let checkpointSummary = options.checkpointSummary || null;
+          if (checkpointKind && !checkpointSummary) {
+            const metadata = shaderVersions.length
+              ? shaderVersions
+              : await listShaderVersions(currentShader.id, { limit: 1 });
+            const latestVersion = metadata[0]
+              ? await getShaderVersion(currentShader.id, metadata[0].id)
+              : null;
+            checkpointSummary = summarizeManualVersion(latestVersion, payload);
+          }
+          saved = await saveShaderState({
+            shaderId: currentShader.id,
+            expectedStateRevision: currentShader.state_revision,
+            source: payload.source,
+            kind: payload.kind,
+            parameterValues: payload.parameter_values,
+            features: payload.features,
+            checkpointKind,
+            summary: checkpointSummary,
+          });
+          const metadataPayload = {
+            name: payload.name,
+            ...figmaShaderLink(currentShader || draftLink),
+          };
+          if (!background) metadataPayload.is_public = publicFlag;
+          saved = await updateShader(currentShader.id, metadataPayload);
+        } else {
+          saved = await createShader(payload);
+        }
         const planLocalKey = currentShader?.id
           ? `cloud:${currentShader.id}`
           : `preset:${saveTargetId}`;
@@ -2834,6 +2978,10 @@ export default function App() {
           saved,
           ...current.filter((item) => item.id !== saved.id),
         ]);
+        if (checkpointKind || !currentShader) {
+          const versions = await listAllShaderVersions(saved.id);
+          setShaderVersions(versions);
+        }
         if (saved.thumbnail_path) {
           const url = await getAssetUrl(saved.thumbnail_path);
           setCloudThumbnails((current) => ({ ...current, [saved.id]: url }));
@@ -2841,7 +2989,30 @@ export default function App() {
         if (noticeMessage) showNotice(noticeMessage);
         return saved;
       } catch (saveError) {
-        setError(saveError.message || String(saveError));
+        const saveStillActive =
+          draftSessionRef.current.presetId === saveTargetId;
+        if (isShaderStateConflict(saveError) && currentShader?.id) {
+          try {
+            const latest = await getShader(currentShader.id);
+            setCloudShaders((current) => [
+              latest,
+              ...current.filter((item) => item.id !== latest.id),
+            ]);
+            if (saveStillActive) {
+              setCurrentShader(latest);
+              await refreshShaderVersions();
+            }
+          } catch {
+            // Preserve the local editor buffer even if conflict refresh fails.
+          }
+          showNotice(
+            "This shader changed in another tab. Your local edits are still here; review and save again.",
+            { error: true }
+          );
+        }
+        if (saveStillActive) {
+          setError(saveError.message || String(saveError));
+        }
         throw saveError;
       } finally {
         if (!background) setSaving(false);
@@ -2855,13 +3026,195 @@ export default function App() {
       pendingMedia,
       presetId,
       protectedPreview,
+      refreshShaderVersions,
       setShaderRoute,
       shaderName,
+      shaderVersions,
       showNotice,
       thumbnails,
       user,
     ]
   );
+
+  const checkpointAgentVersion = useCallback(
+    ({ source: appliedSource, summary }) => {
+      if (!isOwner || !currentShader?.id || !appliedSource) return;
+      const checkpoint = {
+        presetId,
+        shaderId: currentShader.id,
+        source: appliedSource,
+        summary: sanitizeVersionSummary(
+          summary,
+          "Applied an AI-generated shader update"
+        ),
+      };
+      if (
+        lastSuccessfulCompileRef.current.presetId === presetId &&
+        lastSuccessfulCompileRef.current.source === appliedSource
+      ) {
+        setPendingAgentCheckpoint({
+          ...checkpoint,
+          values: lastSuccessfulCompileRef.current.values,
+        });
+      } else {
+        pendingAgentCheckpointRef.current = checkpoint;
+      }
+    },
+    [currentShader?.id, isOwner, presetId]
+  );
+
+  useEffect(() => {
+    if (
+      pendingAgentCheckpoint &&
+      (draftSessionRef.current.presetId !== pendingAgentCheckpoint.presetId ||
+        currentShader?.id !== pendingAgentCheckpoint.shaderId ||
+        sourceRef.current !== pendingAgentCheckpoint.source)
+    ) {
+      setPendingAgentCheckpoint(null);
+      return;
+    }
+    if (
+      !pendingAgentCheckpoint ||
+      agentCheckpointSavingRef.current ||
+      !isOwner ||
+      !currentShader?.id ||
+      currentShader.id !== pendingAgentCheckpoint.shaderId ||
+      sourceRef.current !== pendingAgentCheckpoint.source
+    ) {
+      return;
+    }
+    agentCheckpointSavingRef.current = true;
+    const checkpoint = pendingAgentCheckpoint;
+    saveShader({
+      background: true,
+      checkpointKind: "agent",
+      checkpointSummary: checkpoint.summary,
+      sourceOverride: checkpoint.source,
+      valuesOverride: checkpoint.values,
+      notice: null,
+    })
+      .then(() => {
+        setPendingAgentCheckpoint((current) =>
+          current === checkpoint ? null : current
+        );
+      })
+      .catch(() => {
+        // saveShader preserves the local source and surfaces the error.
+      })
+      .finally(() => {
+        agentCheckpointSavingRef.current = false;
+      });
+  }, [currentShader?.id, isOwner, pendingAgentCheckpoint, saveShader]);
+
+  useEffect(() => {
+    if (
+      pendingAgentCheckpointRef.current &&
+      pendingAgentCheckpointRef.current.presetId !== presetId
+    ) {
+      pendingAgentCheckpointRef.current = null;
+    }
+  }, [presetId]);
+
+  const restoreSelectedVersion = useCallback(
+    async (versionId) => {
+      if (
+        !versionId ||
+        versionId.startsWith("__") ||
+        !isOwner ||
+        !currentShader?.id ||
+        restoringVersion
+      ) {
+        return;
+      }
+      const restoreShaderId = currentShader.id;
+      const restorePresetId = cloudChoiceId(restoreShaderId);
+      setRestoringVersion(true);
+      setError(null);
+      try {
+        const target = await getShaderVersion(restoreShaderId, versionId);
+        const validation = validateModuleSource(target.source);
+        if (!validation.ok) {
+          throw new Error(
+            `Version ${target.version_number} cannot be restored: ${validation.reason}`
+          );
+        }
+
+        let expectedShader = currentShader;
+        if (dirty) {
+          expectedShader =
+            (await saveShader({
+              checkpointKind: "manual",
+              checkpointSummary: "Before restoring an earlier version",
+              notice: null,
+            })) || expectedShader;
+        }
+
+        const restored = await restoreShaderVersion({
+          shaderId: restoreShaderId,
+          versionId,
+          expectedStateRevision: expectedShader.state_revision,
+        });
+        setCloudShaders((current) => [
+          restored,
+          ...current.filter((item) => item.id !== restored.id),
+        ]);
+        if (draftSessionRef.current.presetId === restorePresetId) {
+          pendingValuesRef.current = restored.parameter_values || {};
+          setCurrentShader(restored);
+          setSource(restored.source);
+          setDirty(false);
+          const versions = await listAllShaderVersions(restored.id);
+          if (draftSessionRef.current.presetId === restorePresetId) {
+            setShaderVersions(versions);
+          }
+          showNotice(`Restored Version ${target.version_number}.`);
+        }
+      } catch (restoreError) {
+        if (isShaderStateConflict(restoreError)) {
+          try {
+            const latest = await getShader(restoreShaderId);
+            if (draftSessionRef.current.presetId === restorePresetId) {
+              setCurrentShader(latest);
+              await refreshShaderVersions();
+            }
+          } catch {
+            // Preserve the local editor state when refresh fails.
+          }
+          showNotice(
+            "This shader changed in another tab. Nothing was restored.",
+            { error: true }
+          );
+        }
+        setError(restoreError.message || String(restoreError));
+      } finally {
+        setRestoringVersion(false);
+      }
+    },
+    [
+      currentShader,
+      dirty,
+      isOwner,
+      refreshShaderVersions,
+      restoringVersion,
+      saveShader,
+      showNotice,
+    ]
+  );
+
+  useEffect(() => {
+    const select = versionSelectRef.current;
+    if (!select) return;
+    const onChange = (event) => {
+      const detail = event.detail;
+      const value =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target?.value);
+      restoreSelectedVersion(String(value || ""));
+    };
+    select.addEventListener("change", onChange);
+    return () => select.removeEventListener("change", onChange);
+  }, [restoreSelectedVersion]);
 
   useEffect(() => {
     if (!user || !currentShader || !isOwner || !dirty || saving) return;
@@ -4088,6 +4441,59 @@ export default function App() {
             </div>
             {!renaming && (
               <hstack>
+                {isOwner && currentShader && (
+                  <fig-tooltip
+                    text={
+                      dirty
+                        ? "Unsaved changes are not yet in version history."
+                        : hasUncheckpointedChanges
+                          ? "Autosaved to the cloud, but not yet saved as a restorable version."
+                          : "Shader version history"
+                    }
+                  >
+                    <fig-select
+                      ref={versionSelectRef}
+                      class="shader-version-select"
+                      label="Version history"
+                      position="bottom right"
+                      value={versionSelectValue}
+                      disabled={
+                        saving || restoringVersion || versionsLoading
+                          ? ""
+                          : undefined
+                      }
+                      aria-label="Shader version history"
+                    >
+                      <fig-select-options>
+                        {versionsLoading && shaderVersions.length === 0 && (
+                          <fig-select-option value="" disabled="">
+                            Loading versions…
+                          </fig-select-option>
+                        )}
+                        {dirty && (
+                          <fig-select-option value="__unsaved">
+                            Unsaved changes
+                          </fig-select-option>
+                        )}
+                        {!dirty && hasUncheckpointedChanges && (
+                          <fig-select-option value="__autosaved">
+                            Current autosave · Not in version history
+                          </fig-select-option>
+                        )}
+                        {shaderVersions.map((version, index) => (
+                          <fig-select-option key={version.id} value={version.id}>
+                            {versionOptionLabel(version, {
+                              current:
+                                index === 0 &&
+                                !dirty &&
+                                !hasUncheckpointedChanges,
+                            })}
+                          </fig-select-option>
+                        ))}
+                      </fig-select-options>
+                    </fig-select>
+                  </fig-tooltip>
+                )}
                 {protectedPreview ? (
                   <fig-button
                     type="button"
@@ -4118,12 +4524,22 @@ export default function App() {
                     </fig-menu-item>
                     <fig-menu-item
                       value="save"
-                      disabled={saving || Boolean(currentShader && !dirty)}
+                      disabled={
+                        saving ||
+                        restoringVersion ||
+                        Boolean(
+                          currentShader && !dirty && !hasUncheckpointedChanges
+                        )
+                      }
                       onClick={() => {
                         saveShader().catch(() => {});
                       }}
                     >
-                      {saving ? "Saving…" : "Save"}
+                      {saving
+                        ? "Saving…"
+                        : currentShader && isOwner
+                          ? "Save version"
+                          : "Save"}
                     </fig-menu-item>
                     {user && (
                       <fig-menu-item
@@ -4178,15 +4594,18 @@ export default function App() {
             <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
               <h3>Code</h3>
               <hstack>
-                {protectedPreview ? (
+                <fig-tooltip text="Copy code">
                   <fig-button
                     type="button"
-                    variant="secondary"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Copy code"
                     onClick={() => copyShaderCode()}
                   >
-                    Copy
+                    <fig-icon name="copy" />
                   </fig-button>
-                ) : (
+                </fig-tooltip>
+                {!protectedPreview && (
                   <fig-tooltip
                     text={
                       effectiveCodeCollapsed ? "Expand code" : "Collapse code"
@@ -4319,6 +4738,7 @@ export default function App() {
                     featuresRef={shaderFeaturesRef}
                     user={user}
                     onApplySource={onSourceChange}
+                    onAppliedCheckpoint={checkpointAgentVersion}
                     onOpenSettings={openSettings}
                     onNotice={showNotice}
                     onCanClearChange={setCanClearChat}

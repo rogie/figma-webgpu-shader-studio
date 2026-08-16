@@ -35,6 +35,7 @@ import {
 import {
   isPlanDocument,
   loadLocalPlan,
+  planDocumentSubject,
   removeLocalPlan,
   saveLocalPlan,
 } from "../lib/chatPlans.js";
@@ -150,6 +151,7 @@ const ChatPane = forwardRef(function ChatPane(
     featuresRef,
     user,
     onApplySource,
+    onAppliedCheckpoint,
     onOpenSettings,
     onNotice,
     onCanClearChange,
@@ -583,6 +585,11 @@ const ChatPane = forwardRef(function ChatPane(
     }
     setUndoCount(undoStackRef.current.length);
     onApplySource(pendingApply.source);
+    const { prose } = splitAssistantContent(pendingApply.message.content);
+    onAppliedCheckpoint?.({
+      source: pendingApply.source,
+      summary: prose,
+    });
     markPlanApplied(pendingApply.message.buildPlanId);
     updateThread((current) =>
       current.map((entry) =>
@@ -808,6 +815,16 @@ const ChatPane = forwardRef(function ChatPane(
       });
     };
 
+    const checkpointAppliedResponse = (text) => {
+      const { prose, source: appliedSource, incomplete } =
+        splitAssistantContent(text);
+      if (!appliedSource || incomplete) return;
+      onAppliedCheckpoint?.({
+        source: appliedSource,
+        summary: prose,
+      });
+    };
+
     const tryApplyModule = (text, { allowIncomplete = false } = {}) => {
       const moduleSource = extractModuleSource(text, { allowIncomplete });
       if (!moduleSource || moduleSource === lastApplied) return false;
@@ -933,7 +950,10 @@ const ChatPane = forwardRef(function ChatPane(
           check.ok &&
           tryApplyModule(repairedText, { allowIncomplete: true });
         finishAssistant(repairedText, { applied });
-        if (applied) return "applied";
+        if (applied) {
+          checkpointAppliedResponse(repairedText);
+          return "applied";
+        }
         if (blockedApplyReason) {
           notifyBlockedApply();
           return "deferred";
@@ -1035,6 +1055,7 @@ const ChatPane = forwardRef(function ChatPane(
         } else {
           finishAssistant(assembled, { applied });
           if (applied) {
+            checkpointAppliedResponse(assembled);
             onNotice?.("Code updated from chat.");
           } else {
             const candidate = extractModuleSource(assembled, {
@@ -1215,6 +1236,7 @@ ${pendingPlan.content}
             isPlanMode(message.mode) &&
             (message.pending || isPlanDocument(message.content))
           ) {
+            const subject = planDocumentSubject(message.content);
             return (
               <fig-chat-message key={index} from="agent">
                 <PlanMarkdownBlock
@@ -1222,15 +1244,24 @@ ${pendingPlan.content}
                   pending={Boolean(message.pending)}
                   applied={Boolean(message.planApplied)}
                 />
+                {!message.pending && !message.planApplied && (
+                  <div className="chat-prose">
+                    {subject
+                      ? `The plan for ${subject} is complete.`
+                      : "The plan is complete."}{" "}
+                    Review it and hit Build plan when you’re ready, or tell me
+                    what you’d like changed.
+                  </div>
+                )}
               </fig-chat-message>
             );
           }
           if (isPlanMode(message.mode)) {
             return (
               <fig-chat-message key={index} from="agent">
-                <div className="chat-prose">
-                  <MarkdownProse>{message.content}</MarkdownProse>
-                </div>
+                <MarkdownProse className="chat-prose">
+                  {message.content}
+                </MarkdownProse>
               </fig-chat-message>
             );
           }
@@ -1248,9 +1279,7 @@ ${pendingPlan.content}
               from="agent"
             >
               {prose && (
-                <div className="chat-prose">
-                  <MarkdownProse>{prose}</MarkdownProse>
-                </div>
+                <MarkdownProse className="chat-prose">{prose}</MarkdownProse>
               )}
               <StreamingCodeBlock
                 source={source}

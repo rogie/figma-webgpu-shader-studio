@@ -10,6 +10,16 @@ export function isPlanDocument(markdown, { allowIncomplete = false } = {}) {
   return allowIncomplete && /^#\s*$/.test(text);
 }
 
+export function planDocumentSubject(markdown) {
+  const heading = String(markdown || "")
+    .trimStart()
+    .match(/^#\s+([^\n]+)/)?.[1]
+    ?.replace(/^plan(?:\s+for|:)?\s*/i, "")
+    .replace(/[*_`]/g, "")
+    .trim();
+  return heading || "";
+}
+
 function loadPlans() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");

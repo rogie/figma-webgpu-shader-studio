@@ -20,7 +20,7 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@replit/codemirror-interact": "^6.3.1",
-    "@rogieking/figui3": "^8.8.1",
+    "@rogieking/figui3": "^8.9.0",
     "@supabase/supabase-js": "^2.110.7",
     "@uiw/codemirror-theme-xcode": "^4.25.2",
     "@uiw/react-codemirror": "^4.23.7",

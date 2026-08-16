@@ -47,7 +47,7 @@ export async function listShaders() {
     await client
       .from("shaders")
       .select(
-        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, figma_shader_id, figma_shader_kind, figma_shader_version, created_at, updated_at"
+        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
   );
@@ -86,6 +86,13 @@ export async function getShader(id) {
   );
 }
 
+export async function getShaderMaybe(id) {
+  const client = requireClient();
+  return unwrap(
+    await client.from("shaders").select("*").eq("id", id).maybeSingle()
+  );
+}
+
 export async function createShader(payload) {
   const client = requireClient();
   return unwrap(
@@ -108,6 +115,91 @@ export async function updateShader(id, payload) {
   const client = requireClient();
   return unwrap(
     await client.from("shaders").update(payload).eq("id", id).select().single()
+  );
+}
+
+export async function saveShaderState({
+  shaderId,
+  expectedStateRevision,
+  source,
+  kind,
+  parameterValues,
+  features,
+  checkpointKind = null,
+  summary = null,
+}) {
+  const client = requireClient();
+  return unwrap(
+    await client.rpc("save_shader_state", {
+      p_shader_id: shaderId,
+      p_expected_state_revision: expectedStateRevision ?? null,
+      p_source: source,
+      p_kind: kind,
+      p_parameter_values: parameterValues || {},
+      p_features: features || {},
+      p_checkpoint_kind: checkpointKind,
+      p_summary: summary,
+    })
+  );
+}
+
+export async function listShaderVersions(
+  shaderId,
+  { beforeVersion = null, limit = 50 } = {}
+) {
+  const client = requireClient();
+  let query = client
+    .from("shader_versions")
+    .select(
+      "id, shader_id, version_number, state_revision, checkpoint_kind, summary, restored_from_version_id, created_at"
+    )
+    .eq("shader_id", shaderId)
+    .order("version_number", { ascending: false })
+    .limit(Math.max(1, Math.min(Number(limit) || 50, 100)));
+  if (beforeVersion != null) {
+    query = query.lt("version_number", Number(beforeVersion));
+  }
+  return unwrap(await query);
+}
+
+export async function listAllShaderVersions(shaderId) {
+  const versions = [];
+  let beforeVersion = null;
+  while (true) {
+    const page = await listShaderVersions(shaderId, {
+      beforeVersion,
+      limit: 100,
+    });
+    versions.push(...page);
+    if (page.length < 100) return versions;
+    beforeVersion = page[page.length - 1].version_number;
+  }
+}
+
+export async function getShaderVersion(shaderId, versionId) {
+  const client = requireClient();
+  return unwrap(
+    await client
+      .from("shader_versions")
+      .select("*")
+      .eq("shader_id", shaderId)
+      .eq("id", versionId)
+      .single()
+  );
+}
+
+export async function restoreShaderVersion({
+  shaderId,
+  versionId,
+  expectedStateRevision,
+}) {
+  const client = requireClient();
+  return unwrap(
+    await client.rpc("restore_shader_version", {
+      p_shader_id: shaderId,
+      p_version_id: versionId,
+      p_expected_state_revision: expectedStateRevision ?? null,
+    })
   );
 }
 

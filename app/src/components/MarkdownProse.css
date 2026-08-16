@@ -1,0 +1,127 @@
+/* Shared markdown typography. Font size and line height are inherited from the
+   surrounding context so prose matches whatever surface it renders on. */
+.markdown-prose {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  /* fig-chat-message sets pre-wrap, which turns soft line breaks in the
+     markdown source into hard breaks. */
+  white-space: normal;
+
+  > :first-child {
+    margin-top: 0;
+  }
+
+  > :last-child {
+    margin-bottom: 0;
+  }
+
+  p,
+  ul,
+  ol,
+  blockquote,
+  pre,
+  table {
+    margin: 0 0 var(--spacer-2);
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    margin: var(--spacer-3) 0 var(--spacer-1);
+    font-size: inherit;
+    font-weight: var(--body-medium-strong-fontWeight);
+  }
+
+  ul,
+  ol {
+    padding-left: var(--spacer-3);
+  }
+
+  ul {
+    list-style-type: disc;
+  }
+
+  ul ul {
+    list-style-type: circle;
+  }
+
+  ul ul ul {
+    list-style-type: square;
+  }
+
+  ol {
+    list-style-type: decimal;
+  }
+
+  li + li {
+    margin-top: var(--spacer-1);
+  }
+
+  /* Loose lists wrap each item in a paragraph; keep them on the tighter
+     list rhythm instead of the block rhythm. */
+  li > p {
+    margin-bottom: var(--spacer-1);
+  }
+
+  li > ul,
+  li > ol {
+    margin: var(--spacer-1) 0 0;
+  }
+
+  li > :last-child {
+    margin-bottom: 0;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: underline;
+  }
+
+  blockquote {
+    padding-left: var(--spacer-2);
+    color: var(--figma-color-text-secondary);
+    border-left: 1px solid var(--figma-color-border);
+  }
+
+  hr {
+    margin: var(--spacer-3) 0;
+    border: 0;
+    border-top: 1px solid var(--figma-color-border);
+  }
+
+  code {
+    font-family: var(--font-family-monospace, ui-monospace, monospace);
+    font-size: inherit;
+  }
+
+  :not(pre) > code {
+    padding: 1px var(--spacer-1);
+    background: var(--figma-color-bg-secondary);
+    border-radius: var(--radius-small);
+  }
+
+  pre {
+    padding: var(--spacer-2);
+    overflow: auto;
+    background: var(--figma-color-bg-secondary);
+    border-radius: var(--radius-medium);
+  }
+
+  table {
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    padding: var(--spacer-1) var(--spacer-2);
+    text-align: left;
+    border: 1px solid var(--figma-color-border);
+  }
+
+  th {
+    font-weight: var(--body-medium-strong-fontWeight);
+  }
+}

@@ -7,7 +7,7 @@ export default function PlanMarkdownBlock({
   source,
   pending,
   applied,
-  defaultExpanded = Boolean(pending),
+  defaultExpanded = true,
 }) {
   const groupRef = useRef(null);
   const wasPendingRef = useRef(Boolean(pending));
@@ -26,7 +26,7 @@ export default function PlanMarkdownBlock({
     if (pending) {
       group.setAttribute("open", "true");
     } else if (wasPendingRef.current) {
-      group.setAttribute("open", "false");
+      group.setAttribute("open", "true");
     }
     wasPendingRef.current = Boolean(pending);
   }, [pending]);
@@ -68,9 +68,7 @@ export default function PlanMarkdownBlock({
           <PlanIcon />
         )}
       </fig-header>
-      <div className="plan-markdown-content">
-        <MarkdownProse>{source}</MarkdownProse>
-      </div>
+      <MarkdownProse className="plan-markdown-content">{source}</MarkdownProse>
     </fig-group>
   );
 }

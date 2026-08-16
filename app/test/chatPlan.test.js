@@ -4,6 +4,7 @@ import { isPlanMode } from "../src/lib/chatApply.js";
 import {
   isPlanDocument,
   loadLocalPlan,
+  planDocumentSubject,
   removeLocalPlan,
   saveLocalPlan,
   shaderPlanPath,
@@ -140,4 +141,9 @@ test("clarifications stay in chat while completed plan responses become plan.md"
     false
   );
   assert.equal(isPlanDocument("- Update controls\n- Revise the shader"), false);
+  assert.equal(
+    planDocumentSubject("# Plan for staggered pixel rows\n\n## Steps"),
+    "staggered pixel rows"
+  );
+  assert.equal(planDocumentSubject("# **Shape controls**"), "Shape controls");
 });
