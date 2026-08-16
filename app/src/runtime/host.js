@@ -135,6 +135,7 @@ export class ShaderHost {
   }
 
   _onMouse(e) {
+    if (!this.active || !this.running) return;
     this._cancelMouseReset();
     const rect = this.canvas.getBoundingClientRect();
     const renderScale = this.frame.renderScale || 1;
@@ -148,6 +149,7 @@ export class ShaderHost {
   }
 
   _onMouseLeave() {
+    if (!this.active || !this.running) return;
     // Moving between the canvas and an overlay handle fires leave before the
     // next move; defer the reset so the handoff never blanks mousePosition.
     this._cancelMouseReset();
@@ -165,7 +167,7 @@ export class ShaderHost {
   }
 
   _redrawForMouse() {
-    if (this.usesMouse && !this._isLoopActive()) this.redraw();
+    if (this.running && this.usesMouse && !this._isLoopActive()) this.redraw();
   }
 
   /**
@@ -493,10 +495,15 @@ export class ShaderHost {
     const h = Math.min(MAX_DIM, video.videoHeight || 1024);
     const sizeChanged = this._ensureInputTexture(w, h);
     this._videoFrameDirty = true;
-    this._watchVideoFrames();
     this._uploadVideoFrame();
     this._rebindAfterInputChange(sizeChanged, { resetState: true });
-    this._scheduleLoop();
+    if (this.active && this.running) {
+      this._watchVideoFrames();
+      Promise.resolve(video.play?.()).catch(() => {});
+      this._scheduleLoop();
+    } else {
+      video.pause?.();
+    }
   }
 
   // Replace the contents of an existing image input without changing texture
@@ -1187,6 +1194,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   start() {
     if (!this.renderFn) return;
     this.running = true;
+    if (this.active && this.video) {
+      this._videoFrameDirty = true;
+      this._watchVideoFrames();
+      Promise.resolve(this.video.play?.()).catch(() => {});
+    }
     const now = performance.now();
     // Resume from the current frame clock so temporary stop()/start() pairs
     // (thumbnail capture) do not jump, and a zeroed pause restarts at t=0.
@@ -1216,6 +1228,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
+    this._cancelMouseReset();
+    this._cancelVideoFrameCallback();
+    this.video?.pause?.();
     if (!resetTime) return;
     this.frame.time = 0;
     this.frame.deltaTime = 0;
@@ -1240,9 +1255,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
     if (this.video) {
       this._videoFrameDirty = true;
-      this._watchVideoFrames();
-      // play() can reject if interrupted; playback simply resumes on next frame.
-      Promise.resolve(this.video.play?.()).catch(() => {});
+      if (this.running) {
+        this._watchVideoFrames();
+        // play() can reject if interrupted; playback resumes on the next start.
+        Promise.resolve(this.video.play?.()).catch(() => {});
+      } else {
+        this.video.pause?.();
+      }
     }
     if (this.running) {
       this.lastTime = performance.now();

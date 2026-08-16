@@ -73,6 +73,56 @@ test("internal stop keeps the current frame time", () => {
   assert.equal(redraws, 0);
 });
 
+test("video playback follows the shader play state", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    let plays = 0;
+    let pauses = 0;
+    host.video = {
+      play() {
+        plays += 1;
+      },
+      pause() {
+        pauses += 1;
+      },
+      requestVideoFrameCallback() {
+        return 1;
+      },
+      cancelVideoFrameCallback() {},
+    };
+
+    host.start();
+    assert.equal(plays, 1);
+    assert.equal(pauses, 0);
+
+    host.stop({ resetTime: true });
+    assert.equal(pauses, 1);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("reactivating a paused host does not start its video", () => {
+  const host = makeHost();
+  let plays = 0;
+  let pauses = 0;
+  host.active = false;
+  host.video = {
+    play() {
+      plays += 1;
+    },
+    pause() {
+      pauses += 1;
+    },
+  };
+
+  host.setActive(true);
+
+  assert.equal(plays, 0);
+  assert.equal(pauses, 1);
+});
+
 test("decoded video frames redraw while shader playback is paused", () => {
   const host = makeHost();
   let videoFrameCallback = null;
@@ -298,6 +348,7 @@ test("play advances time uniforms on every animation frame", () => {
 function makeMouseHost() {
   const host = makeHost();
   host.usesMouse = true;
+  host.running = true;
   host.frame.time = 321;
   host.canvas.width = 200;
   host.canvas.height = 100;
@@ -336,7 +387,7 @@ function stubAnimationFrame() {
   };
 }
 
-test("mouse shaders redraw while paused without advancing time", () => {
+test("mouse uniforms update only while playback is running", () => {
   const raf = stubAnimationFrame();
   try {
     const host = makeMouseHost();
@@ -345,21 +396,23 @@ test("mouse shaders redraw while paused without advancing time", () => {
       redraws += 1;
     };
 
+    host.running = false;
     host._onMouse({ clientX: 60, clientY: 45 });
-    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
     assert.equal(host.frame.time, 321);
-    assert.equal(redraws, 1);
+    assert.equal(redraws, 0);
 
     host._onMouseLeave();
     raf.flush();
     assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
     assert.equal(host.frame.time, 321);
-    assert.equal(redraws, 2);
+    assert.equal(redraws, 0);
 
     host.running = true;
     host.rafId = 1;
     host._onMouse({ clientX: 35, clientY: 30 });
-    assert.equal(redraws, 2);
+    assert.deepEqual(host.frame.mousePosition, { x: 50, y: 20 });
+    assert.equal(redraws, 0);
   } finally {
     raf.restore();
   }

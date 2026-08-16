@@ -1262,6 +1262,7 @@ export default function App() {
           setThumbnailRefreshRevision((revision) => revision + 1);
           // Restore the user's play/pause preference after shader switches.
           if (playPreferenceRef.current) {
+            host.setActive(true);
             host.start();
             setRunning(true);
           } else {
@@ -2522,6 +2523,7 @@ export default function App() {
         window.clearTimeout(thumbnailPreviewTimerRef.current);
         thumbnailPreviewTimerRef.current = 0;
       }
+      hostRef.current?.setActive(true);
       setRuntimeValues({ ...valuesRef.current, [name]: value });
       setError(null);
       if (!protectedPreview) setDirty(true);
@@ -2530,6 +2532,7 @@ export default function App() {
   );
 
   const previewControl = useCallback((name, value) => {
+    hostRef.current?.setActive(true);
     valuesRef.current = { ...valuesRef.current, [name]: value };
     // Coalesce live preview redraws to one present per frame. Synchronous
     // WebGPU redraws on every pointermove hitch the main thread and cancel
@@ -2581,6 +2584,7 @@ export default function App() {
     playPreferenceRef.current = next;
     localStorage.setItem(PLAY_STORAGE_KEY, String(next));
     if (next) {
+      host.setActive(true);
       host.start();
     } else {
       host.stop({ resetTime: true });
@@ -3982,6 +3986,7 @@ export default function App() {
                     onClick={() => {
                       setEffectVisible((visible) => {
                         const next = !visible;
+                        hostRef.current?.setActive(true);
                         hostRef.current?.setEffectVisible?.(next);
                         return next;
                       });
