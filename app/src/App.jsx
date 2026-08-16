@@ -45,6 +45,12 @@ import {
 } from "./runtime/sample.js";
 import { CANVAS_PROP_TYPES } from "./lib/canvasControls.js";
 import {
+  isPlanDocument,
+  loadLocalPlan,
+  removeLocalPlan,
+  saveLocalPlan,
+} from "./lib/chatPlans.js";
+import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
   figmaLibraryKey,
@@ -73,9 +79,11 @@ import {
   makeShareUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
+  removeShaderPlan,
   upsertShader,
   updateShader,
   uploadAsset,
+  uploadShaderPlan,
 } from "./services/shaders.js";
 
 const ChatPane = lazy(() => import("./components/ChatPane.jsx"));
@@ -134,6 +142,22 @@ function persistInputSource(presetId, source) {
     localStorage.setItem(INPUT_SOURCE_STORAGE_KEY, JSON.stringify(map));
   } catch {}
 }
+
+async function migrateLocalPlanToCloud(localKey, ownerId, shaderId) {
+  const markdown = loadLocalPlan(localKey);
+  if (!isPlanDocument(markdown)) return;
+  const cloudKey = `cloud:${shaderId}`;
+  try {
+    await uploadShaderPlan({ ownerId, shaderId, markdown });
+    removeLocalPlan(localKey);
+    removeLocalPlan(cloudKey);
+  } catch (error) {
+    saveLocalPlan(cloudKey, markdown);
+    if (cloudKey !== localKey) removeLocalPlan(localKey);
+    console.warn("Failed to migrate plan.md to cloud storage", error);
+  }
+}
+
 const FIGMA_SHADER_CATEGORIES = [
   { kind: "effect", label: "Shader effect" },
   { kind: "fill", label: "Shader fill" },
@@ -2045,6 +2069,11 @@ export default function App() {
             is_public: false,
             ...figmaShaderLink(editorActive ? session : draft),
           });
+          await migrateLocalPlanToCloud(
+            `preset:${draft.id}`,
+            user.id,
+            saved.id
+          );
 
           const assetChanges = {};
           const media = active ? session.pendingMedia : draft.pendingMedia;
@@ -2696,6 +2725,10 @@ export default function App() {
           isOwner && currentShader
             ? await updateShader(currentShader.id, payload)
             : await createShader(payload);
+        const planLocalKey = currentShader?.id
+          ? `cloud:${currentShader.id}`
+          : `preset:${saveTargetId}`;
+        await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
 
         const assetChanges = {};
         if (pendingMedia) {
@@ -2954,6 +2987,7 @@ export default function App() {
     async (shader) => {
       if (!user || !shader || shader.owner_id !== user.id) return false;
       try {
+        await removeShaderPlan(shader.owner_id, shader.id);
         await removeAssets([shader.input_path, shader.thumbnail_path]);
         await deleteShader(shader.id);
         setCloudShaders((current) =>
@@ -4280,6 +4314,8 @@ export default function App() {
                     kind={kind}
                     fileName={shaderModuleFileName(presetId, shaderName)}
                     shaderKey={chatShaderKey}
+                    planOwnerId={isOwner ? user.id : null}
+                    planShaderId={isOwner ? currentShader.id : null}
                     featuresRef={shaderFeaturesRef}
                     user={user}
                     onApplySource={onSourceChange}

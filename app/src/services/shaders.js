@@ -1,6 +1,10 @@
 import { supabase } from "../lib/supabase.js";
+import { shaderPlanPath } from "../lib/chatPlans.js";
+
+export { shaderPlanPath };
 
 export const ASSET_BUCKET = "shader-assets";
+export const PLAN_BUCKET = "shader-plans";
 export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
 function requireClient() {
@@ -133,6 +137,38 @@ export async function uploadAsset({
     })
   );
   return path;
+}
+
+export async function uploadShaderPlan({ ownerId, shaderId, markdown }) {
+  const client = requireClient();
+  const path = shaderPlanPath(ownerId, shaderId);
+  unwrap(
+    await client.storage
+      .from(PLAN_BUCKET)
+      .upload(path, new Blob([markdown], { type: "text/markdown" }), {
+        upsert: true,
+        contentType: "text/markdown",
+        cacheControl: "60",
+      })
+  );
+  return path;
+}
+
+export async function downloadShaderPlan(ownerId, shaderId) {
+  const blob = unwrap(
+    await requireClient()
+      .storage.from(PLAN_BUCKET)
+      .download(shaderPlanPath(ownerId, shaderId))
+  );
+  return blob.text();
+}
+
+export async function removeShaderPlan(ownerId, shaderId) {
+  unwrap(
+    await requireClient()
+      .storage.from(PLAN_BUCKET)
+      .remove([shaderPlanPath(ownerId, shaderId)])
+  );
 }
 
 export async function removeAssets(paths) {

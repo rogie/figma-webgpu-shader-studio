@@ -1,0 +1,86 @@
+.plan-markdown-block {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--figma-color-text);
+  border-radius: var(--radius-medium);
+  font-size: var(--font-size-medium);
+
+  &[open]:not([open="false"]),
+  &[data-pending="true"] {
+    outline: 1px solid var(--figma-color-bordertranslucent);
+    outline-offset: -1px;
+  }
+
+  & .plan-markdown-header {
+    background: var(--figma-color-bg-secondary);
+  }
+
+  & .plan-markdown-status {
+    margin-right: calc(-1 * var(--spacer-2));
+    color: var(--figma-color-text-secondary);
+  }
+
+  & .plan-markdown-status[name="checkmark"] {
+    margin: var(--spacer-1);
+    margin-right: calc(-1 * var(--spacer-2));
+    color: var(--figma-color-text-tertiary);
+  }
+
+  & .plan-markdown-header > fig-icon {
+    margin-right: calc(-1 * var(--spacer-2));
+  }
+
+  & .plan-markdown-content {
+    max-height: 16rem;
+    padding: var(--spacer-3);
+    overflow: auto;
+    font-size: var(--body-medium-fontSize);
+    line-height: var(--line-height);
+    scrollbar-width: thin;
+
+    > :first-child {
+      margin-top: 0;
+    }
+
+    > :last-child {
+      margin-bottom: 0;
+    }
+
+    p,
+    ul,
+    ol,
+    blockquote,
+    pre,
+    h1,
+    h2,
+    h3,
+    h4 {
+      margin: 0 0 var(--spacer-2);
+    }
+
+    ul,
+    ol {
+      padding-left: var(--spacer-5);
+    }
+
+    pre {
+      padding: var(--spacer-2);
+      overflow: auto;
+      background: var(--figma-color-bg-secondary);
+      border-radius: var(--radius-medium);
+      font-size: inherit;
+    }
+
+    code {
+      font-family: var(--font-family-monospace, ui-monospace, monospace);
+      font-size: inherit;
+    }
+
+    :not(pre) > code {
+      padding: 1px var(--spacer-1);
+      background: var(--figma-color-bg-secondary);
+      border-radius: var(--radius-small);
+    }
+  }
+}

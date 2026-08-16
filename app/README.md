@@ -107,6 +107,12 @@ Each request includes the current module source plus bundled authoring skills
 (`figma-shader-coder`, `v3` module contract, WGSL, WebGPU). Chat history is
 saved per shader in `localStorage` and resumed when you reopen Chat.
 
+Use the **Plan mode** toggle to request a Markdown implementation plan without
+changing the editor. Plan turns cannot apply or auto-repair code. The latest
+completed plan is saved as `plan.md` in the private `shader-plans` Supabase
+Storage bucket for owned cloud shaders, with a local fallback for anonymous
+users and unsaved drafts.
+
 You can attach an image (all providers) or video (Gemini only) via the **+**
 menu next to Send; media is sent as multimodal context for that turn (max 3 MB).
 

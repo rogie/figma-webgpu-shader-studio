@@ -83,16 +83,17 @@ export default function StreamingCodeBlock({
 
   if (!source) return null;
 
+  const showIncomplete = Boolean(incomplete) && !pending;
   const status = pending
     ? "Writing module…"
-    : incomplete
+    : showIncomplete
       ? "Incomplete"
       : applied
         ? "Applied"
         : "Generated";
   const filenameLabel = pending
     ? "Writing main.ts"
-    : incomplete
+    : showIncomplete
       ? "Incomplete main.ts"
       : applied
         ? "Applied main.ts"
@@ -105,7 +106,7 @@ export default function StreamingCodeBlock({
       collapsible=""
       open={pending ? "true" : undefined}
       data-pending={pending ? "true" : undefined}
-      data-incomplete={incomplete ? "true" : undefined}
+      data-incomplete={showIncomplete ? "true" : undefined}
     >
       <fig-header class="streaming-code-header" borderless compact="">
         <h3 className="streaming-code-title">
@@ -123,7 +124,7 @@ export default function StreamingCodeBlock({
             size="small"
             aria-label={status}
           />
-        ) : incomplete ? (
+        ) : showIncomplete ? (
           <fig-tooltip text="Response ended before code was complete">
             <fig-icon
               class="streaming-code-status"

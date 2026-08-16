@@ -5,6 +5,10 @@ const COMPLETE_FENCE_RE =
 const OPEN_FENCE_RE =
   /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n/gi;
 
+export function isPlanMode(mode) {
+  return mode === "plan";
+}
+
 function normalizeModuleSource(body) {
   return body.replace(/^\uFEFF/, "").replace(/\s+$/, "") + "\n";
 }

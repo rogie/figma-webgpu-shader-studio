@@ -4,6 +4,7 @@ type ChatContext = {
   fileName: string;
   features?: { isAnimated?: boolean; usesMouse?: boolean };
   skills?: string;
+  mode?: "agent" | "plan";
 };
 
 export function buildSystemPrompt(ctx: ChatContext): string {
@@ -14,6 +15,20 @@ export function buildSystemPrompt(ctx: ChatContext): string {
   const skillsBlock = ctx.skills?.trim()
     ? `\n\nAuthoring skills (follow these when writing or changing the module):\n\n${ctx.skills.trim()}\n`
     : "";
+  const responseContract =
+    ctx.mode === "plan"
+      ? `Plan mode behavior and response format (required):
+1. This is a discussion and design phase. Do not implement the request, claim that anything was added or changed, or describe work in the past tense.
+2. Think through the request against the current module. If a user decision would materially change the approach, ask concise clarification questions as ordinary prose and wait for the answer. Do not include a Markdown heading in a clarification-only response.
+3. Once the important requirements are understood, return a thoughtful, standalone Markdown plan. Its very first characters must be exactly one H1 heading ("# ...") so Shader Studio can recognize it immediately.
+4. Write the plan in future-oriented language describing what will be changed, why, relevant files or module areas, important decisions and edge cases, and how the result will be validated.
+5. Treat planning as iterative: incorporate the conversation and revise the plan when the user provides feedback. The user will explicitly choose when to build it.
+6. Do not emit a complete shader module or implementation-ready full source. Small focused snippets or pseudocode are allowed only when they materially clarify a difficult part of the plan; do not include code by default.
+7. Do not instruct Shader Studio to apply code. For this turn, these plan-mode rules override any authoring-skill instruction that requests a complete module.`
+      : `Response format (required):
+1. If updating the module, begin with brief prose in future tense explaining what you will change. Do not claim the implementation is complete before emitting the fenced module. If no code change is needed, answer normally.
+2. If you update the module, end with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
+3. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.`;
 
   return `You are an expert Figma WebGPU shader module assistant inside Shader Studio.
 
@@ -28,11 +43,9 @@ Studio context:
 - Keep defineProperties keys stable unless the user asks to change the UI.
 - Do not invent CLI workflows, product-brief.md, or multi-file project scaffolding unless asked.
 
-Response format (required):
-1. Brief prose explaining what you changed (or answering if no code change is needed).
-2. If you update the module, end with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
-3. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.
 ${skillsBlock}
+${responseContract}
+
 Current module source:
 \`\`\`typescript
 ${ctx.source}

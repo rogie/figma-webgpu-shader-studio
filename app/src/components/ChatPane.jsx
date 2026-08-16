@@ -12,6 +12,7 @@ import {
   chatApplyTargetStatus,
   extractModuleSource,
   formatChatError,
+  isPlanMode,
   splitAssistantContent,
   validateModuleSource,
 } from "../lib/chatApply.js";
@@ -32,6 +33,12 @@ import {
   saveChatThreads,
 } from "../lib/chatThreads.js";
 import {
+  isPlanDocument,
+  loadLocalPlan,
+  removeLocalPlan,
+  saveLocalPlan,
+} from "../lib/chatPlans.js";
+import {
   getProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
@@ -41,16 +48,23 @@ import {
   listAvailableProviderModels,
   streamChat,
 } from "../services/chat.js";
+import {
+  downloadShaderPlan,
+  uploadShaderPlan,
+} from "../services/shaders.js";
 import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import UserAvatar from "./UserAvatar.jsx";
 import MarkdownProse from "./MarkdownProse.jsx";
+import PlanIcon from "./PlanIcon.jsx";
+import PlanMarkdownBlock from "./PlanMarkdownBlock.jsx";
 import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
+const MODE_STORAGE_KEY = "shader-studio.chatMode";
 const MAX_UNDO = 12;
 const MAX_AUTO_HEAL_ATTEMPTS = 2;
 
@@ -60,6 +74,8 @@ function assistantPhaseLabel(message) {
       return "Thinking…";
     case "responding":
       return "Responding…";
+    case "planning":
+      return "Writing plan…";
     case "writing":
       return "Writing module…";
     case "validating":
@@ -84,6 +100,12 @@ function loadSavedModel() {
   }
 }
 
+function loadSavedMode() {
+  return localStorage.getItem(MODE_STORAGE_KEY) === "plan"
+    ? "plan"
+    : "agent";
+}
+
 function messageKey(shaderKey) {
   return shaderKey || "default";
 }
@@ -105,6 +127,9 @@ function chatActivityLabel(messages) {
   if (!latest) return "New chat activity";
   if (latest.role !== "assistant") return "New message";
   if (latest.pending) {
+    if (latest.mode === "plan" || latest.phase === "planning") {
+      return "Writing plan…";
+    }
     if (latest.phase === "writing") return "Writing main.ts…";
     if (latest.phase === "applying") return "Applying main.ts…";
     if (latest.phase === "repairing") return "Repairing main.ts…";
@@ -120,6 +145,8 @@ const ChatPane = forwardRef(function ChatPane(
     kind,
     fileName,
     shaderKey,
+    planOwnerId,
+    planShaderId,
     featuresRef,
     user,
     onApplySource,
@@ -131,6 +158,7 @@ const ChatPane = forwardRef(function ChatPane(
   ref
 ) {
   const [model, setModel] = useState(loadSavedModel);
+  const [mode, setMode] = useState(loadSavedMode);
   const [draft, setDraft] = useState("");
   const [threads, setThreads] = useState(loadChatThreads);
   const [streaming, setStreaming] = useState(false);
@@ -188,6 +216,14 @@ const ChatPane = forwardRef(function ChatPane(
   const videoSupported = providerSupportsChatVideo(model.provider);
   const canSend =
     hasKey && Boolean(draft.trim() || attachments.length) && !streaming;
+  const planningActivity = Boolean(
+    streaming &&
+      messages.at(-1)?.role === "assistant" &&
+      messages.at(-1)?.pending &&
+      messages.at(-1)?.mode === "plan"
+  );
+  const contextActivity =
+    latestActivity || (planningActivity ? "Writing plan…" : "");
   const userName =
     user?.user_metadata?.full_name ||
     user?.user_metadata?.name ||
@@ -212,12 +248,33 @@ const ChatPane = forwardRef(function ChatPane(
   if (!streaming) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
-      if (message.role !== "assistant" || message.pending) continue;
+      if (
+        message.role !== "assistant" ||
+        message.pending ||
+        isPlanMode(message.mode)
+      ) {
+        continue;
+      }
       const { source, incomplete } = splitAssistantContent(message.content);
       if (!source) continue;
       if (!incomplete && !message.applied && source !== sourceRef.current) {
         pendingApply = { message, source };
       }
+      break;
+    }
+  }
+  let pendingPlan = null;
+  if (!streaming) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (
+        message.role !== "assistant" ||
+        !isPlanMode(message.mode) ||
+        !isPlanDocument(message.content)
+      ) {
+        continue;
+      }
+      if (!message.planApplied) pendingPlan = message;
       break;
     }
   }
@@ -267,6 +324,59 @@ const ChatPane = forwardRef(function ChatPane(
   }, [model]);
 
   useEffect(() => {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  }, [mode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const hydratePlan = async () => {
+      let markdown = loadLocalPlan(threadId);
+      if (planOwnerId && planShaderId) {
+        try {
+          const cloudPlan = await downloadShaderPlan(planOwnerId, planShaderId);
+          if (cloudPlan.trim()) {
+            markdown = cloudPlan;
+            removeLocalPlan(threadId);
+          }
+        } catch {
+          // A shader may not have a plan.md yet; retain any local fallback.
+        }
+      }
+      if (cancelled || !isPlanDocument(markdown)) return;
+      setThreads((prev) => {
+        const current = prev[threadId] || [];
+        if (current.some((message) => message.pending)) return prev;
+        if (
+          current.some(
+            (message) =>
+              message.role === "assistant" &&
+              message.mode === "plan" &&
+              message.content === markdown
+          )
+        ) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [threadId]: [
+            ...current,
+            {
+              role: "assistant",
+              mode: "plan",
+              planId: crypto.randomUUID(),
+              content: markdown,
+            },
+          ],
+        };
+      });
+    };
+    hydratePlan();
+    return () => {
+      cancelled = true;
+    };
+  }, [planOwnerId, planShaderId, threadId]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => saveChatThreads(threads), 400);
     return () => window.clearTimeout(timer);
   }, [threads]);
@@ -304,7 +414,9 @@ const ChatPane = forwardRef(function ChatPane(
     }
     request.notifiedAway = true;
     onNotice?.(
-      `Agent is still working on ${request.fileName}. Changes will only apply while that shader is open.`,
+      request.mode === "plan"
+        ? `Agent is still writing a plan for ${request.fileName}.`
+        : `Agent is still working on ${request.fileName}. Changes will only apply while that shader is open.`,
       { brand: true }
     );
   }, [threadId, onNotice]);
@@ -416,6 +528,34 @@ const ChatPane = forwardRef(function ChatPane(
     });
   };
 
+  const markPlanApplied = (planId) => {
+    if (!planId) return;
+    updateThread((current) =>
+      current.map((entry) =>
+        entry.planId === planId ? { ...entry, planApplied: true } : entry
+      )
+    );
+  };
+
+  const persistCompletedPlan = async (markdown) => {
+    if (!isPlanDocument(markdown)) return;
+    saveLocalPlan(threadId, markdown);
+    if (!planOwnerId || !planShaderId) return;
+    try {
+      await uploadShaderPlan({
+        ownerId: planOwnerId,
+        shaderId: planShaderId,
+        markdown,
+      });
+      removeLocalPlan(threadId);
+    } catch (planError) {
+      console.warn("Failed to upload plan.md", planError);
+      onNotice?.("Plan saved on this device; cloud sync failed.", {
+        error: true,
+      });
+    }
+  };
+
   const stop = () => {
     abortRef.current?.abort();
     abortRef.current = null;
@@ -443,6 +583,7 @@ const ChatPane = forwardRef(function ChatPane(
     }
     setUndoCount(undoStackRef.current.length);
     onApplySource(pendingApply.source);
+    markPlanApplied(pendingApply.message.buildPlanId);
     updateThread((current) =>
       current.map((entry) =>
         entry === pendingApply.message ? { ...entry, applied: true } : entry
@@ -510,9 +651,24 @@ const ChatPane = forwardRef(function ChatPane(
     addAttachments([file]);
   };
 
-  const send = async () => {
-    const text = draft.trim();
-    if ((!text && attachments.length === 0) || streaming) return;
+  const send = async (options = {}) => {
+    const textOverride =
+      typeof options.textOverride === "string" ? options.textOverride : null;
+    const requestTextOverride =
+      typeof options.requestTextOverride === "string"
+        ? options.requestTextOverride
+        : null;
+    const modeOverride =
+      options.modeOverride === "plan" || options.modeOverride === "agent"
+        ? options.modeOverride
+        : null;
+    const requestPlanId =
+      typeof options.planId === "string" ? options.planId : null;
+    const requestAttachments =
+      options.ignoreAttachments === true ? [] : attachments;
+    const text = String(textOverride ?? draft).trim();
+    if ((!text && requestAttachments.length === 0) || streaming) return;
+    const requestMode = modeOverride ?? mode;
 
     if (!isSupabaseConfigured) {
       setError("Supabase is not configured for the chat proxy.");
@@ -523,7 +679,7 @@ const ChatPane = forwardRef(function ChatPane(
       return;
     }
     if (
-      attachments.some((attachment) => attachment.kind === "video") &&
+      requestAttachments.some((attachment) => attachment.kind === "video") &&
       !providerSupportsChatVideo(model.provider)
     ) {
       setError("Video attachments are only supported with Gemini.");
@@ -539,12 +695,13 @@ const ChatPane = forwardRef(function ChatPane(
     }
 
     setError("");
-    setDraft("");
-    const currentAttachments = attachments;
-    setAttachments([]);
+    if (textOverride == null) setDraft("");
+    const currentAttachments = requestAttachments;
+    if (options.ignoreAttachments !== true) setAttachments([]);
 
     const userMessage = {
       role: "user",
+      mode: requestMode,
       content:
         text ||
         (currentAttachments.length
@@ -559,9 +716,12 @@ const ChatPane = forwardRef(function ChatPane(
     };
     const assistantMessage = {
       role: "assistant",
+      mode: requestMode,
+      planId: requestMode === "plan" ? crypto.randomUUID() : undefined,
+      buildPlanId: requestPlanId || undefined,
       content: "",
       pending: true,
-      phase: "waiting",
+      phase: requestMode === "plan" ? "planning" : "waiting",
     };
 
     updateThread((current) => [...current, userMessage, assistantMessage]);
@@ -570,8 +730,11 @@ const ChatPane = forwardRef(function ChatPane(
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const historyUserMessage = requestTextOverride
+      ? { ...userMessage, content: requestTextOverride }
+      : userMessage;
     const history = toApiMessages(
-      [...messages, userMessage],
+      [...messages, historyUserMessage],
       currentAttachments
     );
 
@@ -586,6 +749,7 @@ const ChatPane = forwardRef(function ChatPane(
     activeRequestRef.current = {
       threadId: requestThreadId,
       fileName: requestFileName,
+      mode: requestMode,
       notifiedAway: false,
     };
     const features = featuresRef.current;
@@ -623,6 +787,9 @@ const ChatPane = forwardRef(function ChatPane(
         }
         next[next.length - 1] = {
           role: "assistant",
+          mode: requestMode,
+          planId: last.planId,
+          buildPlanId: last.buildPlanId,
           content,
           pending: false,
           applied: Boolean(applied || last.applied),
@@ -672,6 +839,7 @@ const ChatPane = forwardRef(function ChatPane(
       updateLastAssistant({ phase: "applying" });
       onApplySource(moduleSource);
       markAssistantApplied();
+      markPlanApplied(requestPlanId);
       return true;
     };
 
@@ -705,6 +873,7 @@ const ChatPane = forwardRef(function ChatPane(
             content: "",
             pending: true,
             autoRepair: true,
+            buildPlanId: requestPlanId || undefined,
             phase: "repairing",
           },
         ]);
@@ -792,15 +961,16 @@ const ChatPane = forwardRef(function ChatPane(
         fileName,
         features,
         skills,
+        mode: requestMode,
         signal: controller.signal,
       })) {
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
           const now = performance.now();
-          const writingModule = Boolean(
-            extractModuleSource(snapshot, { allowIncomplete: true })
-          );
+          const writingModule =
+            requestMode === "agent" &&
+            Boolean(extractModuleSource(snapshot, { allowIncomplete: true }));
           if (now - lastStreamUiAt >= 50) {
             lastStreamUiAt = now;
             updateThread((current) => {
@@ -812,17 +982,26 @@ const ChatPane = forwardRef(function ChatPane(
                   content: snapshot,
                   pending: true,
                   applied: Boolean(last.applied),
-                  phase: writingModule ? "writing" : "responding",
+                  phase:
+                    requestMode === "plan"
+                      ? "planning"
+                      : writingModule
+                        ? "writing"
+                        : "responding",
                 };
               }
               return next;
             });
           }
         } else if (event.type === "status") {
-          updateLastAssistant({ phase: event.phase });
+          updateLastAssistant({
+            phase: requestMode === "plan" ? "planning" : event.phase,
+          });
         } else if (event.type === "done") {
           sawDone = true;
-          updateLastAssistant({ phase: "validating" });
+          updateLastAssistant({
+            phase: requestMode === "plan" ? "planning" : "validating",
+          });
         } else if (event.type === "error") {
           sawError = true;
           setError(event.message || "Chat failed.");
@@ -832,42 +1011,56 @@ const ChatPane = forwardRef(function ChatPane(
 
       const responseComplete =
         sawDone && !sawError && !controller.signal.aborted;
-      const applied = responseComplete
-        ? tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo
-        : false;
-
-      if (sawError || !assembled.trim()) {
-        finishAssistant(assembled.trim() ? assembled : "", { applied });
-        if (!sawError && !controller.signal.aborted) {
+      if (isPlanMode(requestMode)) {
+        finishAssistant(assembled.trim() ? assembled : "");
+        if (responseComplete && isPlanDocument(assembled)) {
+          await persistCompletedPlan(assembled);
+        } else if (!sawError && !controller.signal.aborted && !assembled.trim()) {
           setError(
             `${model.label} returned an empty reply. Try again or choose another model.`
           );
         }
       } else {
-        finishAssistant(assembled, { applied });
-        if (applied) {
-          onNotice?.("Code updated from chat.");
+        const applied = responseComplete
+          ? tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo
+          : false;
+
+        if (sawError || !assembled.trim()) {
+          finishAssistant(assembled.trim() ? assembled : "", { applied });
+          if (!sawError && !controller.signal.aborted) {
+            setError(
+              `${model.label} returned an empty reply. Try again or choose another model.`
+            );
+          }
         } else {
-          const candidate = extractModuleSource(assembled, {
-            allowIncomplete: true,
-          });
-          if (candidate) {
-            const check = validateModuleSource(candidate);
-            if (!check.ok && check.autoHealable) {
-              onNotice?.("Syntax error detected. Repairing code…");
-              const healed = await autoHealSyntaxError(candidate, check.reason);
-              if (healed === "applied") {
-                onNotice?.("Syntax error fixed automatically.");
-              } else if (healed !== "deferred") {
-                onNotice?.(
-                  `Automatic repair failed: ${check.reason}`,
-                  { error: true }
+          finishAssistant(assembled, { applied });
+          if (applied) {
+            onNotice?.("Code updated from chat.");
+          } else {
+            const candidate = extractModuleSource(assembled, {
+              allowIncomplete: true,
+            });
+            if (candidate) {
+              const check = validateModuleSource(candidate);
+              if (!check.ok && check.autoHealable) {
+                onNotice?.("Syntax error detected. Repairing code…");
+                const healed = await autoHealSyntaxError(
+                  candidate,
+                  check.reason
                 );
+                if (healed === "applied") {
+                  onNotice?.("Syntax error fixed automatically.");
+                } else if (healed !== "deferred") {
+                  onNotice?.(
+                    `Automatic repair failed: ${check.reason}`,
+                    { error: true }
+                  );
+                }
+              } else if (!check.ok) {
+                onNotice?.(check.reason, { error: true });
+              } else if (blockedApplyReason) {
+                notifyBlockedApply();
               }
-            } else if (!check.ok) {
-              onNotice?.(check.reason, { error: true });
-            } else if (blockedApplyReason) {
-              notifyBlockedApply();
             }
           }
         }
@@ -884,6 +1077,30 @@ const ChatPane = forwardRef(function ChatPane(
       }
       setStreaming(false);
     }
+  };
+
+  const buildPendingPlan = () => {
+    if (!pendingPlan || streaming || !hasKey) return;
+    const planId = pendingPlan.planId || crypto.randomUUID();
+    if (!pendingPlan.planId) {
+      updateThread((current) =>
+        current.map((entry) =>
+          entry === pendingPlan ? { ...entry, planId } : entry
+        )
+      );
+    }
+    setMode("agent");
+    send({
+      textOverride: "Build the current plan.md.",
+      requestTextOverride: `Implement the following plan in the current ${fileName} module. Follow the plan completely and return the complete updated module using the required response format.
+
+<plan>
+${pendingPlan.content}
+</plan>`,
+      modeOverride: "agent",
+      planId,
+      ignoreAttachments: true,
+    });
   };
 
   const onKeyDown = (event) => {
@@ -994,7 +1211,32 @@ const ChatPane = forwardRef(function ChatPane(
               </fig-chat-message>
             );
           }
-          const { prose, source, incomplete } = splitAssistantContent(message.content);
+          if (
+            isPlanMode(message.mode) &&
+            (message.pending || isPlanDocument(message.content))
+          ) {
+            return (
+              <fig-chat-message key={index} from="agent">
+                <PlanMarkdownBlock
+                  source={message.content}
+                  pending={Boolean(message.pending)}
+                  applied={Boolean(message.planApplied)}
+                />
+              </fig-chat-message>
+            );
+          }
+          if (isPlanMode(message.mode)) {
+            return (
+              <fig-chat-message key={index} from="agent">
+                <div className="chat-prose">
+                  <MarkdownProse>{message.content}</MarkdownProse>
+                </div>
+              </fig-chat-message>
+            );
+          }
+          const { prose, source, incomplete } = splitAssistantContent(
+            message.content
+          );
           const applied = Boolean(
             !incomplete &&
             (message.applied ||
@@ -1056,7 +1298,8 @@ const ChatPane = forwardRef(function ChatPane(
           {(attachments.length > 0 ||
             !hasKey ||
             pendingApply ||
-            latestActivity) && (
+            pendingPlan ||
+            contextActivity) && (
             <fig-ai-context aria-label="Prompt context">
               {attachments.length > 0 && (
                 <fig-attachments ref={pendingAttachmentsRef}>
@@ -1100,19 +1343,34 @@ const ChatPane = forwardRef(function ChatPane(
                   </fig-button>
                 </hstack>
               )}
-              {latestActivity && (
-                <div className="chat-latest-activity" aria-live="polite">
-                  <fig-shimmer>
-                    <span>{latestActivity}</span>
-                  </fig-shimmer>
+              {pendingPlan && !pendingApply && (
+                <hstack className="chat-context-action">
+                  <span>Plan is ready to build</span>
                   <fig-button
                     type="button"
-                    variant="secondary"
-                    size="small"
-                    onClick={jumpToLatest}
+                    variant="primary"
+                    disabled={!hasKey ? "" : undefined}
+                    onClick={buildPendingPlan}
                   >
-                    View latest
+                    Build plan
                   </fig-button>
+                </hstack>
+              )}
+              {contextActivity && (
+                <div className="chat-latest-activity" aria-live="polite">
+                  <fig-shimmer>
+                    <span>{contextActivity}</span>
+                  </fig-shimmer>
+                  {latestActivity && (
+                    <fig-button
+                      type="button"
+                      variant="secondary"
+                      size="small"
+                      onClick={jumpToLatest}
+                    >
+                      View latest
+                    </fig-button>
+                  )}
                 </div>
               )}
             </fig-ai-context>
@@ -1122,7 +1380,11 @@ const ChatPane = forwardRef(function ChatPane(
               class="chat-input"
               multiline=""
               value={draft}
-              placeholder="Ask for changes..."
+              placeholder={
+                mode === "plan"
+                  ? "Describe what you want to plan…"
+                  : "Ask for changes..."
+              }
               aria-label="Ask for changes"
               disabled={streaming || !hasKey ? "" : undefined}
               onInput={(event) => setDraft(event.target.value)}
@@ -1144,6 +1406,27 @@ const ChatPane = forwardRef(function ChatPane(
                 </fig-button>
               </fig-tooltip>
               <hstack>
+                <fig-tooltip text="Plan mode">
+                  <fig-button
+                    type="toggle"
+                    variant="ghost"
+                    icon="true"
+                    selected={mode === "plan"}
+                    aria-label={
+                      mode === "plan"
+                        ? "Disable plan mode"
+                        : "Enable plan mode"
+                    }
+                    disabled={streaming ? "" : undefined}
+                    onClick={() =>
+                      setMode((current) =>
+                        current === "plan" ? "agent" : "plan"
+                      )
+                    }
+                  >
+                    <PlanIcon />
+                  </fig-button>
+                </fig-tooltip>
                 <fig-tooltip text={`Model: ${model.label}`}>
                   {modelSelect}
                 </fig-tooltip>

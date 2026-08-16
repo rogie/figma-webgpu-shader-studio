@@ -5,12 +5,13 @@ description: >-
   FigUI3 release notes for breaking or new component APIs, and apply needed app
   integrations. Use when the user runs /update or asks to pull the latest figui3,
   refresh figui3, rebuild vite cache, or sync FigUI3 component changes.
-disable-model-invocation: true
 ---
 
 # /update — FigUI3 upgrade workflow
 
 Run this skill end-to-end when invoked. Do not stop after installing the package.
+When the user sends `/update`, run this FigUI3 workflow immediately. Do not ask
+which dependency or update scope they mean.
 
 ## Quick start
 

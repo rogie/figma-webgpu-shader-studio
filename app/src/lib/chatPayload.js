@@ -55,6 +55,7 @@ export function buildChatRequest({
   fileName,
   features,
   skills,
+  mode = "agent",
 }) {
   return {
     provider,
@@ -65,6 +66,7 @@ export function buildChatRequest({
     fileName,
     features,
     skills,
+    mode: mode === "plan" ? "plan" : "agent",
   };
 }
 

@@ -57,6 +57,7 @@ export async function listAvailableProviderModels(
  * @param {string} options.fileName
  * @param {{ isAnimated?: boolean, usesMouse?: boolean }} [options.features]
  * @param {string} [options.skills]
+ * @param {"agent"|"plan"} [options.mode]
  * @param {AbortSignal} [options.signal]
  */
 export async function* streamChat({
@@ -69,6 +70,7 @@ export async function* streamChat({
   fileName,
   features,
   skills,
+  mode,
   signal,
 }) {
   if (!isSupabaseConfigured) {
@@ -103,6 +105,7 @@ export async function* streamChat({
       fileName,
       features,
       skills,
+      mode,
     })),
     signal,
   });

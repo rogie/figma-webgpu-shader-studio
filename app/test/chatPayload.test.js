@@ -99,10 +99,12 @@ test("request preserves complete source, features, and skill context", () => {
     fileName: "main.ts",
     features: { isAnimated: false, usesMouse: true },
     skills,
+    mode: "plan",
   });
 
   assert.equal(request.source, source);
   assert.equal(request.skills, skills);
+  assert.equal(request.mode, "plan");
   assert.deepEqual(request.features, {
     isAnimated: false,
     usesMouse: true,

@@ -18,6 +18,12 @@ function sanitizeMessage(message) {
     role: message.role,
     content: message.content,
   };
+  if (message.mode === "plan") out.mode = "plan";
+  if (typeof message.planId === "string") out.planId = message.planId;
+  if (typeof message.buildPlanId === "string") {
+    out.buildPlanId = message.buildPlanId;
+  }
+  if (message.planApplied === true) out.planApplied = true;
   if (message.role === "assistant" && message.applied === true) {
     out.applied = true;
   }

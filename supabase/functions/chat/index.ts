@@ -31,6 +31,7 @@ type RequestBody = {
   fileName?: string;
   features?: { isAnimated?: boolean; usesMouse?: boolean };
   skills?: string;
+  mode?: "agent" | "plan";
 };
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
@@ -794,6 +795,7 @@ Deno.serve(async (req) => {
   const source = typeof body.source === "string" ? body.source : "";
   const kind = typeof body.kind === "string" ? body.kind : "effect";
   const fileName = typeof body.fileName === "string" ? body.fileName : "main.ts";
+  const mode = body.mode === "plan" ? "plan" : "agent";
 
   if (provider !== "openai" && provider !== "anthropic" && provider !== "gemini") {
     return jsonResponse(400, {
@@ -818,6 +820,7 @@ Deno.serve(async (req) => {
     fileName,
     features: body.features,
     skills,
+    mode,
   });
 
   const history: ChatMessage[] = [];
