@@ -1,10 +1,11 @@
 import { lintGutter, linter } from "@codemirror/lint";
+import { openSearchPanel } from "@codemirror/search";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { xcodeDark, xcodeLight } from "@uiw/codemirror-theme-xcode";
 import interact from "@replit/codemirror-interact";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { figmaShaderLanguage } from "../lib/codeLanguage.js";
 import { codeSearch } from "./CodeSearchPanel.js";
 
@@ -87,6 +88,28 @@ export default function CodePane({
     if (error) setExpanded(Boolean(location));
   }, [error, location]);
 
+  const viewRef = useRef(null);
+
+  // CodeMirror's Cmd/Ctrl+F binding only fires while the editor holds focus, so
+  // the shortcut does nothing until you click into the code. Listen on the
+  // window instead, since the keypress lands on <body> otherwise.
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key !== "f" && event.key !== "F") return;
+      if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+      // The editor (or its search field) already ran the command and called
+      // preventDefault; don't steal focus back from the panel.
+      if (event.defaultPrevented) return;
+      const view = viewRef.current;
+      if (!view) return;
+      event.preventDefault();
+      view.focus();
+      openSearchPanel(view);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
   return (
     <div className="code-pane">
       <div className="code-pane-editor">
@@ -97,6 +120,9 @@ export default function CodePane({
           theme={theme === "dark" ? xcodeDark : xcodeLight}
           placeholder="Figma shader module"
           extensions={extensions}
+          onCreateEditor={(view) => {
+            viewRef.current = view;
+          }}
           onChange={readOnly ? undefined : onSourceChange}
           editable={!readOnly}
           basicSetup={{

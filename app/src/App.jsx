@@ -133,6 +133,21 @@ const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 const INPUT_SOURCE_STORAGE_KEY = "figma-shader-studio:input-sources";
 const THUMBNAIL_SIZE = 512;
+const BACKGROUND_AUTOSAVE_MS = 4000;
+
+function shaderContentFingerprint({
+  name,
+  source,
+  parameterValues,
+  features,
+}) {
+  return JSON.stringify({
+    name: name || "",
+    source: source || "",
+    parameterValues: parameterValues || {},
+    features: features || {},
+  });
+}
 const INITIAL_DRAFTS = savedDrafts();
 
 function savedInputSource(presetId) {
@@ -679,6 +694,7 @@ export default function App() {
   }
   const thumbnailCaptureGenRef = useRef(0);
   const thumbnailPreviewTimerRef = useRef(0);
+  const lastSavedFingerprintRef = useRef("");
   const [thumbnailRefreshRevision, setThumbnailRefreshRevision] = useState(0);
 
   const canvasRef = useRef(null);
@@ -2042,6 +2058,12 @@ export default function App() {
       setIsPublic(fullShader.is_public);
       setPendingMedia(null);
       setDirty(false);
+      lastSavedFingerprintRef.current = shaderContentFingerprint({
+        name: fullShader.name,
+        source: fullShader.source,
+        parameterValues: fullShader.parameter_values,
+        features: fullShader.features || inferFeatures(fullShader.source),
+      });
       const restoredSource = savedInputSource(cloudChoiceId(fullShader.id)) || "image";
       setInputSource(restoredSource);
       inputSourceRef.current = restoredSource;
@@ -2836,6 +2858,29 @@ export default function App() {
           delete payload.is_public;
         }
 
+        const contentFingerprint = shaderContentFingerprint({
+          name: payload.name,
+          source: payload.source,
+          parameterValues: payload.parameter_values,
+          features: payload.features,
+        });
+        // Skip no-op background autosaves (same content as last successful
+        // write, including when setCurrentShader restarts the debounce timer).
+        // Never skip when a version checkpoint is requested.
+        if (
+          background &&
+          isOwner &&
+          currentShader &&
+          !pendingMedia &&
+          !checkpointKind &&
+          contentFingerprint === lastSavedFingerprintRef.current
+        ) {
+          if (draftSessionRef.current.presetId === saveTargetId) {
+            setDirty(false);
+          }
+          return currentShader;
+        }
+
         let saved;
         if (isOwner && currentShader) {
           let checkpointSummary = options.checkpointSummary || null;
@@ -2890,47 +2935,51 @@ export default function App() {
           assetChanges.input_mime_type = inputMimeType;
         }
 
-        let thumbnailBlob = null;
-        try {
-          thumbnailBlob = await hostRef.current?.captureThumbnailBlob({
-            width: THUMBNAIL_SIZE,
-            height: THUMBNAIL_SIZE,
-            shouldResume: () => playPreferenceRef.current,
-          });
-        } catch {
-          thumbnailBlob = null;
-        }
-        if (!thumbnailBlob) {
-          const cached =
-            thumbnails[presetId] || thumbnailDataUrlsRef.current[presetId];
-          if (
-            typeof cached === "string" &&
-            (cached.startsWith("blob:") ||
-              cached.startsWith("data:image/webp") ||
-              cached.startsWith("data:image/png") ||
-              cached.startsWith("data:image/jpeg"))
-          ) {
-            try {
-              const cachedBlob = await fetch(cached).then((response) =>
-                response.blob()
-              );
-              if (cachedBlob.type !== "image/svg+xml") {
-                thumbnailBlob = cachedBlob;
+        // Thumbnails are expensive (canvas capture + Storage RLS). Only refresh
+        // them on explicit saves — background autosave only persists state.
+        if (!background) {
+          let thumbnailBlob = null;
+          try {
+            thumbnailBlob = await hostRef.current?.captureThumbnailBlob({
+              width: THUMBNAIL_SIZE,
+              height: THUMBNAIL_SIZE,
+              shouldResume: () => playPreferenceRef.current,
+            });
+          } catch {
+            thumbnailBlob = null;
+          }
+          if (!thumbnailBlob) {
+            const cached =
+              thumbnails[presetId] || thumbnailDataUrlsRef.current[presetId];
+            if (
+              typeof cached === "string" &&
+              (cached.startsWith("blob:") ||
+                cached.startsWith("data:image/webp") ||
+                cached.startsWith("data:image/png") ||
+                cached.startsWith("data:image/jpeg"))
+            ) {
+              try {
+                const cachedBlob = await fetch(cached).then((response) =>
+                  response.blob()
+                );
+                if (cachedBlob.type !== "image/svg+xml") {
+                  thumbnailBlob = cachedBlob;
+                }
+              } catch {
+                thumbnailBlob = null;
               }
-            } catch {
-              thumbnailBlob = null;
             }
           }
-        }
-        if (thumbnailBlob) {
-          assetChanges.thumbnail_path = await uploadAsset({
-            ownerId: user.id,
-            shaderId: saved.id,
-            role: "thumbnail",
-            blob: thumbnailBlob,
-            fileName: "thumbnail.webp",
-            contentType: thumbnailBlob.type || "image/webp",
-          });
+          if (thumbnailBlob) {
+            assetChanges.thumbnail_path = await uploadAsset({
+              ownerId: user.id,
+              shaderId: saved.id,
+              role: "thumbnail",
+              blob: thumbnailBlob,
+              fileName: "thumbnail.webp",
+              contentType: thumbnailBlob.type || "image/webp",
+            });
+          }
         }
 
         if (Object.keys(assetChanges).length) {
@@ -2947,6 +2996,7 @@ export default function App() {
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
         setShaderRoute(saved.id);
+        lastSavedFingerprintRef.current = contentFingerprint;
         const latest = draftSessionRef.current;
         const unchanged =
           (latest.shaderName.trim() || "Untitled Shader") ===
@@ -3161,6 +3211,12 @@ export default function App() {
           setCurrentShader(restored);
           setSource(restored.source);
           setDirty(false);
+          lastSavedFingerprintRef.current = shaderContentFingerprint({
+            name: restored.name,
+            source: restored.source,
+            parameterValues: restored.parameter_values,
+            features: restored.features || inferFeatures(restored.source),
+          });
           const versions = await listAllShaderVersions(restored.id);
           if (draftSessionRef.current.presetId === restorePresetId) {
             setShaderVersions(versions);
@@ -3206,7 +3262,7 @@ export default function App() {
       saveShader({ background: true, notice: null }).catch(() => {
         // The editor remains dirty so a later edit or explicit Save can retry.
       });
-    }, 1200);
+    }, BACKGROUND_AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
   }, [currentShader, dirty, isOwner, isPublic, saveShader, saving, user]);
 

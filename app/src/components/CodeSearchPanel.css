@@ -5,7 +5,7 @@
   align-items: flex-start;
   gap: var(--spacer-1);
   box-sizing: border-box;
-  padding: var(--spacer-1) var(--spacer-2);
+  padding: var(--spacer-2) var(--spacer-2);
   color: var(--figma-color-text);
   background: var(--figma-color-bg);
   font-family: var(--font-family);
@@ -13,6 +13,9 @@
   font-weight: var(--body-medium-fontWeight);
   letter-spacing: var(--body-letter-spacing);
   line-height: var(--line-height);
+  border-left: 1px solid var(--figma-color-border);
+  border-right: 1px solid var(--figma-color-border);
+  border-top: 1px solid var(--figma-color-border);
 
   .fig-search-rows {
     flex: 1 1 auto;
@@ -35,11 +38,12 @@
 
   .fig-search-field {
     flex: 1 1 auto;
-    min-width: 3rem;
+    min-width: 0;
   }
 
   .fig-search-input {
     flex: 1 1 auto;
+    box-sizing: border-box;
     min-width: 0;
     padding-right: var(--spacer-1);
 

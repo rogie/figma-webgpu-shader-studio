@@ -124,13 +124,18 @@ class CodeSearchPanel {
     });
     this.replaceInput.value = this.query.replace || rememberedReplace;
 
-    this.count = element("span", { class: "fig-search-count" });
+    this.count = element("span", {
+      class: "fig-search-count",
+      role: "status",
+      "aria-live": "polite",
+    });
+    this.countTooltip = withTooltip("", this.count);
     this.caseFlag = this.#flag("Aa", "Match case");
     this.regexpFlag = this.#flag(".*", "Regular expression", "is-regexp");
     this.wordFlag = this.#flag("ab", "Whole word", "is-word");
 
     const adornments = element("span", { slot: "append" }, [
-      this.count,
+      this.countTooltip,
       element("span", { class: "fig-search-flags" }, [
         withTooltip("Match case", this.caseFlag),
         withTooltip("Regular expression", this.regexpFlag),
@@ -149,9 +154,7 @@ class CodeSearchPanel {
       "aria-label": "Toggle replace",
       selected: this.replaceOpen ? "" : null,
     });
-    this.replaceToggle.append(
-      element("fig-icon", { name: "swap", color: "secondary" })
-    );
+    this.replaceToggle.append(element("fig-icon", { name: "swap" }));
     this.replaceToggle.addEventListener("click", () => {
       this.#setReplaceOpen(this.replaceToggle.hasAttribute("selected"));
       (this.replaceOpen ? this.replaceInput : this.searchInput).focus();
@@ -261,7 +264,7 @@ class CodeSearchPanel {
       "aria-label": ariaLabel || label,
     });
     if (icon) {
-      button.append(element("fig-icon", { name: icon, color: "secondary" }));
+      button.append(element("fig-icon", { name: icon }));
     } else {
       button.append(text);
     }
@@ -353,11 +356,9 @@ class CodeSearchPanel {
     if (readOnly && this.replaceOpen) this.#setReplaceOpen(false);
 
     const info = matchInfo(this.view.state, this.query);
-    const text = countText(info);
-    const label = countLabel(info);
-    this.count.textContent = text;
+    this.count.textContent = countText(info);
     this.count.dataset.state = info.kind;
-    this.count.title = label;
+    this.countTooltip.setAttribute("text", countLabel(info));
     this.searchInput.setAttribute(
       "aria-invalid",
       info.kind === "invalid" ? "true" : "false"
@@ -407,6 +408,41 @@ const searchTheme = EditorView.theme({
   },
   ".cm-panels-bottom": {
     borderTop: "1px solid var(--figma-color-border)",
+  },
+  // Go to line (Mod-Alt-g) reuses the panel chrome, so give its dialog the same
+  // treatment as the search panel.
+  ".cm-dialog": {
+    display: "flex",
+    alignItems: "center",
+    gap: "var(--spacer-2)",
+    padding: "var(--spacer-1) var(--spacer-2)",
+    "& form": {
+      display: "flex",
+      alignItems: "center",
+      gap: "var(--spacer-2)",
+    },
+    "& label": {
+      display: "flex",
+      alignItems: "center",
+      gap: "var(--spacer-2)",
+      color: "var(--figma-color-text-secondary)",
+    },
+    "& .cm-button": {
+      padding: "0 var(--spacer-2)",
+      height: "var(--spacer-4)",
+      color: "var(--figma-color-text)",
+      backgroundColor: "transparent",
+      backgroundImage: "none",
+      border: "0",
+      borderRadius: "var(--radius-medium)",
+      boxShadow: "inset 0 0 0 1px var(--figma-color-border)",
+    },
+    "& .cm-button:hover": { backgroundColor: "var(--figma-color-bg-hover)" },
+    "& .cm-dialog-close": {
+      top: "var(--spacer-1)",
+      right: "var(--spacer-1)",
+      color: "var(--figma-color-icon-secondary)",
+    },
   },
   ".cm-searchMatch": {
     borderRadius: "2px",

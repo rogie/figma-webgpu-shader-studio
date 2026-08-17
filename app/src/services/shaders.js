@@ -27,7 +27,7 @@ async function attachAuthorProfiles(client, shaders) {
 
   const result = await client
     .from("profiles")
-    .select("*")
+    .select("id, display_name, avatar_url")
     .in("id", ownerIds);
   if (result.error) return shaders;
 
@@ -41,7 +41,9 @@ async function attachAuthorProfiles(client, shaders) {
   }));
 }
 
-export async function listShaders() {
+const LIBRARY_SHADER_LIMIT = 200;
+
+export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
   const client = requireClient();
   const shaders = unwrap(
     await client
@@ -50,6 +52,7 @@ export async function listShaders() {
         "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
+      .limit(Math.max(1, Math.min(Number(limit) || LIBRARY_SHADER_LIMIT, 500)))
   );
   return attachAuthorProfiles(client, shaders);
 }
