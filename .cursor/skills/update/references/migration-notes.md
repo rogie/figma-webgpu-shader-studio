@@ -97,6 +97,14 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - Adds a `copy` icon name to `fig-icon` (`--icon-24-copy` / `--icon-16-copy`). Lab/editor bundles and README are otherwise unchanged from 8.8.1.
 - `<propskit-oscillator>` remains available but is unused here — Figma `defineProperties` has no oscillator type, and `Controls.jsx` has nothing to wire it to.
 
+## 8.9.1 notes
+
+- Patch-only: `fig-editor.css` list top-margin selector now uses `:nth-child(1 of :not(.fig-overflow))` instead of first-child / overflow-start sibling rules. No README/API changes; no app wiring required.
+
+## 8.9.2 notes
+
+- Patch-only: `fig-editor.css` / `components.css` add `h3 { margin: 0 0 var(--spacer-1) 0; }` on an editor control surface. No README/API changes; no app wiring required.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

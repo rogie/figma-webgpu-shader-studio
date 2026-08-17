@@ -54,12 +54,12 @@ export function hasUncheckpointedShaderState(shader) {
   return stateRevision > 0 && stateRevision !== versionedRevision;
 }
 
-export function versionOptionLabel(version, { current = false } = {}) {
+export function versionOptionParts(version, { current = false } = {}) {
   const number = Number(version?.version_number || 0);
-  const date = version?.created_at ? new Date(version.created_at) : null;
-  const timestamp =
-    date && !Number.isNaN(date.valueOf())
-      ? date.toLocaleString([], {
+  const createdAt = version?.created_at ? new Date(version.created_at) : null;
+  const date =
+    createdAt && !Number.isNaN(createdAt.valueOf())
+      ? createdAt.toLocaleString([], {
           month: "short",
           day: "numeric",
           hour: "numeric",
@@ -72,14 +72,16 @@ export function versionOptionLabel(version, { current = false } = {}) {
     restore: "Restored",
     before_restore: "Safety copy",
   }[version?.checkpoint_kind];
-  return [
-    current ? `Current · Version ${number}` : `Version ${number}`,
-    timestamp,
-    kindLabel,
-    version?.summary,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  return {
+    title: current ? `Current (Version ${number})` : `Version ${number}`,
+    date,
+    subtitle: [kindLabel, version?.summary].filter(Boolean).join(" · "),
+  };
+}
+
+export function versionOptionLabel(version, { current = false } = {}) {
+  const { title, date, subtitle } = versionOptionParts(version, { current });
+  return [title, date, subtitle].filter(Boolean).join(" · ");
 }
 
 export function isShaderStateConflict(error) {

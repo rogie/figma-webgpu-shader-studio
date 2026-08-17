@@ -13,6 +13,7 @@ import ExportIcon from "./components/ExportIcon.jsx";
 import "./components/HomeNav.css";
 import Preview from "./components/Preview.jsx";
 import ShaderList from "./components/ShaderList.jsx";
+import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
 import UserAvatar from "./components/UserAvatar.jsx";
 import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
@@ -55,7 +56,6 @@ import {
   isShaderStateConflict,
   sanitizeVersionSummary,
   summarizeManualVersion,
-  versionOptionLabel,
 } from "./lib/shaderVersions.js";
 import { validateModuleSource } from "./lib/chatApply.js";
 import {
@@ -698,7 +698,6 @@ export default function App() {
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
-  const versionSelectRef = useRef(null);
   const versionLoadGenerationRef = useRef(0);
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
@@ -796,11 +795,6 @@ export default function App() {
   const protectedPreview = Boolean(currentShader && !isOwner);
   const hasUncheckpointedChanges =
     isOwner && hasUncheckpointedShaderState(currentShader);
-  const versionSelectValue = dirty
-    ? "__unsaved"
-    : hasUncheckpointedChanges
-      ? "__autosaved"
-      : shaderVersions[0]?.id || "";
   const effectiveCodeCollapsed = protectedPreview ? false : codeCollapsed;
   const currentAuthorIsYou = Boolean(isOwner || isDraftId(presetId));
   const currentAuthorName =
@@ -3206,21 +3200,6 @@ export default function App() {
   );
 
   useEffect(() => {
-    const select = versionSelectRef.current;
-    if (!select) return;
-    const onChange = (event) => {
-      const detail = event.detail;
-      const value =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target?.value);
-      restoreSelectedVersion(String(value || ""));
-    };
-    select.addEventListener("change", onChange);
-    return () => select.removeEventListener("change", onChange);
-  }, [restoreSelectedVersion]);
-
-  useEffect(() => {
     if (!user || !currentShader || !isOwner || !dirty || saving) return;
     if (Boolean(isPublic) !== Boolean(currentShader.is_public)) return;
     const timer = window.setTimeout(() => {
@@ -4447,57 +4426,14 @@ export default function App() {
             {!renaming && (
               <hstack>
                 {isOwner && currentShader && (
-                  <fig-tooltip
-                    text={
-                      dirty
-                        ? "Unsaved changes are not yet in version history."
-                        : hasUncheckpointedChanges
-                          ? "Autosaved to the cloud, but not yet saved as a restorable version."
-                          : "Shader version history"
-                    }
-                  >
-                    <fig-select
-                      ref={versionSelectRef}
-                      class="shader-version-select"
-                      label="Version history"
-                      position="bottom right"
-                      value={versionSelectValue}
-                      disabled={
-                        saving || restoringVersion || versionsLoading
-                          ? ""
-                          : undefined
-                      }
-                      aria-label="Shader version history"
-                    >
-                      <fig-select-options>
-                        {versionsLoading && shaderVersions.length === 0 && (
-                          <fig-select-option value="" disabled="">
-                            Loading versions…
-                          </fig-select-option>
-                        )}
-                        {dirty && (
-                          <fig-select-option value="__unsaved">
-                            Unsaved changes
-                          </fig-select-option>
-                        )}
-                        {!dirty && hasUncheckpointedChanges && (
-                          <fig-select-option value="__autosaved">
-                            Current autosave · Not in version history
-                          </fig-select-option>
-                        )}
-                        {shaderVersions.map((version, index) => (
-                          <fig-select-option key={version.id} value={version.id}>
-                            {versionOptionLabel(version, {
-                              current:
-                                index === 0 &&
-                                !dirty &&
-                                !hasUncheckpointedChanges,
-                            })}
-                          </fig-select-option>
-                        ))}
-                      </fig-select-options>
-                    </fig-select>
-                  </fig-tooltip>
+                  <ShaderVersionSelect
+                    versions={shaderVersions}
+                    versionsLoading={versionsLoading}
+                    dirty={dirty}
+                    hasUncheckpointedChanges={hasUncheckpointedChanges}
+                    disabled={saving || restoringVersion || versionsLoading}
+                    onChange={restoreSelectedVersion}
+                  />
                 )}
                 {protectedPreview ? (
                   <fig-button

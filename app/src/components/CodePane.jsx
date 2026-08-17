@@ -1,15 +1,18 @@
 import { lintGutter, linter } from "@codemirror/lint";
 import CodeMirror from "@uiw/react-codemirror";
+import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import { xcodeDark, xcodeLight } from "@uiw/codemirror-theme-xcode";
 import interact from "@replit/codemirror-interact";
 import { useEffect, useMemo, useState } from "react";
 import { figmaShaderLanguage } from "../lib/codeLanguage.js";
+import { codeSearch } from "./CodeSearchPanel.js";
 
 const baseExtensions = [
   figmaShaderLanguage,
   EditorView.lineWrapping,
   lintGutter(),
+  codeSearch,
 ];
 
 const numericDragExtension = interact({
@@ -67,7 +70,15 @@ export default function CodePane({
     );
     return [
       ...baseExtensions,
-      readOnly ? EditorView.editable.of(false) : numericDragExtension,
+      readOnly
+        ? [
+            EditorView.editable.of(false),
+            EditorState.readOnly.of(true),
+            // A non-editable view can't be focused, which also blocks the
+            // search keymap, so keep it reachable by keyboard.
+            EditorView.contentAttributes.of({ tabindex: "0" }),
+          ]
+        : numericDragExtension,
       diagnostics,
     ];
   }, [error, location, readOnly]);

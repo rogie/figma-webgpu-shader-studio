@@ -232,12 +232,6 @@ body,
       > hstack:last-child {
         flex: 0 0 auto;
       }
-
-      .shader-version-select {
-        width: 11rem;
-        max-width: 11rem;
-        --fig-select-trigger-width: 11rem;
-      }
     }
 
     .shader-viewer-sidebar:is(
@@ -336,7 +330,17 @@ body,
           background-color: transparent;
         }
 
+        /* Column layout keeps the search panel from pushing the scroller past
+           the editor's fixed height. */
+        .cm-editor {
+          display: flex;
+          flex-direction: column;
+        }
+
         .cm-scroller {
+          flex: 1 1 auto;
+          min-height: 0;
+          height: auto;
           scrollbar-width: thin;
         }
 
