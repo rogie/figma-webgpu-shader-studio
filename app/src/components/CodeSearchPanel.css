@@ -19,17 +19,15 @@
 
   .fig-search-rows {
     flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: var(--spacer-1);
+    align-items: center;
     min-width: 0;
   }
 
   .fig-search-row {
-    display: flex;
-    align-items: center;
-    gap: var(--spacer-1);
-    min-width: 0;
+    display: contents;
 
     &[hidden] {
       display: none;
@@ -37,8 +35,13 @@
   }
 
   .fig-search-field {
-    flex: 1 1 auto;
     min-width: 0;
+  }
+
+  .fig-search-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-1);
   }
 
   .fig-search-input {
@@ -58,7 +61,7 @@
     width: auto;
     flex: 0 0 auto;
     margin-left: 0;
-    padding-right: var(--spacer-half);
+    padding-right: var(--spacer-1);
   }
 
   .fig-search-count {
@@ -145,6 +148,20 @@
 
   .fig-search-previous fig-icon {
     transform: rotate(180deg);
+  }
+
+  fig-button.fig-search-replace-toggle[icon] {
+    width: var(--spacer-3);
+    flex-basis: var(--spacer-3);
+  }
+
+  .fig-search-replace-toggle fig-icon {
+    transform: rotate(-90deg);
+    transition: transform var(--input-transition);
+  }
+
+  .fig-search-replace-toggle[selected] fig-icon {
+    transform: rotate(0deg);
   }
 
   fig-button[variant="secondary"] {

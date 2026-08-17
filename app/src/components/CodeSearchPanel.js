@@ -154,7 +154,9 @@ class CodeSearchPanel {
       "aria-label": "Toggle replace",
       selected: this.replaceOpen ? "" : null,
     });
-    this.replaceToggle.append(element("fig-icon", { name: "swap" }));
+    this.replaceToggle.append(
+      element("fig-icon", { name: "chevron", size: "small" })
+    );
     this.replaceToggle.addEventListener("click", () => {
       this.#setReplaceOpen(this.replaceToggle.hasAttribute("selected"));
       (this.replaceOpen ? this.replaceInput : this.searchInput).focus();
@@ -196,8 +198,10 @@ class CodeSearchPanel {
 
     this.replaceRow = element("div", { class: "fig-search-row" }, [
       this.replaceField,
-      withTooltip(`Replace (${ENTER})`, this.replaceButton),
-      withTooltip(`Replace all (${MOD}${ENTER})`, this.replaceAllButton),
+      element("div", { class: "fig-search-actions" }, [
+        withTooltip(`Replace (${ENTER})`, this.replaceButton),
+        withTooltip(`Replace all (${MOD}${ENTER})`, this.replaceAllButton),
+      ]),
     ]);
 
     this.dom = element("div", { class: "fig-search-panel" }, [
@@ -205,9 +209,14 @@ class CodeSearchPanel {
       element("div", { class: "fig-search-rows" }, [
         element("div", { class: "fig-search-row" }, [
           this.searchField,
-          withTooltip(`Previous match (${SHIFT}${ENTER})`, this.previousButton),
-          withTooltip(`Next match (${ENTER})`, this.nextButton),
-          withTooltip("Close (Esc)", this.closeButton),
+          element("div", { class: "fig-search-actions" }, [
+            withTooltip(
+              `Previous match (${SHIFT}${ENTER})`,
+              this.previousButton
+            ),
+            withTooltip(`Next match (${ENTER})`, this.nextButton),
+            withTooltip("Close (Esc)", this.closeButton),
+          ]),
         ]),
         this.replaceRow,
       ]),
