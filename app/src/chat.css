@@ -62,6 +62,12 @@
       white-space: normal;
     }
 
+    /* Typed and pasted prose is not markdown, so its own line breaks and
+       blank lines are the only structure it has. */
+    .chat-prose-plain {
+      white-space: pre-wrap;
+    }
+
     .chat-code-note {
       display: flex;
       align-items: center;

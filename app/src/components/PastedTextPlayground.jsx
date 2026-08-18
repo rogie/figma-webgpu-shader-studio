@@ -98,7 +98,7 @@ function UserMessage({ message }) {
   return (
     <fig-chat-message from="user">
       {message.content ? (
-        <div className="chat-prose">{message.content}</div>
+        <div className="chat-prose chat-prose-plain">{message.content}</div>
       ) : null}
       {(message.pastes || []).map((paste, index) => (
         <PastedText

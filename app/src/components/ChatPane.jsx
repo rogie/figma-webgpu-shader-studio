@@ -1226,7 +1226,11 @@ ${pendingPlan.content}
               (message.attachmentPreview ? [message.attachmentPreview] : []);
             return (
               <fig-chat-message key={index} from="user">
-                {message.content && <div className="chat-prose">{message.content}</div>}
+                {message.content && (
+                  <div className="chat-prose chat-prose-plain">
+                    {message.content}
+                  </div>
+                )}
                 {(message.pastes || []).map((paste, pasteIndex) => (
                   <PastedText
                     key={`${paste.language}:${pasteIndex}`}

@@ -578,21 +578,24 @@ function looksLikeMarkdown(text) {
 
   const lines = body.replace(/\r\n?/g, "\n").split("\n");
   let hits = 0;
+  let listHits = 0;
   let fences = 0;
   for (const line of lines) {
     if (/^#{1,6}\s+\S/.test(line)) hits += 2;
-    else if (isMarkdownListItem(line)) hits += 1;
+    else if (isMarkdownListItem(line)) listHits += 1;
     else if (/^\s*>\s+\S/.test(line)) hits += 1;
     else if (/^\s*(?:```|~~~)/.test(line)) fences += 1;
     else if (/^\s*(?:\|.*\|)\s*$/.test(line)) hits += 1;
     else if (/\[[^\]]+\]\([^)]+\)/.test(line)) hits += 1;
     else if (/(^|[^/])(\*\*|__)[A-Za-z][\s\S]*?\2/.test(line)) hits += 1;
   }
+  // Bullet briefs are common chat prose, so lists alone cannot carry the label.
+  hits += Math.min(listHits, 2);
   // A single fence is just prose wrapped around a snippet, not a document, so
   // fences only reinforce markdown once other structure is present.
   if (fences >= 2) hits += 1;
   if (fences >= 4) hits += 1;
-  return hits >= 3;
+  return hits >= 4;
 }
 
 /** Mean line score, used to gate guessing a language for plain prose. */
@@ -816,7 +819,7 @@ export async function analyzePaste(payload = {}) {
         codeSegments.length > 1
           ? `Prose stripped; ${codeSegments.length} code segments joined.`
           : "Prose stripped; the single code segment kept.",
-        { coverage, codeScore: averageScore(codeSegments) }
+        { coverage, codeScore: averageScore(codeSegments), fenced: Boolean(hint) }
       )
     );
 
@@ -890,8 +893,13 @@ function pickBest(candidates, coverage) {
 
   // A markdown document should stay whole; stripping prose loses its meaning.
   if (markdown && (!code || coverage < 0.85)) return markdown;
-  if (code && coverage < 0.999) return code;
-  if (code) return code;
+  // Tiny unfenced "code" blips inside prose are usually wrapped list lines or
+  // math-ish English, not a real paste. Fenced snippets still win at any size.
+  if (code && coverage < 0.999) {
+    if (code.fenced || coverage >= 0.15 || code.lineCount >= 3) return code;
+  } else if (code) {
+    return code;
+  }
   return byId.get("raw") || candidates[0];
 }
 
@@ -924,7 +932,7 @@ export async function splitComposerPaste(payload = {}) {
     return { content: "", pastes: [toPastePayload(markdown)], analysis };
   }
 
-  if (code && code.language !== "text") {
+  if (code && best?.id === "code" && code.language !== "text") {
     const content = analysis.segments
       .filter((segment) => segment.kind === "prose")
       .map((segment) => segment.text.trim())

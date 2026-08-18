@@ -187,6 +187,41 @@ test("prefers the markdown candidate for a document with headings and a fence", 
   assert.equal(result.best.title, "Pasted markdown");
 });
 
+test("treats a bullet-heavy brief as plain text, not markdown", async () => {
+  const paste = [
+    "Build me a shader EFFECT (not a fill) that renders the layer as a 3D Gaussian",
+    "splat cloud using real 3DGS math, seeded from the layer's own pixels.",
+    "",
+    "Setup, once:",
+    "- Sample frame.input on a 96x96 grid in a compute pass to build a splat buffer.",
+    "- Give each splat an anisotropic 3D covariance built from a scale vector.",
+    "",
+    "Per frame:",
+    "1. Preprocess compute pass: build a view matrix from Yaw / Pitch / Distance.",
+    "2. Sort pass: pack quantized camera-space depth into the high bits of a u32.",
+    "3. Render pass: instanced quads, one per surviving splat, back-to-front.",
+    "   shader evaluates exp(-0.5 * d^T conic d) * opacity for the Gaussian falloff.",
+    "",
+    "Hard requirements:",
+    "- Output PREMULTIPLIED alpha and clear to transparent.",
+    "- Allocate every buffer in setup() and reuse it.",
+    "- Blend state: src factor \"one\", dst factor \"one-minus-src-alpha\".",
+  ].join("\n");
+
+  const result = await analyzePaste({ text: paste });
+  assert.equal(result.best.id, "raw");
+  assert.equal(result.best.language, "text");
+  assert.equal(result.best.title, "Pasted text");
+  assert.equal(
+    result.candidates.some((candidate) => candidate.id === "markdown"),
+    false
+  );
+
+  const split = await splitComposerPaste({ text: paste });
+  assert.equal(split.pastes.length, 0);
+  assert.match(split.content, /Build me a shader EFFECT/);
+});
+
 test("segments fenced code apart from surrounding prose", () => {
   const segments = segmentPaste(
     ["Intro line about the fix.", "```js", "const a = 1;", "```", "Outro line."].join("\n")
