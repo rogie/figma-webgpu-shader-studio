@@ -1,6 +1,20 @@
 const STORAGE_KEY = "shader-studio.chatThreads.v1";
 const MAX_MESSAGES_PER_THREAD = 80;
 
+function sanitizePaste(paste) {
+  if (!paste || typeof paste !== "object") return null;
+  if (typeof paste.text !== "string" || !paste.text.trim()) return null;
+  const language = typeof paste.language === "string" ? paste.language : "text";
+  const out = { text: paste.text, language };
+  if (typeof paste.label === "string" && paste.label) out.label = paste.label;
+  if (typeof paste.title === "string" && paste.title) out.title = paste.title;
+  if (Array.isArray(paste.nested)) {
+    const nested = paste.nested.filter((id) => typeof id === "string" && id);
+    if (nested.length) out.nested = nested;
+  }
+  return out;
+}
+
 function sanitizeAttachment(attachment) {
   if (!attachment || typeof attachment !== "object") return undefined;
   const kind = attachment.kind === "video" ? "video" : "image";
@@ -37,6 +51,10 @@ function sanitizeMessage(message) {
     .map(sanitizeAttachment)
     .filter(Boolean);
   if (attachments.length) out.attachments = attachments;
+  const pastes = (Array.isArray(message.pastes) ? message.pastes : [])
+    .map(sanitizePaste)
+    .filter(Boolean);
+  if (pastes.length) out.pastes = pastes;
   return out;
 }
 

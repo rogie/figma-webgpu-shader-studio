@@ -12,6 +12,42 @@ import { measurePerf, perfNow, recordPerf } from "./perf.js";
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
 
+function collectShaderModules(value, modules, seen) {
+  if (!value || (typeof value !== "object" && typeof value !== "function")) return;
+  if (seen.has(value)) return;
+  seen.add(value);
+
+  if (typeof value.getCompilationInfo === "function") {
+    modules.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectShaderModules(item, modules, seen));
+    return;
+  }
+  if (value instanceof Map || value instanceof Set) {
+    value.forEach((item) => collectShaderModules(item, modules, seen));
+    return;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype === Object.prototype || prototype === null) {
+    Object.values(value).forEach((item) =>
+      collectShaderModules(item, modules, seen)
+    );
+  }
+}
+
+function formatShaderCompilationMessage(message) {
+  const line = Number(message?.lineNum) || 0;
+  const column = Number(message?.linePos) || 0;
+  const location = line
+    ? ` at WGSL line ${line}${column ? `, column ${column}` : ""}`
+    : "";
+  return `Shader compilation ${message?.type || "error"}${location}: ${
+    message?.message || "Shader compilation failed."
+  }`;
+}
+
 export class ShaderHost {
   constructor(canvas, { onError, onStatus } = {}) {
     this.canvas = canvas;
@@ -74,6 +110,7 @@ export class ShaderHost {
     this.startTime = 0;
     this.lastTime = 0;
     this._playbackGeneration = 0;
+    this._shaderCompilationErrorMessage = null;
     this._pointerSurface = null;
     this._mouseResetId = 0;
     this._loopBound = this._loop.bind(this);
@@ -116,7 +153,14 @@ export class ShaderHost {
     });
 
     this.device.addEventListener("uncapturederror", (e) => {
-      this.onError(String(e.error && e.error.message ? e.error.message : e.error));
+      const message = String(e.error?.message || e.error);
+      if (
+        this._shaderCompilationErrorMessage &&
+        /\[Invalid (?:RenderPipeline|CommandBuffer)/.test(message)
+      ) {
+        return;
+      }
+      this.onError(message);
     });
     this.device.lost.then((info) => {
       if (info.reason !== "destroyed") {
@@ -1180,6 +1224,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
   ) {
     this._playbackGeneration += 1;
+    this._shaderCompilationErrorMessage = null;
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);
@@ -1209,18 +1254,56 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     } catch (err) {
       jsError = err && err.message ? err.message : String(err);
     }
+    const shaderCompilationError = await this._shaderCompilationError();
     const gpuError = await this.device.popErrorScope();
 
     if (jsError) {
+      this._disableRejectedModule();
       this.onError(jsError);
       return false;
     }
+    if (shaderCompilationError) {
+      this._shaderCompilationErrorMessage = shaderCompilationError;
+      this._disableRejectedModule();
+      this.onError(shaderCompilationError);
+      return false;
+    }
     if (gpuError) {
+      this._disableRejectedModule();
       this.onError(gpuError.message);
       return false;
     }
     this.onError(null);
     return true;
+  }
+
+  _disableRejectedModule() {
+    this.running = false;
+    this._playbackGeneration += 1;
+    if (this.rafId) cancelAnimationFrame(this.rafId);
+    this.rafId = 0;
+    this._cancelVideoFrameCallback();
+    this.setupFn = null;
+    this.renderFn = null;
+  }
+
+  async _shaderCompilationError() {
+    const modules = [];
+    collectShaderModules(this.frame.state, modules, new Set());
+    const errors = [];
+    for (const module of modules) {
+      try {
+        const info = await module.getCompilationInfo();
+        for (const message of info?.messages || []) {
+          if (message?.type === "error") {
+            errors.push(formatShaderCompilationMessage(message));
+          }
+        }
+      } catch {
+        // Older implementations may expose the method without supporting it.
+      }
+    }
+    return errors.length ? errors.join("\n") : null;
   }
 
   resetShaderState({ present = true } = {}) {

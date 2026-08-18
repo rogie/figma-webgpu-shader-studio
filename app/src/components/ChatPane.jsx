@@ -44,6 +44,7 @@ import {
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
 import { toApiMessages } from "../lib/chatPayload.js";
+import { splitComposerPaste } from "../lib/pastedText.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import {
   listAvailableProviderModels,
@@ -57,6 +58,7 @@ import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import UndoIcon from "./UndoIcon.jsx";
+import PastedText from "./PastedText.jsx";
 import UserAvatar from "./UserAvatar.jsx";
 import MarkdownProse from "./MarkdownProse.jsx";
 import PlanIcon from "./PlanIcon.jsx";
@@ -453,6 +455,27 @@ const ChatPane = forwardRef(function ChatPane(
   }, [messages]);
 
   useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const zoomMessageAttachment = (event) => {
+      if (event.target.closest(".fig-attachment-remove")) return;
+      const tile = event.target.closest("fig-chat-message fig-attachment");
+      if (!tile) return;
+      const previewUrl =
+        tile.getAttribute("src") || tile.getAttribute("data-preview");
+      if (!previewUrl) return;
+      setZoomedAttachment({
+        name: tile.getAttribute("name") || "Attachment",
+        kind: tile.getAttribute("data-kind") === "video" ? "video" : "image",
+        previewUrl,
+        source: "message",
+      });
+    };
+    list.addEventListener("click", zoomMessageAttachment);
+    return () => list.removeEventListener("click", zoomMessageAttachment);
+  }, []);
+
+  useEffect(() => {
     if (providerSupportsChatVideo(model.provider)) return;
     if (!attachments.some((attachment) => attachment.kind === "video")) return;
     setAttachments((current) =>
@@ -496,6 +519,7 @@ const ChatPane = forwardRef(function ChatPane(
 
   useEffect(() => {
     if (!zoomedAttachment) return;
+    if (zoomedAttachment.source === "message") return;
     if (attachments.includes(zoomedAttachment)) return;
     setZoomedAttachment(null);
   }, [attachments, zoomedAttachment]);
@@ -706,16 +730,25 @@ const ChatPane = forwardRef(function ChatPane(
     const currentAttachments = requestAttachments;
     if (options.ignoreAttachments !== true) setAttachments([]);
 
+    const split = text
+      ? await splitComposerPaste({ text })
+      : { content: "", pastes: [] };
+    const pastes = split.pastes || [];
+    const content =
+      pastes.length > 0
+        ? split.content
+        : text ||
+          (currentAttachments.length
+            ? `Attached: ${currentAttachments
+                .map((attachment) => attachment.name)
+                .join(", ")}`
+            : "");
+
     const userMessage = {
       role: "user",
       mode: requestMode,
-      content:
-        text ||
-        (currentAttachments.length
-          ? `Attached: ${currentAttachments
-              .map((attachment) => attachment.name)
-              .join(", ")}`
-          : ""),
+      content,
+      ...(pastes.length ? { pastes } : {}),
       attachments: currentAttachments.map(attachmentMeta),
       attachmentPreviews: currentAttachments.map(
         (attachment) => attachment.previewUrl || null
@@ -1193,37 +1226,39 @@ ${pendingPlan.content}
               (message.attachmentPreview ? [message.attachmentPreview] : []);
             return (
               <fig-chat-message key={index} from="user">
-                {messageAttachments.map((messageAttachment, attachmentIndex) => {
-                  const preview = attachmentPreviews[attachmentIndex];
-                  if (preview && messageAttachment.kind === "image") {
-                    return (
-                      <img
-                        key={attachmentIndex}
-                        className="chat-attachment-preview"
-                        src={preview}
-                        alt={messageAttachment.name || "Attachment"}
-                      />
-                    );
-                  }
-                  if (preview && messageAttachment.kind === "video") {
-                    return (
-                      <video
-                        key={attachmentIndex}
-                        className="chat-attachment-preview"
-                        src={preview}
-                        controls
-                        muted
-                      />
-                    );
-                  }
-                  return (
-                    <div key={attachmentIndex} className="chat-attachment-chip">
-                      {messageAttachment.kind === "video" ? "Video" : "Image"}:{" "}
-                      {messageAttachment.name}
-                    </div>
-                  );
-                })}
                 {message.content && <div className="chat-prose">{message.content}</div>}
+                {(message.pastes || []).map((paste, pasteIndex) => (
+                  <PastedText
+                    key={`${paste.language}:${pasteIndex}`}
+                    text={paste.text}
+                    language={paste.language}
+                    label={paste.label}
+                    nested={paste.nested}
+                  />
+                ))}
+                {messageAttachments.length > 0 && (
+                  <fig-attachments aria-label="Message attachments">
+                    {messageAttachments.map((messageAttachment, attachmentIndex) => {
+                      const preview = attachmentPreviews[attachmentIndex];
+                      return (
+                        <fig-attachment
+                          key={`${messageAttachment.name}:${attachmentIndex}`}
+                          src={
+                            messageAttachment.kind === "image" && preview
+                              ? preview
+                              : undefined
+                          }
+                          name={messageAttachment.name || "Attachment"}
+                          value={String(attachmentIndex)}
+                          removable="false"
+                          data-kind={messageAttachment.kind}
+                          data-preview={preview || undefined}
+                          dangerouslySetInnerHTML={{ __html: "" }}
+                        />
+                      );
+                    })}
+                  </fig-attachments>
+                )}
                 <UserAvatar
                   name={user ? userName : ANON_YOU_LABEL}
                   tooltip={user ? userName : ANON_YOU_LABEL}

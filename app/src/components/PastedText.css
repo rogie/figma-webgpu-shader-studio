@@ -1,4 +1,4 @@
-.streaming-code-block {
+.pasted-text {
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -6,54 +6,45 @@
   color: var(--figma-color-text);
   border-radius: var(--radius-medium);
 
-  &[open]:not([open="false"]),
-  &[data-pending="true"] {
+  &[open]:not([open="false"]) {
     outline: 1px solid var(--figma-color-bordertranslucent);
     outline-offset: -1px;
   }
 
-  &[data-pending="true"] .streaming-code-source {
-    overflow: hidden;
-  }
-
-  & .streaming-code-header {
+  & .pasted-text-header {
     background: var(--figma-color-bg-secondary);
   }
 
-  &[data-incomplete="true"],
-  &[data-incomplete="true"][open]:not([open="false"]) {
-    outline: 1px solid var(--figma-color-border-danger);
-    outline-offset: -1px;
+  & .pasted-text-title {
+    gap: 0.35em;
   }
 
-  &[data-incomplete="true"] .streaming-code-header {
-    color: var(--figma-color-text-danger);
-    background: var(--figma-color-bg-danger-tertiary);
+  & .pasted-text-extension {
+    color: var(--figma-color-text-tertiary);
+    font-weight: normal;
+    text-transform: uppercase;
+    font-variant: small-caps;
+    font-weight: var(--font-weight-medium);
+    font-size: 0.5rem;
+    vertical-align: middle;
+    line-height: 1;
+    height: 1rem;
+    display: inline-flex;
+    align-items: center;
+    white-space: nowrap;
+    justify-content: center;
+    padding: 0 0.25rem;
+    background-color: var(--figma-color-bg);
+    border-radius: var(--radius-small);
   }
 
-  & fig-spinner.streaming-code-status {
-    color: var(--figma-color-text-secondary);
-  }
-
-  & .streaming-code-status[name="checkmark"] {
+  & .pasted-text-status {
     margin: var(--spacer-1);
     margin-right: calc(-1 * var(--spacer-2));
     color: var(--figma-color-text-tertiary);
   }
 
-  & .streaming-code-status[name="hidden"] {
-    color: var(--figma-color-text-tertiary);
-  }
-
-  & .streaming-code-status[name="warning"] {
-    color: var(--figma-color-text-danger);
-  }
-
-  & .streaming-code-status {
-    margin-right: calc(-1 * var(--spacer-2));
-  }
-
-  & .streaming-code-source {
+  & .pasted-text-source {
     max-height: 8rem;
     margin: 0;
     padding: var(--spacer-2) var(--spacer-3) var(--spacer-3);
@@ -117,21 +108,5 @@
   & .tok-invalid {
     color: var(--figma-color-text-danger);
     text-decoration: underline wavy;
-  }
-
-  & .streaming-code-cursor {
-    display: inline-block;
-    width: 1px;
-    height: var(--line-height);
-    margin-left: 1px;
-    vertical-align: text-bottom;
-    background: var(--figma-color-text);
-    animation: streaming-code-cursor-blink 900ms steps(1, end) infinite;
-  }
-}
-
-@keyframes streaming-code-cursor-blink {
-  50% {
-    opacity: 0;
   }
 }

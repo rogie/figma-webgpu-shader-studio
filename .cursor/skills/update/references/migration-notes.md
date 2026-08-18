@@ -105,6 +105,11 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 
 - Patch-only: `fig-editor.css` / `components.css` add `h3 { margin: 0 0 var(--spacer-1) 0; }` on an editor control surface. No README/API changes; no app wiring required.
 
+## 8.9.3 notes
+
+- `fig-chat-message` is now a column flex container with `gap: var(--spacer-2-5)` and even `padding: var(--spacer-2-5)` on user messages. Extra top margins on `.pasted-text`, `.streaming-code-block`, and `fig-chat-message > fig-attachments` would stack on that gap — keep those children at `margin: 0`.
+- No README/JS API changes. Avatar positioning still uses `> fig-avatar`; this app wraps avatars in `fig-tooltip`, so the existing chat.css override remains required.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

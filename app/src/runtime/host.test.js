@@ -740,3 +740,53 @@ test("capture lock defers adaptive size and shader reset together", () => {
   assert.equal(host.frame.renderScale, 2);
   assert.equal(resets, 1);
 });
+
+test("shader compilation diagnostics replace generic command buffer errors", async () => {
+  const host = makeHost();
+  let reportedError = null;
+  host.onError = (message) => {
+    reportedError = message;
+  };
+  host.device = {
+    limits: { maxTextureDimension2D: 8192 },
+    pushErrorScope() {},
+    async popErrorScope() {
+      return {
+        message:
+          "[Invalid CommandBuffer] is invalid. - While calling [Queue].Submit([[Invalid CommandBuffer]])",
+      };
+    },
+  };
+  host.context = {
+    getCurrentTexture() {
+      return {};
+    },
+  };
+  host._present = () => {};
+
+  const ok = await host.setModule({
+    setup(_device, frame) {
+      frame.state.shaderModule = {
+        async getCompilationInfo() {
+          return {
+            messages: [
+              {
+                type: "error",
+                message: "'active' is a reserved keyword",
+                lineNum: 37,
+                linePos: 11,
+              },
+            ],
+          };
+        },
+      };
+    },
+    render() {},
+  });
+
+  assert.equal(ok, false);
+  assert.equal(
+    reportedError,
+    "Shader compilation error at WGSL line 37, column 11: 'active' is a reserved keyword"
+  );
+});

@@ -6,6 +6,7 @@ import {
   buildChatRequest,
   createChatSseParser,
   toApiMessages,
+  userContentForApi,
 } from "../src/lib/chatPayload.js";
 import { buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
 
@@ -27,6 +28,33 @@ before(async () => {
 
 after(async () => {
   await vite?.close();
+});
+
+test("user pastes are fenced back into API history", () => {
+  const messages = toApiMessages([
+    {
+      role: "user",
+      content: "Change the clamp function to:",
+      pastes: [
+        {
+          language: "typescript",
+          text: "export function clamp(value: number) {\n  return value;\n}",
+        },
+      ],
+    },
+    { role: "assistant", content: "Updated." },
+  ]);
+
+  assert.match(messages[0].content, /Change the clamp function to:/);
+  assert.match(messages[0].content, /```typescript/);
+  assert.match(messages[0].content, /export function clamp/);
+  assert.equal(
+    userContentForApi({
+      content: "",
+      pastes: [{ language: "text", text: "plain" }],
+    }),
+    "```\nplain\n```"
+  );
 });
 
 test("current attachment payloads reach the final user message intact", () => {

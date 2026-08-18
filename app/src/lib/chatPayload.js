@@ -1,3 +1,18 @@
+/** Reattach extracted pastes so the model still sees the code. */
+export function userContentForApi(message) {
+  const pastes = Array.isArray(message?.pastes) ? message.pastes : [];
+  const fences = pastes
+    .filter((paste) => typeof paste?.text === "string" && paste.text.trim())
+    .map((paste) => {
+      const lang = paste.language && paste.language !== "text" ? paste.language : "";
+      return `\`\`\`${lang}\n${paste.text}\n\`\`\``;
+    });
+  const body = String(message?.content || "").trim();
+  if (fences.length && body) return `${body}\n\n${fences.join("\n\n")}`;
+  if (fences.length) return fences.join("\n\n");
+  return message?.content;
+}
+
 /**
  * Build provider-neutral history, attaching base64 media only to the current
  * user message. Persisted history intentionally contains metadata only.
@@ -18,7 +33,8 @@ export function toApiMessages(messages, pendingAttachments = []) {
       const isLast = index === list.length - 1;
       const api = {
         role: message.role,
-        content: message.content,
+        content:
+          message.role === "user" ? userContentForApi(message) : message.content,
       };
       if (
         isLast &&
@@ -36,8 +52,8 @@ export function toApiMessages(messages, pendingAttachments = []) {
           message.attachments ||
           (message.attachment ? [message.attachment] : []);
         if (persistedAttachments.length === 0) return api;
-        api.content = message.content?.trim()
-          ? message.content
+        api.content = String(api.content || "").trim()
+          ? api.content
           : `Attached: ${persistedAttachments
               .map((attachment) => attachment.name)
               .join(", ")}`;
