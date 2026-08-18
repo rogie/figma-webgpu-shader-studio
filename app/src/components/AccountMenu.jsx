@@ -47,6 +47,7 @@ export default function AccountMenu({
     user,
     loading,
     configured,
+    signInWithFigma,
     signInWithGitHub,
     signOut,
   } = useAuth();
@@ -56,7 +57,9 @@ export default function AccountMenu({
   const themeControlRef = useRef(null);
   const pixelRatioControlRef = useRef(null);
   const canvasThemeControlRef = useRef(null);
-  const [sending, setSending] = useState(false);
+  const [sending, setSending] = useState(
+    /** @type {"" | "figma" | "github"} */ ("")
+  );
   const [error, setError] = useState("");
   const [openaiKey, setOpenaiKey] = useState(() => getProviderKeys().openai);
   const [anthropicKey, setAnthropicKey] = useState(
@@ -194,16 +197,15 @@ export default function AccountMenu({
     setError("");
   };
 
-  const submit = async (event) => {
-    event.preventDefault();
-    setSending(true);
+  const signIn = async (provider) => {
+    setSending(provider);
     setError("");
     try {
-      await signInWithGitHub();
+      if (provider === "figma") await signInWithFigma();
+      else await signInWithGitHub();
     } catch (authError) {
       setError(authError.message || String(authError));
-    } finally {
-      setSending(false);
+      setSending("");
     }
   };
 
@@ -350,20 +352,36 @@ export default function AccountMenu({
         onCancel={close}
       >
         <fig-header>
-          <h3>Sign in with GitHub</h3>
+          <h3>Sign in</h3>
         </fig-header>
-        <form onSubmit={submit}>
+        <fig-content>
+          <p>
+            Use a Figma or GitHub account with a verified @figma.com email.
+          </p>
           {error && <p className="form-message error">{error}</p>}
-          <fig-footer borderless>
-            <fig-button
-              type="submit"
-              variant="primary"
-              disabled={sending || !configured}
-            >
-              {sending ? "Connecting…" : "Continue"}
-            </fig-button>
-          </fig-footer>
-        </form>
+        </fig-content>
+        <fig-footer borderless="">
+          <fig-button
+            type="button"
+            variant="primary"
+            disabled={sending || !configured ? "" : undefined}
+            onClick={() => {
+              signIn("figma").catch(() => {});
+            }}
+          >
+            {sending === "figma" ? "Connecting…" : "Sign in with Figma"}
+          </fig-button>
+          <fig-button
+            type="button"
+            variant="secondary"
+            disabled={sending || !configured ? "" : undefined}
+            onClick={() => {
+              signIn("github").catch(() => {});
+            }}
+          >
+            {sending === "github" ? "Connecting…" : "Sign in with GitHub"}
+          </fig-button>
+        </fig-footer>
       </dialog>
       <dialog
         is="fig-popup"

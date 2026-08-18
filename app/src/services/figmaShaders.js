@@ -4,7 +4,7 @@ import {
   getFigmaOAuthSession,
   setFigmaOAuthSession,
 } from "../lib/figmaAccessToken.js";
-import { isSupabaseConfigured } from "../lib/supabase.js";
+import { isSupabaseConfigured, supabase } from "../lib/supabase.js";
 import { buildFigmaShaderPackage } from "../runtime/exportFigma.js";
 import {
   createFigmaShader,
@@ -196,7 +196,49 @@ export function isFigmaOAuthCallback() {
   }
 }
 
-export async function beginFigmaOAuth() {
+async function establishFigmaStudioSession(auth) {
+  if (!supabase) {
+    throw new FigmaShadersError(
+      "Supabase is not configured, so Figma sign-in cannot start a session.",
+      { code: "figma_session_missing" }
+    );
+  }
+  const accessToken =
+    typeof auth?.accessToken === "string" ? auth.accessToken : "";
+  const refreshToken =
+    typeof auth?.refreshToken === "string" ? auth.refreshToken : "";
+  if (!accessToken || !refreshToken) {
+    throw new FigmaShadersError(
+      "Figma connected, but Shader Studio did not return a session. Deploy the updated figma-shaders function and try again.",
+      { code: "figma_session_missing" }
+    );
+  }
+  const { error } = await supabase.auth.setSession({
+    access_token: accessToken,
+    refresh_token: refreshToken,
+  });
+  if (error) {
+    throw new FigmaShadersError(
+      error.message || "Could not finish Figma sign-in.",
+      { code: "figma_session_verify_failed" }
+    );
+  }
+}
+
+export function peekFigmaOAuthIntent() {
+  try {
+    const pending = JSON.parse(sessionStorage.getItem(OAUTH_PENDING_KEY) || "null");
+    return pending?.intent === "signin" ? "signin" : "connect";
+  } catch {
+    return "connect";
+  }
+}
+
+/**
+ * @param {{ intent?: "signin" | "connect" }} [options]
+ */
+export async function beginFigmaOAuth(options = {}) {
+  const intent = options.intent === "signin" ? "signin" : "connect";
   const state = randomBase64Url();
   const verifier = randomBase64Url(48);
   const codeChallenge = await sha256Base64Url(verifier);
@@ -205,6 +247,7 @@ export async function beginFigmaOAuth() {
     JSON.stringify({
       state,
       verifier,
+      intent,
       returnUrl:
         window.location.pathname + window.location.search + window.location.hash,
     })
@@ -214,6 +257,7 @@ export async function beginFigmaOAuth() {
     redirectUri: callbackUrl(),
     state,
     codeChallenge,
+    intent,
   });
   if (typeof payload.authorizationUrl !== "string") {
     throw new FigmaShadersError("Figma authorization URL was not returned.", {
@@ -249,11 +293,13 @@ async function exchangeFigmaOAuthCallback() {
   }
 
   try {
+    const intent = pending.intent === "signin" ? "signin" : "connect";
     const payload = await callFigmaShadersRaw({
       op: "oauth-exchange",
       code,
       codeVerifier: pending.verifier,
       redirectUri: callbackUrl(),
+      intent,
     });
     setFigmaOAuthSession({
       accessToken: payload.accessToken,
@@ -261,6 +307,10 @@ async function exchangeFigmaOAuthCallback() {
       expiresIn: payload.expiresIn,
       userId: payload.userId,
     });
+    if (intent === "signin") {
+      await establishFigmaStudioSession(payload.auth);
+    }
+    payload.intent = intent;
     const basePath = new URL(import.meta.env.BASE_URL, window.location.origin)
       .pathname;
     const returnUrl =

@@ -53,6 +53,17 @@ type RequestBody = {
   code?: string;
   codeVerifier?: string;
   refreshToken?: string;
+  intent?: string;
+};
+
+type OAuthIntent = "signin" | "connect";
+
+type FigmaIdentity = {
+  email: string;
+  handle?: string;
+  name?: string;
+  avatarUrl?: string;
+  figmaUserId?: string;
 };
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
@@ -95,6 +106,357 @@ function allowedRedirectUris(): string[] {
     .map((value) => value.trim())
     .filter(Boolean);
   return configured?.length ? configured : DEFAULT_REDIRECT_URIS;
+}
+
+function readIntent(value?: string): OAuthIntent {
+  return value === "signin" ? "signin" : "connect";
+}
+
+function oauthScope(_intent: OAuthIntent): string {
+  // Both connect and sign-in use the MCP token; identity comes from the MCP
+  // `whoami` tool, so no extra REST scope is required.
+  return FIGMA_MCP_SCOPE;
+}
+
+function isFigmaEmail(email: string): boolean {
+  return /^[^@]+@figma\.com$/i.test(email.trim());
+}
+
+function stringField(
+  value: unknown,
+  ...keys: string[]
+): string | undefined {
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    for (const key of keys) {
+      const next = record[key];
+      if (typeof next === "string" && next.trim()) return next.trim();
+    }
+  }
+  return undefined;
+}
+
+function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  try {
+    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, "="));
+    const claims = JSON.parse(json);
+    return claims && typeof claims === "object"
+      ? claims as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function identityFromPayload(
+  payload: Record<string, unknown>,
+  fallbackUserId?: string,
+): FigmaIdentity | null {
+  const email = stringField(payload, "email") ||
+    stringField(payload.user, "email");
+  if (!email) return null;
+  return {
+    email,
+    handle: stringField(payload, "handle", "username") ||
+      stringField(payload.user, "handle", "username"),
+    name: stringField(payload, "name", "handle") ||
+      stringField(payload.user, "name", "handle"),
+    avatarUrl: stringField(payload, "img_url", "avatar_url", "picture") ||
+      stringField(payload.user, "img_url", "avatar_url", "picture"),
+    figmaUserId: stringField(payload, "id", "user_id", "user_id_string") ||
+      stringField(payload.user, "id") ||
+      fallbackUserId,
+  };
+}
+
+async function fetchFigmaIdentity(
+  accessToken: string,
+  fallbackUserId?: string,
+): Promise<FigmaIdentity> {
+  // The sign-in token is an MCP token (audience-bound to the MCP server), so it
+  // cannot call the Figma REST API. The MCP `whoami` tool returns the same
+  // identity (handle, email) using the token we already hold.
+  let lastError = "";
+  try {
+    const client = new McpClient(accessToken);
+    const result = await client.callTool("whoami");
+    const payload = extractToolPayload(result);
+    const identity = identityFromPayload(payload, fallbackUserId);
+    if (identity) return identity;
+    lastError = "Figma whoami did not include an email address.";
+  } catch (error) {
+    lastError = (error as { message?: string })?.message ||
+      "Figma whoami request failed.";
+  }
+
+  const fromJwt = identityFromPayload(
+    decodeJwtClaims(accessToken) || {},
+    fallbackUserId,
+  );
+  if (fromJwt) return fromJwt;
+
+  throw Object.assign(
+    new Error(
+      lastError ||
+        "Figma did not return an email from the MCP whoami tool.",
+    ),
+    { code: "figma_identity_unavailable", status: 502 },
+  );
+}
+
+function requireFigmaEmployee(identity: FigmaIdentity): FigmaIdentity {
+  if (!isFigmaEmail(identity.email)) {
+    throw Object.assign(
+      new Error("Use a Figma account with a verified @figma.com email."),
+      { code: "figma_email_not_allowed", status: 403 },
+    );
+  }
+  return identity;
+}
+
+function adminHeaders(serviceKey: string): Record<string, string> {
+  return {
+    Authorization: `Bearer ${serviceKey}`,
+    apikey: serviceKey,
+    "Content-Type": "application/json",
+  };
+}
+
+type MintedSession = {
+  accessToken: string;
+  refreshToken: string;
+  email: string;
+};
+
+function randomPassword(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+
+async function readJson(
+  response: Response,
+): Promise<Record<string, unknown>> {
+  return await response.json().catch(() => ({})) as Record<string, unknown>;
+}
+
+async function lookupUserIdByEmail(
+  supabaseUrl: string,
+  headers: Record<string, string>,
+  email: string,
+): Promise<string | undefined> {
+  const byEmail = await fetch(
+    `${supabaseUrl}/auth/v1/admin/users?email=${encodeURIComponent(email)}`,
+    { headers },
+  );
+  const payload = await readJson(byEmail);
+  const direct = stringField(payload, "id");
+  if (direct) return direct;
+  const user = payload.user && typeof payload.user === "object"
+    ? payload.user as Record<string, unknown>
+    : null;
+  if (user) return stringField(user, "id");
+  const users = Array.isArray(payload.users) ? payload.users : [];
+  for (const entry of users) {
+    if (!entry || typeof entry !== "object") continue;
+    const record = entry as Record<string, unknown>;
+    if (stringField(record, "email")?.toLowerCase() === email.toLowerCase()) {
+      return stringField(record, "id");
+    }
+  }
+
+  const linkResponse = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ type: "magiclink", email }),
+  });
+  const link = await readJson(linkResponse);
+  const nested = link.user && typeof link.user === "object"
+    ? link.user as Record<string, unknown>
+    : link;
+  return stringField(nested, "id");
+}
+
+async function mintSupabaseSession(
+  identity: FigmaIdentity,
+): Promise<MintedSession> {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")?.replace(/\/$/, "") || "";
+  const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")?.trim() || "";
+  if (!supabaseUrl || !serviceKey) {
+    throw Object.assign(new Error("Supabase admin is not configured."), {
+      code: "supabase_admin_not_configured",
+      status: 503,
+    });
+  }
+
+  const headers = adminHeaders(serviceKey);
+  // Only include fields we actually have so merging onto an existing account
+  // (e.g. one created via GitHub) never overwrites good values with empties.
+  const userMetadata: Record<string, string> = {};
+  const displayName = identity.name || identity.handle || "";
+  if (displayName) {
+    userMetadata.full_name = displayName;
+    userMetadata.name = displayName;
+  }
+  if (identity.handle) {
+    userMetadata.user_name = identity.handle;
+    userMetadata.preferred_username = identity.handle;
+  }
+  if (identity.avatarUrl) {
+    userMetadata.avatar_url = identity.avatarUrl;
+    userMetadata.picture = identity.avatarUrl;
+  }
+  if (identity.figmaUserId) {
+    userMetadata.figma_user_id = identity.figmaUserId;
+  }
+
+  // Lookup-first so a verified @figma.com email maps to a single Shader Studio
+  // user, no matter whether Figma or GitHub signed in first. Only create when
+  // no account exists yet.
+  let userId = await lookupUserIdByEmail(supabaseUrl, headers, identity.email);
+  let existingApp: Record<string, unknown> = {};
+  let existingMeta: Record<string, unknown> = {};
+
+  if (userId) {
+    const existing = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+      headers,
+    });
+    const existingPayload = await readJson(existing);
+    existingApp =
+      existingPayload.app_metadata &&
+        typeof existingPayload.app_metadata === "object"
+        ? existingPayload.app_metadata as Record<string, unknown>
+        : {};
+    existingMeta =
+      existingPayload.user_metadata &&
+        typeof existingPayload.user_metadata === "object"
+        ? existingPayload.user_metadata as Record<string, unknown>
+        : {};
+  } else {
+    const created = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        email: identity.email,
+        email_confirm: true,
+        user_metadata: userMetadata,
+        app_metadata: {
+          provider: "figma",
+          providers: ["figma"],
+          figma_user_id: identity.figmaUserId,
+        },
+      }),
+    });
+    const createdPayload = await readJson(created);
+
+    if (!created.ok && created.status !== 422) {
+      const message =
+        stringField(createdPayload, "msg", "message", "error") ||
+        `Could not create Shader Studio account (${created.status})`;
+      throw Object.assign(new Error(message), {
+        code: "supabase_user_create_failed",
+        status: created.status >= 400 && created.status < 600
+          ? created.status
+          : 502,
+      });
+    }
+
+    userId = stringField(createdPayload, "id");
+    if (!userId) {
+      // A concurrent sign-in may have created the row (422): re-resolve by email.
+      userId = await lookupUserIdByEmail(supabaseUrl, headers, identity.email);
+    } else {
+      existingApp =
+        createdPayload.app_metadata &&
+          typeof createdPayload.app_metadata === "object"
+          ? createdPayload.app_metadata as Record<string, unknown>
+          : {};
+      existingMeta =
+        createdPayload.user_metadata &&
+          typeof createdPayload.user_metadata === "object"
+          ? createdPayload.user_metadata as Record<string, unknown>
+          : {};
+    }
+  }
+
+  if (!userId) {
+    throw Object.assign(
+      new Error("Could not find a Shader Studio user for this Figma account."),
+      { code: "supabase_user_missing", status: 502 },
+    );
+  }
+
+  // Append "figma" to the provider list without clobbering GitHub or any other
+  // provider already linked to this user by the same verified email.
+  const providers = Array.isArray(existingApp.providers)
+    ? existingApp.providers.filter((value): value is string =>
+      typeof value === "string"
+    )
+    : [];
+  if (!providers.includes("figma")) providers.push("figma");
+  const password = randomPassword();
+  const updated = await fetch(`${supabaseUrl}/auth/v1/admin/users/${userId}`, {
+    method: "PUT",
+    headers,
+    body: JSON.stringify({
+      email_confirm: true,
+      password,
+      user_metadata: { ...existingMeta, ...userMetadata },
+      app_metadata: {
+        ...existingApp,
+        providers,
+        figma_user_id: identity.figmaUserId,
+      },
+    }),
+  });
+  if (!updated.ok) {
+    const payload = await readJson(updated);
+    const message =
+      stringField(payload, "msg", "message", "error") ||
+      "Could not update the Shader Studio account.";
+    throw Object.assign(new Error(message), {
+      code: "supabase_user_update_failed",
+      status: 502,
+    });
+  }
+
+  const tokenResponse = await fetch(
+    `${supabaseUrl}/auth/v1/token?grant_type=password`,
+    {
+      method: "POST",
+      headers: {
+        ...headers,
+        Authorization: `Bearer ${serviceKey}`,
+      },
+      body: JSON.stringify({
+        email: identity.email,
+        password,
+      }),
+    },
+  );
+  const session = await readJson(tokenResponse);
+  const accessToken = stringField(session, "access_token");
+  const refreshToken = stringField(session, "refresh_token");
+  if (!tokenResponse.ok || !accessToken || !refreshToken) {
+    const message =
+      stringField(session, "error_description", "msg", "message", "error") ||
+      "Could not create a Shader Studio session.";
+    throw Object.assign(new Error(message), {
+      code: "supabase_session_failed",
+      status: 502,
+    });
+  }
+
+  return {
+    accessToken,
+    refreshToken,
+    email: identity.email,
+  };
 }
 
 function requireRedirectUri(value?: string): string {
@@ -505,6 +867,7 @@ Deno.serve(async (req) => {
       const redirectUri = requireRedirectUri(body.redirectUri);
       const state = body.state?.trim() || "";
       const codeChallenge = body.codeChallenge?.trim() || "";
+      const intent = readIntent(body.intent);
       if (!state || !codeChallenge) {
         return jsonResponse(400, {
           error: "state and codeChallenge are required",
@@ -514,7 +877,7 @@ Deno.serve(async (req) => {
       const url = new URL(FIGMA_OAUTH_AUTHORIZE);
       url.searchParams.set("client_id", clientId);
       url.searchParams.set("redirect_uri", redirectUri);
-      url.searchParams.set("scope", FIGMA_MCP_SCOPE);
+      url.searchParams.set("scope", oauthScope(intent));
       url.searchParams.set("state", state);
       url.searchParams.set("response_type", "code");
       url.searchParams.set("code_challenge", codeChallenge);
@@ -547,7 +910,22 @@ Deno.serve(async (req) => {
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
       });
-      return jsonResponse(200, tokens);
+      const intent = readIntent(body.intent);
+      if (intent !== "signin") {
+        return jsonResponse(200, { ...tokens, intent });
+      }
+      const identity = requireFigmaEmployee(
+        await fetchFigmaIdentity(
+          tokens.accessToken as string,
+          typeof tokens.userId === "string" ? tokens.userId : undefined,
+        ),
+      );
+      const auth = await mintSupabaseSession(identity);
+      return jsonResponse(200, {
+        ...tokens,
+        intent,
+        auth,
+      });
     } catch (error) {
       const err = error as { message?: string; code?: string; status?: number };
       return jsonResponse(err.status || 502, {

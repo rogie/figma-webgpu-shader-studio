@@ -867,13 +867,18 @@ dialog[is="fig-popup"].settings-popup {
 }
 
 dialog[is="fig-popup"].auth-popup {
-  width: 180px;
+  width: 280px;
   padding: 0;
   animation: none !important;
   transition: none !important;
 
-  form {
-    display: contents;
+  fig-content p {
+    margin: 0;
+    color: var(--figma-color-text-secondary);
+  }
+
+  fig-footer {
+    flex-wrap: wrap;
   }
 }
 

@@ -1,8 +1,16 @@
 import { useEffect, useState } from "react";
-import { completeFigmaOAuthCallback } from "../services/figmaShaders.js";
+import {
+  completeFigmaOAuthCallback,
+  peekFigmaOAuthIntent,
+} from "../services/figmaShaders.js";
 
 export default function FigmaOAuthCallback() {
   const [error, setError] = useState("");
+  const [status] = useState(() =>
+    peekFigmaOAuthIntent() === "signin"
+      ? "Finishing Figma sign-in…"
+      : "Finishing your Figma connection…"
+  );
 
   useEffect(() => {
     let active = true;
@@ -29,7 +37,7 @@ export default function FigmaOAuthCallback() {
       }}
     >
       <div role={error ? "alert" : "status"}>
-        {error || "Finishing your Figma connection…"}
+        {error || status}
       </div>
     </main>
   );

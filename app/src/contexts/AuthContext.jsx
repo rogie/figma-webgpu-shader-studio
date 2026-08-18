@@ -7,6 +7,7 @@ import {
   useState,
 } from "react";
 import { isSupabaseConfigured, supabase } from "../lib/supabase.js";
+import { beginFigmaOAuth } from "../services/figmaShaders.js";
 
 const AuthContext = createContext(null);
 
@@ -72,6 +73,11 @@ export function AuthProvider({ children }) {
     if (error) throw error;
   }, []);
 
+  const signInWithFigma = useCallback(async () => {
+    if (!supabase) throw new Error("Supabase is not configured.");
+    await beginFigmaOAuth({ intent: "signin" });
+  }, []);
+
   const signOut = useCallback(async () => {
     if (!supabase) return;
     const { error } = await supabase.auth.signOut();
@@ -85,10 +91,11 @@ export function AuthProvider({ children }) {
       loading,
       configured: isSupabaseConfigured,
       sendMagicLink,
+      signInWithFigma,
       signInWithGitHub,
       signOut,
     }),
-    [session, loading, sendMagicLink, signInWithGitHub, signOut]
+    [session, loading, sendMagicLink, signInWithFigma, signInWithGitHub, signOut]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

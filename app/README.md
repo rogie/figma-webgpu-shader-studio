@@ -24,8 +24,8 @@ Open the printed URL. The interface mirrors the original `shader.gl` application
 
 ## Supabase setup
 
-The app uses Supabase Auth, Postgres, and Storage for GitHub accounts, cloud
-shaders, thumbnails, and input media.
+The app uses Supabase Auth, Postgres, and Storage for Figma and GitHub
+accounts, cloud shaders, thumbnails, and input media.
 
 1. Create or open the Supabase project.
 2. Run
@@ -37,11 +37,14 @@ shaders, thumbnails, and input media.
    - Redirect URLs:
      - `http://localhost:5173/**`
      - `https://shader-studio.pages.dev/**`
-4. Enable GitHub under **Authentication → Providers**.
+4. Enable GitHub under **Authentication → Providers**. Figma sign-in is handled
+   by the `figma-shaders` Edge Function (not a built-in Supabase provider).
 5. Apply
    [`../supabase/migrations/20260809232500_restrict_github_signups_to_figma.sql`](../supabase/migrations/20260809232500_restrict_github_signups_to_figma.sql)
-   and configure its function as the **Before User Created** Auth hook. This
-   restricts new GitHub users to verified `@figma.com` email addresses.
+   and
+   [`../supabase/migrations/20260818123000_allow_figma_oauth_signups.sql`](../supabase/migrations/20260818123000_allow_figma_oauth_signups.sql),
+   then keep that function as the **Before User Created** Auth hook. New GitHub
+   and Figma users must have a verified `@figma.com` email.
 
 Uploaded images and videos are limited to 25 MB in both the browser and
 Storage. The bucket remains private: its RLS policy permits owners to read
@@ -64,8 +67,9 @@ Configure the Pages Git integration with:
   `VITE_SUPABASE_PUBLISHABLE_KEY`
 
 Cloudflare Access protects the production hostname and preview deployments.
-The application policy allows GitHub login only when the identity provider
-returns an `@figma.com` email address.
+That edge policy is still GitHub-only (`@figma.com`). In-app sign-in can use
+Figma or GitHub; people without GitHub still need Access to be opened or
+bypass-listed before they can reach the Figma sign-in button.
 
 The home view lives at `/`. Open shaders use `/shader/<id>` (preset id or saved
 shader id). Legacy single-segment links like `/dither` still load.
@@ -137,7 +141,23 @@ supabase functions deploy figma-shaders
 
 The browser uses authorization code + PKCE. The Edge Function performs token
 exchange and refresh so the client secret is never included in the frontend
-bundle. The OAuth client must be approved for the `mcp:connect` scope.
+bundle. The OAuth client must be approved for `mcp:connect`. Sign-in uses that
+same scope: the account email comes from the MCP `whoami` tool (called with the
+`mcp:connect` token), so no REST scope such as `current_user:read` is required.
+
+**Sign in with Figma** reuses this PKCE callback. After token exchange the Edge
+Function calls the MCP `whoami` tool for the account identity, requires an
+`@figma.com` email, upserts the Supabase user, and returns a minted Supabase
+session (access + refresh tokens) that the client applies via
+`supabase.auth.setSession`. The Figma MCP tokens themselves stay on-device for
+the shader library. **Connect to Figma** in Settings only stores those tokens
+and does not change the Shader Studio session.
+
+Accounts are keyed by the verified `@figma.com` email: one email maps to one
+Shader Studio user. Signing in with Figma and GitHub using the same address
+lands on the same account (GitHub is auto-linked by Supabase; Figma sign-in
+looks the user up by email and appends `figma` to `app_metadata.providers`
+without overwriting GitHub).
 
 ## Notes / limitations
 
