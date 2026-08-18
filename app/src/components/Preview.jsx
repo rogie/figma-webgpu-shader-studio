@@ -20,7 +20,6 @@ function clampZoom(zoom) {
 
 function Preview({
   canvasRef,
-  uploading,
   props,
   values,
   onControlInput,
@@ -33,10 +32,12 @@ function Preview({
   onPointerSurface,
   inputSource = "image",
   htmlInputRef,
+  canvasTheme = "light",
 }) {
   const stageRef = useRef(null);
   const [dragging, setDragging] = useState(false);
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [fitSize, setFitSize] = useState({ width: 0, height: 0 });
   const [overlayBox, setOverlayBox] = useState(null);
   const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
   const onZoomChangeRef = useRef(onZoomChange);
@@ -129,6 +130,22 @@ function Preview({
       });
       const canvasRect = canvas.getBoundingClientRect();
       const stageRect = stage.getBoundingClientRect();
+      const sourceWidth = Math.max(1, canvas.width || canvasRect.width);
+      const sourceHeight = Math.max(1, canvas.height || canvasRect.height);
+      const fitScale = Math.min(
+        stageRect.width / sourceWidth,
+        stageRect.height / sourceHeight
+      );
+      const nextFitSize = {
+        width: sourceWidth * fitScale,
+        height: sourceHeight * fitScale,
+      };
+      setFitSize((current) =>
+        Math.abs(current.width - nextFitSize.width) < 0.5 &&
+        Math.abs(current.height - nextFitSize.height) < 0.5
+          ? current
+          : nextFitSize
+      );
       if (canvasRect.width <= 0 || canvasRect.height <= 0) {
         setOverlayBox(null);
         return;
@@ -223,9 +240,14 @@ function Preview({
   };
 
   return (
-    <div
+    <fig-preview
       ref={stageRef}
-      className={`canvas-stage${dragging ? " is-dragging" : ""}`}
+      class={`canvas-stage canvas-stage--${canvasTheme}${
+        dragging ? " is-dragging" : ""
+      }`}
+      full=""
+      checkerboard=""
+      aspect-ratio="auto"
       onDrop={onDrop}
       onDragEnter={(e) => {
         e.preventDefault();
@@ -250,6 +272,8 @@ function Preview({
       <div
         className="canvas-frame"
         style={{
+          width: fitSize.width || undefined,
+          height: fitSize.height || undefined,
           transform: `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`,
         }}
       >
@@ -291,13 +315,7 @@ function Preview({
           <span>Use it as the shader input</span>
         </div>
       )}
-      {uploading && !dragging && (
-        <div className="upload-overlay">
-          <fig-spinner />
-          <span>Loading input…</span>
-        </div>
-      )}
-    </div>
+    </fig-preview>
   );
 }
 

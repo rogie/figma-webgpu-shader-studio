@@ -2,7 +2,11 @@
 // module contract (`setup(device, frame)` once, `render(device, frame)` per
 // animation frame). See skills/v3.md.tmpl for the frame field semantics.
 
-import { adaptiveRenderScale, cssSizeToDevicePixels } from "./dpi.js";
+import {
+  adaptiveRenderScale,
+  cssSizeToDevicePixels,
+  readPreviewPixelRatioMode,
+} from "./dpi.js";
 import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
@@ -27,6 +31,7 @@ export class ShaderHost {
     this.effectVisible = true;
     this.active = true;
     this.previewZoom = 1;
+    this.previewPixelRatioMode = readPreviewPixelRatioMode();
     this.logicalOutputSize = { width: 1, height: 1 };
     this.outputCssSize = null;
     this._zoomResizeTimer = 0;
@@ -88,7 +93,15 @@ export class ShaderHost {
         "WebGPU is not available in this browser. Use Chrome/Edge, or Safari Technology Preview."
       );
     }
-    const adapter = await navigator.gpu.requestAdapter();
+    let adapter = null;
+    try {
+      adapter = await navigator.gpu.requestAdapter({
+        powerPreference: "high-performance",
+      });
+    } catch {
+      // Older implementations may reject the preference option.
+    }
+    adapter ||= await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error("Failed to acquire a WebGPU adapter.");
     this.device = await adapter.requestDevice();
     this.format = navigator.gpu.getPreferredCanvasFormat();
@@ -215,7 +228,10 @@ export class ShaderHost {
   _applyAdaptiveOutputSize() {
     const base = this.logicalOutputSize;
     const deviceMax = this.device?.limits?.maxTextureDimension2D || 4096;
-    const renderScale = this.supportsRenderScale
+    // Supersampling is a paused-preview quality enhancement. While playback is
+    // active, render at the shader's logical size to avoid multiplying the
+    // per-frame pixel workload by up to 4× at 200% zoom.
+    const renderScale = this.supportsRenderScale && !this.running
       ? adaptiveRenderScale(this.previewZoom, base.width, base.height, {
           maxDimension: Math.min(4096, deviceMax),
         })
@@ -310,12 +326,31 @@ export class ShaderHost {
     }
   }
 
+  _previewPixelRatio() {
+    return this.previewPixelRatioMode === "1x" ? 1 : 2;
+  }
+
+  setPreviewPixelRatioMode(mode) {
+    const nextMode = mode === "1x" ? "1x" : "2x";
+    if (nextMode === this.previewPixelRatioMode) return false;
+    this.previewPixelRatioMode = nextMode;
+    if (!this.ready) return false;
+    if (this.isFill) {
+      return this.resizeFill(this.stageCssSize.width, this.stageCssSize.height);
+    }
+    if (this.htmlElement && this.htmlCssSize) {
+      return this._syncHtmlDpi();
+    }
+    return false;
+  }
+
   _syncHtmlDpi() {
     if (!this.htmlElement || !this.htmlCssSize) return false;
     const size = cssSizeToDevicePixels(
       this.htmlCssSize.width,
       this.htmlCssSize.height,
-      MAX_DIM
+      MAX_DIM,
+      this._previewPixelRatio()
     );
     if (
       this.inputTexture &&
@@ -326,7 +361,7 @@ export class ShaderHost {
     ) {
       return false;
     }
-    this._ensureInputTexture(size.width, size.height, {
+    const sizeChanged = this._ensureInputTexture(size.width, size.height, {
       width: size.cssWidth,
       height: size.cssHeight,
     });
@@ -336,11 +371,17 @@ export class ShaderHost {
     } catch {
       /* wait for paint */
     }
+    this._rebindAfterInputChange(sizeChanged, { resetState: true });
     return true;
   }
 
   setFillSize(cssWidth, cssHeight) {
-    const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
+    const size = cssSizeToDevicePixels(
+      cssWidth,
+      cssHeight,
+      MAX_DIM,
+      this._previewPixelRatio()
+    );
     return this._setLogicalOutputSize(size.width, size.height, {
       width: size.cssWidth,
       height: size.cssHeight,
@@ -545,7 +586,12 @@ export class ShaderHost {
       );
     this.htmlCssSize = { width: cssWidth, height: cssHeight };
     this._htmlFrameDirty = true;
-    const size = cssSizeToDevicePixels(cssWidth, cssHeight, MAX_DIM);
+    const size = cssSizeToDevicePixels(
+      cssWidth,
+      cssHeight,
+      MAX_DIM,
+      this._previewPixelRatio()
+    );
     const sizeChanged = this._ensureInputTexture(size.width, size.height, {
       width: size.cssWidth,
       height: size.cssHeight,
@@ -1194,6 +1240,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   start() {
     if (!this.renderFn) return;
     this.running = true;
+    const sizeChanged =
+      this.supportsRenderScale && this._applyAdaptiveOutputSize();
+    if (sizeChanged && this.ready) {
+      this.resetShaderState({ present: false });
+    }
     if (this.active && this.video) {
       this._videoFrameDirty = true;
       this._watchVideoFrames();
@@ -1237,6 +1288,12 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
+    const sizeChanged =
+      this.supportsRenderScale && this._applyAdaptiveOutputSize();
+    if (sizeChanged && this.ready && this.renderFn) {
+      this.resetShaderState();
+      return;
+    }
     if (this.ready && this.renderFn) this.redraw();
   }
 

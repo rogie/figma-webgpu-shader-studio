@@ -8,14 +8,17 @@ import {
   useState,
 } from "react";
 import AccountMenu from "./components/AccountMenu.jsx";
-import Controls from "./components/Controls.jsx";
+import AppToasts from "./components/AppToasts.jsx";
+import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
+import EmbedDialog from "./components/EmbedDialog.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
 import "./components/HomeNav.css";
 import Preview from "./components/Preview.jsx";
+import PreviewFps from "./components/PreviewFps.jsx";
 import ShaderList from "./components/ShaderList.jsx";
+import ShaderNavCard from "./components/ShaderNavCard.jsx";
 import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
 import UserAvatar from "./components/UserAvatar.jsx";
-import TrashIcon from "./components/TrashIcon.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
@@ -71,9 +74,54 @@ import {
 import { FIGMA_LIBRARY_UI_ENABLED } from "./lib/figmaLibraryUi.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
+  ACTIVE_DRAFT_STORAGE_KEY,
+  readDrafts as savedDrafts,
+  writeDrafts,
+} from "./lib/draftStorage.js";
+import { writeInputSource as persistInputSource } from "./lib/inputSourceStorage.js";
+import {
+  blobToDataUrl,
+  dataUrlToObjectUrl,
+  mediaType,
+  revokeObjectUrl as revokeThumbnailUrl,
+} from "./lib/mediaFiles.js";
+import { createRafCssWriter } from "./lib/panelResize.js";
+import {
+  CANVAS_THEME_STORAGE_KEY,
+  DEFAULT_APP_NAV_WIDTH,
+  DEFAULT_CHAT_HEIGHT,
+  defaultCodeWidth,
+  MAX_APP_NAV_WIDTH,
+  MIN_APP_NAV_WIDTH,
+  MIN_CHAT_HEIGHT,
+  MIN_CODE_EDITOR_HEIGHT,
+  MIN_CODE_WIDTH,
+  MIN_PREVIEW_HEIGHT,
+  MIN_PREVIEW_WIDTH,
+  MIN_STACKED_SIDEBAR,
+  PLAY_STORAGE_KEY,
+  readCanvasTheme as savedCanvasTheme,
+  readPlayState as savedPlayState,
+  readSidebarSections as savedSidebarSections,
+  readTheme as savedTheme,
+  SIDEBAR_SECTIONS_STORAGE_KEY,
+  THEME_STORAGE_KEY,
+} from "./lib/layoutStorage.js";
+import {
+  cloudChoiceId,
+  cloudIdForDraft,
+  figmaShaderLink,
+  isDraftId,
+  shaderContentFingerprint,
+} from "./lib/shaderIdentity.js";
+import {
   getFigmaShader,
   listAllFigmaShaders,
 } from "./services/figmaShaders.js";
+import { usePanelLayout } from "./hooks/usePanelLayout.js";
+import { useShaderPersistence } from "./hooks/useShaderPersistence.js";
+import { useShaderRuntime } from "./hooks/useShaderRuntime.js";
+import { useShaderSession } from "./hooks/useShaderSession.js";
 import {
   createShader,
   deleteShader,
@@ -99,8 +147,12 @@ import {
   uploadShaderPlan,
 } from "./services/shaders.js";
 
-const ChatPane = lazy(() => import("./components/ChatPane.jsx"));
 const CodePane = lazy(() => import("./components/CodePane.jsx"));
+const Controls = lazy(() => import("./components/Controls.jsx"));
+const HomeView = lazy(() => import("./components/HomeView.jsx"));
+const ShaderChatSection = lazy(
+  () => import("./components/ShaderChatSection.jsx"),
+);
 
 // FigUI3 builds light-DOM internals; a stable opaque marker keeps React from
 // wiping those nodes when the parent re-renders.
@@ -109,67 +161,11 @@ const opaqueContent = { __html: "" };
 const INITIAL = getPreset("dither");
 const INITIAL_MODULE = loadModule(INITIAL.source);
 const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
-const DEFAULT_APP_NAV_WIDTH = 240;
-const MIN_APP_NAV_WIDTH = 112;
-const MAX_APP_NAV_WIDTH = 400;
-const DEFAULT_CODE_WIDTH = 480;
-const MIN_CODE_WIDTH = 320;
-const MIN_PREVIEW_WIDTH = 220;
-const MIN_PREVIEW_HEIGHT = 160;
-const MIN_STACKED_SIDEBAR = 280;
-const DEFAULT_CHAT_HEIGHT = 260;
-const MIN_CHAT_HEIGHT = 220;
-const MIN_CODE_EDITOR_HEIGHT = 140;
-const STACKED_MEDIA_QUERY = "(max-width: 900px)";
-const APP_NAV_WIDTH_STORAGE_KEY = "figma-shader-studio:app-nav-width";
-const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
-const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
-const PREVIEW_HEIGHT_STORAGE_KEY = "figma-shader-studio:preview-height";
-const SIDEBAR_SECTIONS_STORAGE_KEY =
-  "figma-shader-studio:sidebar-sections";
-const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
-const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
-const THEME_STORAGE_KEY = "figma-shader-studio:theme";
-const PLAY_STORAGE_KEY = "figma-shader-studio:play";
-const INPUT_SOURCE_STORAGE_KEY = "figma-shader-studio:input-sources";
 const THUMBNAIL_SIZE = 512;
+const THUMBNAIL_IDLE_MS = 4000;
 const BACKGROUND_AUTOSAVE_MS = 4000;
 
-function shaderContentFingerprint({
-  name,
-  source,
-  parameterValues,
-  features,
-}) {
-  return JSON.stringify({
-    name: name || "",
-    source: source || "",
-    parameterValues: parameterValues || {},
-    features: features || {},
-  });
-}
 const INITIAL_DRAFTS = savedDrafts();
-
-function savedInputSource(presetId) {
-  try {
-    const map = JSON.parse(
-      localStorage.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}"
-    );
-    return map[presetId] || null;
-  } catch {
-    return null;
-  }
-}
-
-function persistInputSource(presetId, source) {
-  try {
-    const map = JSON.parse(
-      localStorage.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}"
-    );
-    map[presetId] = source;
-    localStorage.setItem(INPUT_SOURCE_STORAGE_KEY, JSON.stringify(map));
-  } catch {}
-}
 
 async function migrateLocalPlanToCloud(localKey, ownerId, shaderId) {
   const markdown = loadLocalPlan(localKey);
@@ -190,58 +186,6 @@ const FIGMA_SHADER_CATEGORIES = [
   { kind: "effect", label: "Shader effect" },
   { kind: "fill", label: "Shader fill" },
 ];
-
-function dataUrlToObjectUrl(dataUrl) {
-  if (typeof dataUrl !== "string" || !dataUrl.startsWith("data:")) return null;
-  const comma = dataUrl.indexOf(",");
-  if (comma < 0) return null;
-  const header = dataUrl.slice(0, comma);
-  const data = dataUrl.slice(comma + 1);
-  const mime = /data:(.*?);/.exec(header)?.[1] || "application/octet-stream";
-  let bytes;
-  if (header.includes(";base64")) {
-    const binary = atob(data);
-    bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  } else {
-    bytes = new TextEncoder().encode(decodeURIComponent(data));
-  }
-  return URL.createObjectURL(new Blob([bytes], { type: mime }));
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.onerror = () => reject(reader.error || new Error("FileReader failed"));
-    reader.readAsDataURL(blob);
-  });
-}
-
-function revokeThumbnailUrl(url) {
-  if (typeof url === "string" && url.startsWith("blob:")) {
-    URL.revokeObjectURL(url);
-  }
-}
-
-function createRafCssWriter(element, property) {
-  let rafId = 0;
-  let latest = null;
-  const apply = () => {
-    rafId = 0;
-    if (latest != null) element.style.setProperty(property, `${Math.round(latest)}px`);
-  };
-  return {
-    write(value) {
-      latest = value;
-      if (!rafId) rafId = requestAnimationFrame(apply);
-    },
-    flush() {
-      if (rafId) cancelAnimationFrame(rafId);
-      apply();
-    },
-  };
-}
 
 function groupByKind(cards, effectLabel, fillLabel, keyPrefix) {
   const effects = cards.filter((card) => card.kind === "effect");
@@ -276,102 +220,6 @@ function mergeValues(definitions, candidate = {}) {
   return defaults;
 }
 
-function cloudChoiceId(id) {
-  return `cloud:${id}`;
-}
-
-function isDraftId(id) {
-  return typeof id === "string" && id.startsWith("draft:");
-}
-
-function cloudIdForDraft(id) {
-  return isDraftId(id) ? id.slice("draft:".length) : id;
-}
-
-function figmaShaderLink(shader) {
-  return {
-    figma_shader_id:
-      typeof shader?.figma_shader_id === "string"
-        ? shader.figma_shader_id
-        : null,
-    figma_shader_kind:
-      shader?.figma_shader_kind === "effect" ||
-      shader?.figma_shader_kind === "fill"
-        ? shader.figma_shader_kind
-        : null,
-    figma_shader_version:
-      typeof shader?.figma_shader_version === "string"
-        ? shader.figma_shader_version
-        : null,
-  };
-}
-
-function serializeDraft(draft, thumbnail = null) {
-  return {
-    id: draft.id,
-    name: draft.name,
-    kind: draft.kind,
-    source: draft.source,
-    values: draft.values && typeof draft.values === "object" ? draft.values : {},
-    isPublic: Boolean(draft.isPublic),
-    thumbnail: typeof thumbnail === "string" ? thumbnail : null,
-    ...figmaShaderLink(draft),
-  };
-}
-
-function savedDrafts() {
-  try {
-    const raw = localStorage.getItem(DRAFTS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter(
-        (draft) =>
-          draft &&
-          isDraftId(draft.id) &&
-          typeof draft.name === "string" &&
-          typeof draft.source === "string" &&
-          (draft.kind === "effect" || draft.kind === "fill")
-      )
-      .map((draft) => ({
-        id: draft.id,
-        name: draft.name,
-        kind: draft.kind,
-        source: draft.source,
-        values:
-          draft.values && typeof draft.values === "object" ? draft.values : {},
-        isPublic: Boolean(draft.isPublic),
-        pendingMedia: null,
-        thumbnail:
-          typeof draft.thumbnail === "string" ? draft.thumbnail : null,
-        ...figmaShaderLink(draft),
-      }));
-  } catch {
-    return [];
-  }
-}
-
-/** Persist only serializable data: URLs (blob: URLs die on reload). */
-function writeDrafts(drafts, thumbnailDataUrls = {}) {
-  localStorage.setItem(
-    DRAFTS_STORAGE_KEY,
-    JSON.stringify(
-      drafts.map((draft) => {
-        const stored = thumbnailDataUrls[draft.id];
-        const thumbnail =
-          typeof stored === "string" && stored.startsWith("data:")
-            ? stored
-            : typeof draft.thumbnail === "string" &&
-                draft.thumbnail.startsWith("data:")
-              ? draft.thumbnail
-              : null;
-        return serializeDraft(draft, thumbnail);
-      })
-    )
-  );
-}
-
 function replaceShaderUrl(id) {
   window.history.replaceState(
     {},
@@ -395,84 +243,6 @@ function AuthorAvatar({ class: className, tooltip, src, name }) {
   );
 }
 
-function ShaderNavCard({
-  src,
-  label,
-  sublabel,
-  selected,
-  size,
-  published,
-  authorName,
-  authorAvatarUrl,
-}) {
-  const [loaded, setLoaded] = useState(false);
-  const imgRef = useRef(null);
-
-  useEffect(() => {
-    const img = imgRef.current;
-    // Cached images often won't re-fire onLoad after a same-src remount or a
-    // signed-URL rotation that the browser still has in cache — avoid flashing
-    // the spinner when the bitmap is already available.
-    if (img?.complete && img.naturalWidth > 0) {
-      setLoaded(true);
-      return;
-    }
-    setLoaded(false);
-  }, [src]);
-
-  return (
-    <fig-card
-      class={published ? "shader-nav-card is-published" : "shader-nav-card"}
-      size={size}
-      full=""
-      {...(selected ? { selected: "" } : {})}
-    >
-      <fig-preview
-        class="shader-nav-card-preview"
-        fit="cover"
-        aspect-ratio="4/3"
-        full=""
-        aria-label={loaded ? undefined : `Loading ${label} preview`}
-      >
-        {!loaded && <fig-spinner aria-label={`Loading ${label} preview`} />}
-        {src && (
-          <img
-            ref={imgRef}
-            src={src}
-            alt={label}
-            onLoad={() => setLoaded(true)}
-            onError={() => setLoaded(true)}
-          />
-        )}
-      </fig-preview>
-      <fig-footer>
-        <label className="fig-card-label">
-          <AuthorAvatar
-            tooltip={authorName || "Anon"}
-            src={authorAvatarUrl}
-            name={authorName || "Anon"}
-          />
-          <h3>{label}</h3>
-        </label>
-        {sublabel && (
-          <label
-            className="fig-card-sublabel"
-            aria-label={published ? "Published" : undefined}
-          >
-            {published ? (
-              <fig-tooltip text="Published">
-                <fig-icon name="globe" />
-              </fig-tooltip>
-            ) : (
-              sublabel
-            )}
-          </label>
-        )}
-      </fig-footer>
-    </fig-card>
-  );
-}
-
 function consumeAuthCallbackError() {
   const url = new URL(window.location.href);
   const hash = new URLSearchParams(url.hash.replace(/^#/, ""));
@@ -493,91 +263,6 @@ function consumeAuthCallbackError() {
   return `Sign in failed: ${description}`;
 }
 
-function mediaType(file) {
-  if (file.type?.startsWith("image/") || file.type?.startsWith("video/")) {
-    return file.type;
-  }
-  const extension = file.name?.split(".").pop()?.toLowerCase();
-  return {
-    png: "image/png",
-    jpg: "image/jpeg",
-    jpeg: "image/jpeg",
-    webp: "image/webp",
-    gif: "image/gif",
-    avif: "image/avif",
-    mp4: "video/mp4",
-    mov: "video/quicktime",
-    m4v: "video/x-m4v",
-    webm: "video/webm",
-  }[extension];
-}
-
-function defaultCodeWidth() {
-  return window.innerWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
-}
-
-function savedAppNavWidth() {
-  const value = Number(localStorage.getItem(APP_NAV_WIDTH_STORAGE_KEY));
-  return Number.isFinite(value) &&
-    value >= MIN_APP_NAV_WIDTH &&
-    value <= MAX_APP_NAV_WIDTH
-    ? value
-    : DEFAULT_APP_NAV_WIDTH;
-}
-
-function savedCodeWidth() {
-  const value = Number(localStorage.getItem(CODE_WIDTH_STORAGE_KEY));
-  return Number.isFinite(value) && value >= MIN_CODE_WIDTH
-    ? value
-    : defaultCodeWidth();
-}
-
-function savedChatHeight() {
-  const value = Number(localStorage.getItem(CHAT_HEIGHT_STORAGE_KEY));
-  return Number.isFinite(value) && value >= MIN_CHAT_HEIGHT
-    ? value
-    : DEFAULT_CHAT_HEIGHT;
-}
-
-function savedPreviewHeight() {
-  const value = Number(localStorage.getItem(PREVIEW_HEIGHT_STORAGE_KEY));
-  return Number.isFinite(value) && value >= MIN_PREVIEW_HEIGHT ? value : null;
-}
-
-function savedSidebarSections() {
-  try {
-    const parsed = JSON.parse(
-      localStorage.getItem(SIDEBAR_SECTIONS_STORAGE_KEY) || "{}"
-    );
-    return {
-      codeCollapsed: Boolean(parsed.codeCollapsed),
-      chatCollapsed: Boolean(parsed.chatCollapsed),
-    };
-  } catch {
-    return { codeCollapsed: false, chatCollapsed: false };
-  }
-}
-
-function isStackedLayout() {
-  return window.matchMedia(STACKED_MEDIA_QUERY).matches;
-}
-
-function savedTheme() {
-  const stored = localStorage.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
-}
-
-function savedPlayState() {
-  const stored = localStorage.getItem(PLAY_STORAGE_KEY);
-  if (stored === "true") return true;
-  if (stored === "false") return false;
-  return true;
-}
-
-
 export default function App() {
   const {
     user,
@@ -591,34 +276,45 @@ export default function App() {
   const [values, setValues] = useState(INITIAL_VALUES);
   const [error, setError] = useState(null);
   const [fatal, setFatal] = useState(null);
+  const onPersistenceError = useCallback(
+    (persistenceError) =>
+      setError(persistenceError.message || String(persistenceError)),
+    [],
+  );
   const [running, setRunning] = useState(savedPlayState);
-  const [previewZoom, setPreviewZoom] = useState(1);
-  const [previewZoomRequest, setPreviewZoomRequest] = useState(null);
-  const requestPreviewZoom = useCallback((zoom) => {
-    setPreviewZoomRequest({ zoom, id: Date.now() });
-  }, []);
-  const [inputSource, setInputSource] = useState("image");
-  const [effectVisible, setEffectVisible] = useState(true);
-  const [runtimeReady, setRuntimeReady] = useState(false);
+  const {
+    runtimeReady,
+    setRuntimeReady,
+    previewZoom,
+    previewZoomRequest,
+    requestPreviewZoom,
+    inputSource,
+    setInputSource,
+    effectVisible,
+    setEffectVisible,
+    uploading,
+    setUploading,
+    hostRef,
+    pointerSurfaceRef,
+    inputSourceRef,
+    inputApplyGenRef,
+    pendingInputSourceRef,
+    mediaUrlRef,
+    videoRef,
+    onStageSize,
+    onPointerSurface,
+    onPreviewZoomChange,
+    isInputApplyCurrent,
+    clearObjectUrl,
+  } = useShaderRuntime();
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
   const [cloudShaders, setCloudShaders] = useState([]);
   const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
-  const [currentShader, setCurrentShader] = useState(null);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
-  const [dirty, setDirty] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [shaderVersions, setShaderVersions] = useState([]);
-  const [versionsLoading, setVersionsLoading] = useState(false);
-  const [restoringVersion, setRestoringVersion] = useState(false);
-  const [pendingAgentCheckpoint, setPendingAgentCheckpoint] = useState(null);
-  const [duplicating, setDuplicating] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [publishOpen, setPublishOpen] = useState(false);
-  const [publishToast, setPublishToast] = useState(null);
   const [videoExportOpen, setVideoExportOpen] = useState(false);
   const [embedOpen, setEmbedOpen] = useState(false);
   const [embedTab, setEmbedTab] = useState("code");
@@ -632,13 +328,50 @@ export default function App() {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [notice, setNotice] = useState(null);
-  const [isPublic, setIsPublic] = useState(false);
-  const [appNavWidth, setAppNavWidth] = useState(savedAppNavWidth);
-  const [codeWidth, setCodeWidth] = useState(savedCodeWidth);
-  const [chatHeight, setChatHeight] = useState(savedChatHeight);
-  const [previewHeight, setPreviewHeight] = useState(savedPreviewHeight);
-  const [stacked, setStacked] = useState(isStackedLayout);
+  const {
+    currentShader,
+    setCurrentShader,
+    dirty,
+    setDirty,
+    saving,
+    setSaving,
+    shaderVersions,
+    setShaderVersions,
+    versionsLoading,
+    restoringVersion,
+    setRestoringVersion,
+    pendingAgentCheckpoint,
+    setPendingAgentCheckpoint,
+    duplicating,
+    setDuplicating,
+    isPublic,
+    setIsPublic,
+    publishOpen,
+    setPublishOpen,
+    publishToast,
+    setPublishToast,
+    isOwner,
+    refreshShaderVersions,
+    lastSavedFingerprintRef,
+    pendingAgentCheckpointRef,
+    agentCheckpointSavingRef,
+  } = useShaderPersistence({
+    userId: user?.id ?? null,
+    onError: onPersistenceError,
+  });
+  const {
+    appNavWidth,
+    codeWidth,
+    chatHeight,
+    previewHeight,
+    stacked,
+    saveAppNavWidth,
+    saveCodeWidth,
+    saveChatHeight,
+    savePreviewHeight,
+  } = usePanelLayout();
   const [theme, setTheme] = useState(savedTheme);
+  const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
@@ -694,7 +427,6 @@ export default function App() {
   }
   const thumbnailCaptureGenRef = useRef(0);
   const thumbnailPreviewTimerRef = useRef(0);
-  const lastSavedFingerprintRef = useRef("");
   const [thumbnailRefreshRevision, setThumbnailRefreshRevision] = useState(0);
 
   const canvasRef = useRef(null);
@@ -714,7 +446,6 @@ export default function App() {
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
-  const versionLoadGenerationRef = useRef(0);
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
@@ -724,6 +455,7 @@ export default function App() {
   const embedTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
+  const inputLoadingToastRef = useRef(null);
   const videoDimensionsRef = useRef(null);
   const videoFrameRateRef = useRef(null);
   const videoBitrateRef = useRef(null);
@@ -733,35 +465,17 @@ export default function App() {
   const figmaImportKindRef = useRef(null);
   const propertiesPanelRef = useRef(null);
   const visualizerRef = useRef(null);
-  const hostRef = useRef(null);
   const lastSuccessfulCompileRef = useRef({
     presetId: INITIAL.id,
     source: INITIAL.source,
     values: INITIAL_VALUES,
   });
-  const pendingAgentCheckpointRef = useRef(null);
-  const agentCheckpointSavingRef = useRef(false);
-  const onStageSize = useCallback((width, height) => {
-    hostRef.current?.setStageCssSize?.(width, height);
-  }, []);
-  const pointerSurfaceRef = useRef(null);
-  const onPointerSurface = useCallback((element) => {
-    pointerSurfaceRef.current = element;
-    hostRef.current?.setPointerSurface?.(element);
-  }, []);
-  const onPreviewZoomChange = useCallback((zoom) => {
-    setPreviewZoom(zoom);
-    hostRef.current?.setPreviewZoom?.(zoom);
-  }, []);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const propsRef = useRef(props);
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
   const compileGenerationRef = useRef(0);
-  const inputSourceRef = useRef(inputSource);
-  const inputApplyGenRef = useRef(0);
-  inputSourceRef.current = inputSource;
   useEffect(() => {
     if (presetId) persistInputSource(presetId, inputSource);
   }, [presetId, inputSource]);
@@ -769,8 +483,6 @@ export default function App() {
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
   const previewParamsRafRef = useRef(0);
-  const videoRef = useRef(null);
-  const mediaUrlRef = useRef(null);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
   const activeFigmaLink = figmaShaderLink(
@@ -807,7 +519,6 @@ export default function App() {
   const chatShaderKey = currentShader?.id
     ? `cloud:${currentShader.id}`
     : `preset:${presetId}`;
-  const isOwner = Boolean(user && currentShader?.owner_id === user.id);
   const protectedPreview = Boolean(currentShader && !isOwner);
   const hasUncheckpointedChanges =
     isOwner && hasUncheckpointedShaderState(currentShader);
@@ -836,40 +547,14 @@ export default function App() {
     if (protectedPreview && renaming) setRenaming(false);
   }, [protectedPreview, renaming]);
 
-  const refreshShaderVersions = useCallback(async () => {
-    const generation = ++versionLoadGenerationRef.current;
-    if (!isOwner || !currentShader?.id) {
-      setShaderVersions([]);
-      setVersionsLoading(false);
-      return [];
-    }
-    setVersionsLoading(true);
-    try {
-      const versions = await listAllShaderVersions(currentShader.id);
-      if (generation === versionLoadGenerationRef.current) {
-        setShaderVersions(versions);
-      }
-      return versions;
-    } catch (versionError) {
-      if (generation !== versionLoadGenerationRef.current) return [];
-      throw versionError;
-    } finally {
-      if (generation === versionLoadGenerationRef.current) {
-        setVersionsLoading(false);
-      }
-    }
-  }, [currentShader?.id, isOwner]);
-
-  useEffect(() => {
-    refreshShaderVersions().catch((versionError) => {
-      setError(versionError.message || String(versionError));
-    });
-  }, [refreshShaderVersions]);
-
   useEffect(() => {
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
+  }, [canvasTheme]);
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) {
@@ -1045,14 +730,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const media = window.matchMedia(STACKED_MEDIA_QUERY);
-    const sync = () => setStacked(media.matches);
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
-
-  useEffect(() => {
     const popup = publishDialogRef.current;
     if (!popup) return;
     if (publishOpen) {
@@ -1104,6 +781,13 @@ export default function App() {
       toast.hideToast?.();
     }
   }, [videoExportProgress]);
+
+  useEffect(() => {
+    const toast = inputLoadingToastRef.current;
+    if (!toast) return;
+    if (uploading) toast.showToast?.();
+    else toast.hideToast?.();
+  }, [uploading]);
 
   useEffect(() => {
     const dimensionsSelect = videoDimensionsRef.current;
@@ -1287,27 +971,6 @@ export default function App() {
     [setRuntimeValues]
   );
 
-  const clearObjectUrl = useCallback(() => {
-    if (mediaUrlRef.current) {
-      URL.revokeObjectURL(mediaUrlRef.current);
-      mediaUrlRef.current = null;
-    }
-    if (videoRef.current) {
-      const video = videoRef.current;
-      video.pause();
-      video.removeAttribute("src");
-      video.load();
-      video.remove();
-      videoRef.current = null;
-    }
-  }, []);
-
-  const isInputApplyCurrent = useCallback(
-    (generation) =>
-      generation == null || generation === inputApplyGenRef.current,
-    []
-  );
-
   const applyMediaBlob = useCallback(
     async (blob, mimeType = blob.type, generation = null) => {
       const host = hostRef.current;
@@ -1460,6 +1123,9 @@ export default function App() {
     const host = hostRef.current;
     if (!host?.ready) return;
     const preferred = inputSourceRef.current;
+    // Every path takes a generation so a superseded load can neither apply a
+    // stale bitmap nor leave the "Loading input…" overlay stuck on screen.
+    const generation = ++inputApplyGenRef.current;
 
     if (preferred === "html") {
       if (
@@ -1469,6 +1135,10 @@ export default function App() {
         setError(HTML_IN_CANVAS_SETUP);
         clearObjectUrl();
         const bitmap = await makeSampleBitmap();
+        if (!isInputApplyCurrent(generation)) {
+          bitmap.close?.();
+          return;
+        }
         host.setImageInput(bitmap);
         setInputSource("image");
         setPreviewRevision((revision) => revision + 1);
@@ -1477,10 +1147,12 @@ export default function App() {
       clearObjectUrl();
       setPendingMedia(null);
       setError(null);
+      setUploading(false);
       setInputSource("html");
       await new Promise((resolve) =>
         requestAnimationFrame(() => requestAnimationFrame(resolve))
       );
+      if (!isInputApplyCurrent(generation)) return;
       const element = htmlInputRef.current;
       if (!element) return;
       host.setHtmlInput(element, HTML_INPUT_WIDTH, HTML_INPUT_HEIGHT);
@@ -1488,52 +1160,57 @@ export default function App() {
       return;
     }
 
-    if (preferred === "video") {
-      const generation = ++inputApplyGenRef.current;
-      setUploading(true);
-      try {
+    setUploading(true);
+    try {
+      if (preferred === "video") {
         setPendingMedia(null);
         const blob = await makeSampleVideoBlob();
+        if (!isInputApplyCurrent(generation)) return;
         await applyMediaBlob(blob, blob.type || "video/mp4", generation);
-      } catch (videoError) {
-        if (isInputApplyCurrent(generation)) {
-          setError(videoError.message || String(videoError));
-        }
-      } finally {
-        if (isInputApplyCurrent(generation)) setUploading(false);
+        return;
       }
-      return;
-    }
 
-    if (preferred === "vector") {
-      const generation = ++inputApplyGenRef.current;
-      try {
+      if (preferred === "vector") {
         await applyVectorSample(generation);
-      } catch (vectorError) {
-        if (isInputApplyCurrent(generation)) {
-          setError(vectorError.message || String(vectorError));
-        }
+        return;
       }
-      return;
-    }
 
-    clearObjectUrl();
-    setPendingMedia(null);
-    const bitmap = await makeSampleBitmap();
-    host.setImageInput(bitmap);
-    setInputSource("image");
-    setPreviewRevision((revision) => revision + 1);
+      clearObjectUrl();
+      setPendingMedia(null);
+      const bitmap = await makeSampleBitmap();
+      if (!isInputApplyCurrent(generation)) {
+        bitmap.close?.();
+        return;
+      }
+      host.setImageInput(bitmap);
+      setInputSource("image");
+      setPreviewRevision((revision) => revision + 1);
+    } catch (inputError) {
+      if (isInputApplyCurrent(generation)) {
+        setError(inputError.message || String(inputError));
+      }
+    } finally {
+      if (isInputApplyCurrent(generation)) setUploading(false);
+    }
   }, [applyMediaBlob, applyVectorSample, clearObjectUrl, isInputApplyCurrent]);
 
   const applyInputSource = useCallback(
     async (next) => {
       const host = hostRef.current;
-      if (!host?.ready) return;
 
       const syncSelect = (value) => {
         const select = inputSelectRef.current;
         if (select && select.value !== value) select.value = value;
       };
+
+      // The host may still be initializing (slow WebGPU start, or a pane that
+      // just remounted). Remember the choice instead of dropping it, otherwise
+      // the select shows the new value while nothing ever loads.
+      if (!host?.ready) {
+        pendingInputSourceRef.current = next;
+        setInputSource(next);
+        return;
+      }
 
       // HTML unsupported: keep the current source. Snap the select back —
       // React won't re-set `value` if state never changed, so the control
@@ -1551,6 +1228,8 @@ export default function App() {
         clearObjectUrl();
         setPendingMedia(null);
         setError(null);
+        // This supersedes any in-flight load, whose own cleanup will bail out.
+        setUploading(false);
         setInputSource("html");
         return;
       }
@@ -1560,41 +1239,33 @@ export default function App() {
       // not snap the value back to the previous source mid-switch.
       setInputSource(next);
       setError(null);
-
-      if (next === "image") {
-        setPendingMedia(null);
-        await restoreSample(generation);
-        return;
-      }
-
-      if (next === "vector") {
-        setUploading(true);
-        try {
-          await applyVectorSample(generation);
-        } catch (vectorError) {
-          if (isInputApplyCurrent(generation)) {
-            setError(vectorError.message || String(vectorError));
-          }
-        } finally {
-          if (isInputApplyCurrent(generation)) setUploading(false);
+      // Whichever branch runs owns the overlay. A superseded load skips its own
+      // cleanup, so the newest switch must always be the one to clear it.
+      setUploading(true);
+      try {
+        if (next === "image") {
+          setPendingMedia(null);
+          await restoreSample(generation);
+          return;
         }
-        return;
-      }
 
-      if (next === "video") {
-        setUploading(true);
-        try {
+        if (next === "vector") {
+          await applyVectorSample(generation);
+          return;
+        }
+
+        if (next === "video") {
           setPendingMedia(null);
           const blob = await makeSampleVideoBlob();
           if (!isInputApplyCurrent(generation)) return;
           await applyMediaBlob(blob, blob.type || "video/mp4", generation);
-        } catch (videoError) {
-          if (isInputApplyCurrent(generation)) {
-            setError(videoError.message || String(videoError));
-          }
-        } finally {
-          if (isInputApplyCurrent(generation)) setUploading(false);
         }
+      } catch (sourceError) {
+        if (isInputApplyCurrent(generation)) {
+          setError(sourceError.message || String(sourceError));
+        }
+      } finally {
+        if (isInputApplyCurrent(generation)) setUploading(false);
       }
     },
     [
@@ -1605,6 +1276,17 @@ export default function App() {
       restoreSample,
     ]
   );
+
+  // Apply an input choice that arrived before the host was ready.
+  useEffect(() => {
+    if (!runtimeReady || !hostRef.current?.ready) return;
+    const pending = pendingInputSourceRef.current;
+    if (!pending) return;
+    pendingInputSourceRef.current = null;
+    applyInputSource(pending).catch((sourceError) =>
+      setError(sourceError.message || String(sourceError))
+    );
+  }, [applyInputSource, runtimeReady]);
 
   // Bind HTML-in-Canvas input after the canvas child mounts.
   useEffect(() => {
@@ -1715,7 +1397,10 @@ export default function App() {
     })();
     return () => {
       cancelled = true;
+      // Bumping the generation orphans any in-flight load, so clear the overlay
+      // here rather than leaving it spinning for the next mount.
       inputApplyGenRef.current += 1;
+      setUploading(false);
       compileGenerationRef.current += 1;
       document.removeEventListener("visibilitychange", onVisibilityChange);
       if (hostRef.current === host) {
@@ -1800,48 +1485,45 @@ export default function App() {
     );
   }, []);
 
+  const activateShaderSession = useShaderSession({
+    persistActiveDraft,
+    pendingValuesRef,
+    hostRef,
+    playPreferenceRef,
+    inputSourceRef,
+    setRunning,
+    setError,
+    setCurrentShader,
+    setPresetId,
+    setShaderRoute,
+    setShaderName,
+    setSource,
+    setIsPublic,
+    setPendingMedia,
+    setDirty,
+    setInputSource,
+    clearObjectUrl,
+    applyMediaBlob,
+    loadMediaForShader,
+    reapplyPreferredInput,
+  });
+
   const openDraft = useCallback(
     async (draft) => {
       setShaderRoute(draft.id);
       if (draftSessionRef.current.presetId === draft.id) return;
-      persistActiveDraft();
-      pendingValuesRef.current = draft.values || {};
-      hostRef.current?.stop();
-      setRunning(playPreferenceRef.current);
-      setError(null);
-      setCurrentShader(null);
-      setPresetId(draft.id);
-      setShaderName(draft.name);
-      setSource(draft.source);
-      setIsPublic(Boolean(draft.isPublic));
-      setPendingMedia(draft.pendingMedia || null);
-      setDirty(true);
-      const restoredSource = savedInputSource(draft.id) || "image";
-      setInputSource(restoredSource);
-      inputSourceRef.current = restoredSource;
-      if (hostRef.current?.ready) {
-        if (draft.kind === "effect") {
-          if (draft.pendingMedia) {
-            await applyMediaBlob(
-              draft.pendingMedia,
-              mediaType(draft.pendingMedia)
-            );
-          } else {
-            await reapplyPreferredInput();
-          }
-        } else {
-          clearObjectUrl();
-          hostRef.current.clearInput();
-        }
-      }
+      await activateShaderSession({
+        sessionId: draft.id,
+        name: draft.name,
+        source: draft.source,
+        kind: draft.kind,
+        values: draft.values || {},
+        public: draft.isPublic,
+        media: draft.pendingMedia || null,
+        dirty: true,
+      });
     },
-    [
-      applyMediaBlob,
-      clearObjectUrl,
-      persistActiveDraft,
-      reapplyPreferredInput,
-      setShaderRoute,
-    ]
+    [activateShaderSession, setShaderRoute],
   );
 
   const createDraft = useCallback(
@@ -1869,59 +1551,32 @@ export default function App() {
           features: inferFeatures(draft.source),
           is_public: false,
         });
-        pendingValuesRef.current = {};
-        hostRef.current?.stop();
-        setRunning(playPreferenceRef.current);
-        setError(null);
-        setCurrentShader(saved);
-        setPresetId(cloudChoiceId(saved.id));
-        setShaderRoute(saved.id);
-        setShaderName(saved.name);
-        setSource(saved.source);
-        setIsPublic(false);
-        setPendingMedia(null);
-        setDirty(true);
         setCloudShaders((current) => [
           saved,
           ...current.filter((item) => item.id !== saved.id),
         ]);
-        if (hostRef.current?.ready) {
-          if (preset.kind === "effect") await reapplyPreferredInput();
-          else {
-            clearObjectUrl();
-            hostRef.current.clearInput();
-          }
-        }
+        await activateShaderSession({
+          sessionId: cloudChoiceId(saved.id),
+          routeId: saved.id,
+          name: saved.name,
+          source: saved.source,
+          kind: saved.kind,
+          values: saved.parameter_values || {},
+          dirty: true,
+          cloudShader: saved,
+        });
         return;
       }
       setDrafts((current) => [draft, ...current]);
-      pendingValuesRef.current = {};
-      hostRef.current?.stop();
-      setRunning(playPreferenceRef.current);
-      setError(null);
-      setCurrentShader(null);
-      setPresetId(id);
-      setShaderRoute(id);
-      setShaderName(draft.name);
-      setSource(draft.source);
-      setIsPublic(false);
-      setPendingMedia(null);
-      setDirty(true);
-      if (hostRef.current?.ready) {
-        if (preset.kind === "effect") await reapplyPreferredInput();
-        else {
-          clearObjectUrl();
-          hostRef.current.clearInput();
-        }
-      }
+      await activateShaderSession({
+        sessionId: id,
+        name: draft.name,
+        source: draft.source,
+        kind: draft.kind,
+        dirty: true,
+      });
     },
-    [
-      clearObjectUrl,
-      persistActiveDraft,
-      reapplyPreferredInput,
-      setShaderRoute,
-      user,
-    ]
+    [activateShaderSession, persistActiveDraft, user],
   );
 
   const openFigmaShader = useCallback(
@@ -1985,20 +1640,21 @@ export default function App() {
             ...link,
           });
         }
-        setCurrentShader(saved);
-        setPresetId(cloudChoiceId(saved.id));
-        setShaderRoute(saved.id);
         setCloudShaders((current) => [
           saved,
           ...current.filter((item) => item.id !== saved.id),
         ]);
-        if (hostRef.current?.ready) {
-          if (shaderKind === "effect") await reapplyPreferredInput();
-          else {
-            clearObjectUrl();
-            hostRef.current.clearInput();
-          }
-        }
+        await activateShaderSession({
+          sessionId: cloudChoiceId(saved.id),
+          routeId: saved.id,
+          name: saved.name,
+          source: saved.source,
+          kind: saved.kind,
+          values: saved.parameter_values || {},
+          cloudShader: saved,
+          dirty: true,
+          persistPrevious: false,
+        });
         return;
       }
 
@@ -2014,23 +1670,19 @@ export default function App() {
         ...link,
       };
       setDrafts((current) => [draft, ...current]);
-      setCurrentShader(null);
-      setPresetId(draftId);
-      setShaderRoute(draftId);
-      if (hostRef.current?.ready) {
-        if (shaderKind === "effect") await reapplyPreferredInput();
-        else {
-          clearObjectUrl();
-          hostRef.current.clearInput();
-        }
-      }
+      await activateShaderSession({
+        sessionId: draftId,
+        name,
+        source: sourceText,
+        kind: shaderKind,
+        dirty: true,
+        persistPrevious: false,
+      });
     },
     [
-      clearObjectUrl,
+      activateShaderSession,
       cloudShaders,
       persistActiveDraft,
-      reapplyPreferredInput,
-      setShaderRoute,
       user,
     ]
   );
@@ -2046,37 +1698,28 @@ export default function App() {
       const fullShader = shader.source
         ? shader
         : { ...shader, ...(await getShader(shader.id)) };
-      persistActiveDraft();
-      pendingValuesRef.current = fullShader.parameter_values || {};
-      hostRef.current?.stop();
-      setRunning(playPreferenceRef.current);
-      setError(null);
-      setCurrentShader(fullShader);
-      setPresetId(cloudChoiceId(fullShader.id));
-      setShaderName(fullShader.name);
-      setSource(fullShader.source);
-      setIsPublic(fullShader.is_public);
-      setPendingMedia(null);
-      setDirty(false);
       lastSavedFingerprintRef.current = shaderContentFingerprint({
         name: fullShader.name,
         source: fullShader.source,
         parameterValues: fullShader.parameter_values,
         features: fullShader.features || inferFeatures(fullShader.source),
       });
-      const restoredSource = savedInputSource(cloudChoiceId(fullShader.id)) || "image";
-      setInputSource(restoredSource);
-      inputSourceRef.current = restoredSource;
-      setShaderRoute(fullShader.id);
-      if (hostRef.current?.ready) {
-        try {
-          await loadMediaForShader(fullShader);
-        } catch (mediaError) {
-          setError(mediaError.message || String(mediaError));
-        }
+      try {
+        await activateShaderSession({
+          sessionId: cloudChoiceId(fullShader.id),
+          routeId: fullShader.id,
+          name: fullShader.name,
+          source: fullShader.source,
+          kind: fullShader.kind,
+          values: fullShader.parameter_values || {},
+          public: fullShader.is_public,
+          cloudShader: fullShader,
+        });
+      } catch (mediaError) {
+        setError(mediaError.message || String(mediaError));
       }
     },
-    [loadMediaForShader, persistActiveDraft, setShaderRoute]
+    [activateShaderSession, setShaderRoute],
   );
 
   const cloudThumbnailPathsRef = useRef({});
@@ -2306,30 +1949,15 @@ export default function App() {
       const preset = getPreset(id);
       if (syncUrl) setShaderRoute(preset.id);
       if (draftSessionRef.current.presetId === preset.id) return;
-      persistActiveDraft();
-      pendingValuesRef.current = {};
-      hostRef.current?.stop();
-      setRunning(playPreferenceRef.current);
-      setError(null);
-      setCurrentShader(null);
-      setPresetId(preset.id);
-      setShaderName(preset.name);
-      setSource(preset.source);
-      setIsPublic(false);
-      setPendingMedia(null);
-      setDirty(false);
-      const restoredSource = savedInputSource(preset.id) || "image";
-      setInputSource(restoredSource);
-      inputSourceRef.current = restoredSource;
-      if (hostRef.current?.ready) {
-        if (preset.kind === "effect") await reapplyPreferredInput();
-        else {
-          clearObjectUrl();
-          hostRef.current.clearInput();
-        }
-      }
+      await activateShaderSession({
+        sessionId: preset.id,
+        routeId: syncUrl ? preset.id : routeId,
+        name: preset.name,
+        source: preset.source,
+        kind: preset.kind,
+      });
     },
-    [clearObjectUrl, persistActiveDraft, reapplyPreferredInput, setShaderRoute]
+    [activateShaderSession, routeId, setShaderRoute],
   );
 
   const removeDraft = useCallback(
@@ -3495,35 +3123,6 @@ export default function App() {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
   }, [presetId, shaderName, standaloneEmbedCode]);
 
-  const saveAppNavWidth = useCallback((width) => {
-    const rounded = Math.round(width);
-    setAppNavWidth(rounded);
-    localStorage.setItem(APP_NAV_WIDTH_STORAGE_KEY, String(rounded));
-  }, []);
-
-  const saveCodeWidth = useCallback((width) => {
-    const rounded = Math.round(width);
-    setCodeWidth(rounded);
-    localStorage.setItem(CODE_WIDTH_STORAGE_KEY, String(rounded));
-  }, []);
-
-  const saveChatHeight = useCallback((height) => {
-    const rounded = Math.round(height);
-    setChatHeight(rounded);
-    localStorage.setItem(CHAT_HEIGHT_STORAGE_KEY, String(rounded));
-  }, []);
-
-  const savePreviewHeight = useCallback((height) => {
-    if (height == null) {
-      setPreviewHeight(null);
-      localStorage.removeItem(PREVIEW_HEIGHT_STORAGE_KEY);
-      return;
-    }
-    const rounded = Math.round(height);
-    setPreviewHeight(rounded);
-    localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(rounded));
-  }, []);
-
   const resizeAppNav = useCallback((event) => {
     if (event.button !== 0) return;
     event.preventDefault();
@@ -3562,17 +3161,13 @@ export default function App() {
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
       cssWriter.flush();
-      setAppNavWidth(Math.round(finalWidth));
-      localStorage.setItem(
-        APP_NAV_WIDTH_STORAGE_KEY,
-        String(Math.round(finalWidth))
-      );
+      saveAppNavWidth(finalWidth);
     };
 
     handle.addEventListener("pointermove", onPointerMove);
     handle.addEventListener("pointerup", onPointerUp);
     handle.addEventListener("pointercancel", onPointerUp);
-  }, []);
+  }, [saveAppNavWidth]);
 
   const resizeCodePane = useCallback(
     (event) => {
@@ -3618,11 +3213,7 @@ export default function App() {
           handle.removeEventListener("pointerup", onPointerUp);
           handle.removeEventListener("pointercancel", onPointerUp);
           cssWriter.flush();
-          setPreviewHeight(Math.round(finalHeight));
-          localStorage.setItem(
-            PREVIEW_HEIGHT_STORAGE_KEY,
-            String(Math.round(finalHeight))
-          );
+          savePreviewHeight(finalHeight);
         };
 
         handle.addEventListener("pointermove", onPointerMove);
@@ -3665,18 +3256,14 @@ export default function App() {
         handle.removeEventListener("pointerup", onPointerUp);
         handle.removeEventListener("pointercancel", onPointerUp);
         cssWriter.flush();
-        setCodeWidth(Math.round(finalWidth));
-        localStorage.setItem(
-          CODE_WIDTH_STORAGE_KEY,
-          String(Math.round(finalWidth))
-        );
+        saveCodeWidth(finalWidth);
       };
 
       handle.addEventListener("pointermove", onPointerMove);
       handle.addEventListener("pointerup", onPointerUp);
       handle.addEventListener("pointercancel", onPointerUp);
     },
-    [stacked]
+    [saveCodeWidth, savePreviewHeight, stacked]
   );
 
   const resizeChatPane = useCallback((event) => {
@@ -3717,17 +3304,13 @@ export default function App() {
       handle.removeEventListener("pointerup", onPointerUp);
       handle.removeEventListener("pointercancel", onPointerUp);
       cssWriter.flush();
-      setChatHeight(Math.round(finalHeight));
-      localStorage.setItem(
-        CHAT_HEIGHT_STORAGE_KEY,
-        String(Math.round(finalHeight))
-      );
+      saveChatHeight(finalHeight);
     };
 
     handle.addEventListener("pointermove", onPointerMove);
     handle.addEventListener("pointerup", onPointerUp);
     handle.addEventListener("pointercancel", onPointerUp);
-  }, [chatHeight]);
+  }, [chatHeight, saveChatHeight]);
 
   useEffect(() => {
     const gen = ++thumbnailCaptureGenRef.current;
@@ -3737,8 +3320,8 @@ export default function App() {
     if (!host?.ready || !runtimeReady) return undefined;
 
     const targetId = presetId;
-
-    const timer = window.setTimeout(() => {
+    let idleId = 0;
+    const capture = () => {
       // Ensure the submitted frame matches the latest committed params.
       host.setParams?.(valuesRef.current);
       host
@@ -3768,10 +3351,18 @@ export default function App() {
         .catch(() => {
           // Keep the previous thumbnail if WebGPU capture fails.
         });
-    }, 1200);
+    };
+    const timer = window.setTimeout(() => {
+      if ("requestIdleCallback" in window) {
+        idleId = window.requestIdleCallback(capture, { timeout: 2000 });
+      } else {
+        capture();
+      }
+    }, THUMBNAIL_IDLE_MS);
 
     return () => {
       window.clearTimeout(timer);
+      if (idleId) window.cancelIdleCallback?.(idleId);
     };
   }, [
     presetId,
@@ -4034,12 +3625,14 @@ export default function App() {
                 </fig-tooltip>
               </hstack>
             </fig-header>
-            <Controls
-              props={props}
-              values={values}
-              onChange={updateControl}
-              onInput={previewControl}
-            />
+            <Suspense fallback={null}>
+              <Controls
+                props={props}
+                values={values}
+                onChange={updateControl}
+                onInput={previewControl}
+              />
+            </Suspense>
             {user && !protectedPreview && (
               <div className="sharing-controls">
                 <fig-field label="Public" direction="horizontal">
@@ -4130,89 +3723,41 @@ export default function App() {
   return (
     <>
       {viewMode === "home" && (
-      <nav className="home-nav">
-        <div className="app-nav-headers">
-          <fig-header class="app-nav-header">
-            <h2 className="app-title">Studio</h2>
-            <div className="app-nav-home-tools">
-                <fig-input-text
-                  class="app-nav-search"
-                  type="search"
-                  placeholder="Search"
-                  value={homeQuery}
-                  full=""
-                  onInput={(event) => setHomeQuery(event.target.value)}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={homeKindRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by kind"
-                  value={homeKind}
-                  options={JSON.stringify([
-                    { value: "all", label: "Types" },
-                    { value: "effect", label: "Effects" },
-                    { value: "fill", label: "Fills" },
-                  ])}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={homeOriginRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by source"
-                  value={homeOrigin}
-                  options={JSON.stringify([
-                    { value: "all", label: "All sources" },
-                    { value: "draft", label: "Drafts" },
-                    { value: "public", label: "Published" },
-                  ])}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={homeAuthorRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by author"
-                  value={homeAuthor}
-                  options={JSON.stringify([
-                    { value: "all", label: "Author" },
-                    ...publishedAuthors,
-                  ])}
-                  disabled={publishedAuthors.length ? undefined : ""}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-            </div>
-            <hstack class="app-nav-header-actions">
-              <AccountMenu
-                open={authOpen}
-                onOpenChange={setAuthOpen}
-                theme={theme}
-                onThemeChange={setTheme}
-                settingsOpen={settingsOpen}
-                onSettingsOpenChange={setSettingsOpen}
-                onProfileChange={(displayName) => {
-                  if (!user) return;
-                  setCloudShaders((current) =>
-                    current.map((shader) =>
-                      shader.owner_id === user.id
-                        ? { ...shader, author_name: displayName }
-                        : shader
-                    )
-                  );
-                }}
-              />
-            </hstack>
-          </fig-header>
-        </div>
-        <fig-chooser
-          ref={homeChooserRef}
-          value=""
-          layout="grid"
-          overflow="scrollbar"
-          loop=""
-        >
-          {renderLibraryChoices(groupedHomeCards, { cardSize: "large" })}
-        </fig-chooser>
-      </nav>
+        <Suspense fallback={null}>
+          <HomeView
+            chooserRef={homeChooserRef}
+            kindRef={homeKindRef}
+            originRef={homeOriginRef}
+            authorRef={homeAuthorRef}
+            query={homeQuery}
+            onQueryChange={setHomeQuery}
+            kind={homeKind}
+            origin={homeOrigin}
+            author={homeAuthor}
+            publishedAuthors={publishedAuthors}
+            choices={renderLibraryChoices(groupedHomeCards, {
+              cardSize: "large",
+            })}
+            authOpen={authOpen}
+            onAuthOpenChange={setAuthOpen}
+            theme={theme}
+            onThemeChange={setTheme}
+            canvasTheme={canvasTheme}
+            onCanvasThemeChange={setCanvasTheme}
+            settingsOpen={settingsOpen}
+            onSettingsOpenChange={setSettingsOpen}
+            onProfileChange={(displayName) => {
+              if (!user) return;
+              setCloudShaders((current) =>
+                current.map((shader) =>
+                  shader.owner_id === user.id
+                    ? { ...shader, author_name: displayName }
+                    : shader,
+                ),
+              );
+            }}
+          />
+        </Suspense>
       )}
 
       {viewMode === "editor" && (
@@ -4278,6 +3823,8 @@ export default function App() {
                   onOpenChange={setAuthOpen}
                   theme={theme}
                   onThemeChange={setTheme}
+                  canvasTheme={canvasTheme}
+                  onCanvasThemeChange={setCanvasTheme}
                   settingsOpen={settingsOpen}
                   onSettingsOpenChange={setSettingsOpen}
                   onProfileChange={(displayName) => {
@@ -4674,75 +4221,27 @@ export default function App() {
           )}
 
           {!protectedPreview && (
-            <section
-              className="shader-viewer-chat"
-              data-collapsed={chatCollapsed ? "true" : "false"}
-            >
-              <fig-header borderless aria-expanded={!chatCollapsed}>
-                <h3>AI chat</h3>
-                <hstack>
-                  {!chatCollapsed && (
-                    <fig-tooltip text="Clear chat">
-                      <fig-button
-                        type="button"
-                        variant="ghost"
-                        icon="true"
-                        aria-label="Clear chat"
-                        disabled={!canClearChat}
-                        onClick={() => chatPaneRef.current?.clearChat()}
-                      >
-                        <TrashIcon />
-                      </fig-button>
-                    </fig-tooltip>
-                  )}
-                  <fig-tooltip
-                    text={chatCollapsed ? "Expand AI chat" : "Collapse AI chat"}
-                  >
-                    <fig-button
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label={
-                        chatCollapsed ? "Expand AI chat" : "Collapse AI chat"
-                      }
-                      onClick={() =>
-                        setChatCollapsed((collapsed) => !collapsed)
-                      }
-                    >
-                      <fig-icon
-                        class={
-                          chatCollapsed
-                            ? "section-chevron is-collapsed"
-                            : "section-chevron"
-                        }
-                        name="chevron"
-                        size="medium"
-                      />
-                    </fig-button>
-                  </fig-tooltip>
-                </hstack>
-              </fig-header>
-              {!chatCollapsed && (
-                <Suspense fallback={null}>
-                  <ChatPane
-                    ref={chatPaneRef}
-                    sourceRef={sourceRef}
-                    kind={kind}
-                    fileName={shaderModuleFileName(presetId, shaderName)}
-                    shaderKey={chatShaderKey}
-                    planOwnerId={isOwner ? user.id : null}
-                    planShaderId={isOwner ? currentShader.id : null}
-                    featuresRef={shaderFeaturesRef}
-                    user={user}
-                    onApplySource={onSourceChange}
-                    onAppliedCheckpoint={checkpointAgentVersion}
-                    onOpenSettings={openSettings}
-                    onNotice={showNotice}
-                    onCanClearChange={setCanClearChat}
-                  />
-                </Suspense>
-              )}
-            </section>
+            <Suspense fallback={null}>
+              <ShaderChatSection
+                collapsed={chatCollapsed}
+                onCollapsedChange={setChatCollapsed}
+                canClear={canClearChat}
+                chatPaneRef={chatPaneRef}
+                sourceRef={sourceRef}
+                kind={kind}
+                fileName={shaderModuleFileName(presetId, shaderName)}
+                shaderKey={chatShaderKey}
+                planOwnerId={isOwner ? user.id : null}
+                planShaderId={isOwner ? currentShader.id : null}
+                featuresRef={shaderFeaturesRef}
+                user={user}
+                onApplySource={onSourceChange}
+                onAppliedCheckpoint={checkpointAgentVersion}
+                onOpenSettings={openSettings}
+                onNotice={showNotice}
+                onCanClearChange={setCanClearChat}
+              />
+            </Suspense>
           )}
         </div>
 
@@ -4805,7 +4304,6 @@ export default function App() {
           ) : (
             <Preview
               canvasRef={canvasRef}
-              uploading={uploading}
               props={props}
               values={values}
               onControlInput={previewControl}
@@ -4818,6 +4316,14 @@ export default function App() {
               onPointerSurface={onPointerSurface}
               onPickFile={onPreviewFile}
               onDropError={setError}
+              canvasTheme={canvasTheme}
+            />
+          )}
+          {!fatal && (
+            <PreviewFps
+              hostRef={hostRef}
+              canvasTheme={canvasTheme}
+              onCanvasThemeChange={setCanvasTheme}
             />
           )}
           <div
@@ -5013,116 +4519,23 @@ export default function App() {
         </fig-footer>
       </dialog>
 
-      <dialog
-        is="fig-dialog"
-        ref={embedDialogRef}
-        class="embed-dialog"
-        title="Embed shader"
-        modal=""
-        closedby="closerequest"
-        position="center center"
-        autoresize=""
+      <EmbedDialog
+        dialogRef={embedDialogRef}
+        tabsRef={embedTabsRef}
+        tab={embedTab}
+        code={embedCode}
         onClose={() => setEmbedOpen(false)}
-        onCancel={() => setEmbedOpen(false)}
-      >
-        <fig-tabs
-          ref={embedTabsRef}
-          class="embed-tabs"
-          name="embed-format"
-          value={embedTab}
-        >
-          <fig-tab value="code">Code</fig-tab>
-          <fig-tab value="iframe">iFrame</fig-tab>
-        </fig-tabs>
-        <fig-field>
-          <textarea
-            id="shader-embed-code"
-            className="embed-code"
-            value={embedCode}
-            readOnly
-            rows="5"
-            spellCheck="false"
-            onFocus={(event) => event.currentTarget.select()}
-          />
-        </fig-field>
-        <fig-footer borderless>
-          <fig-button
-            type="button"
-            variant="secondary"
-            onClick={downloadEmbedCode}
-          >
-            Download
-          </fig-button>
-          <fig-button type="button" variant="primary" onClick={copyEmbedCode}>
-            Copy
-          </fig-button>
-        </fig-footer>
-      </dialog>
+        onDownload={downloadEmbedCode}
+        onCopy={copyEmbedCode}
+      />
 
-      <dialog
-        is="fig-toast"
-        ref={videoExportToastRef}
-        class="video-export-toast"
-        theme="dark"
-        live="polite"
-        duration="0"
-        offset="24"
-      >
-        <fig-spinner aria-label="Exporting video" />
-        <span>
-          Exporting video…{" "}
-          {Math.round((videoExportProgress?.progress || 0) * 100)}%
-        </span>
-      </dialog>
-
-      <dialog
-        is="fig-toast"
-        ref={videoExportedToastRef}
-        class="video-exported-toast"
-        theme="brand"
-        live="polite"
-        duration="3200"
-        offset="24"
-        icon="checkmark"
-      >
-        <span>Video exported</span>
-      </dialog>
-
-      <dialog
-        is="fig-dialog"
-        ref={deleteDialogRef}
-        class="delete-shader-dialog"
-        title="Delete shader"
-        modal=""
-        closedby="closerequest"
-        position="center center"
-        autoresize=""
-      >
-        <fig-content padding>
-          <p>
-            Delete “{deleteTarget?.name || "this shader"}”? This action cannot
-            be undone.
-          </p>
-        </fig-content>
-        <fig-footer>
-          <fig-button
-            type="button"
-            variant="secondary"
-            disabled={deleting ? "" : undefined}
-            onClick={() => setDeleteTarget(null)}
-          >
-            Cancel
-          </fig-button>
-          <fig-button
-            type="button"
-            variant="destructive"
-            disabled={deleting ? "" : undefined}
-            onClick={confirmDelete}
-          >
-            {deleting ? "Deleting…" : "Delete"}
-          </fig-button>
-        </fig-footer>
-      </dialog>
+      <DeleteShaderDialog
+        dialogRef={deleteDialogRef}
+        name={deleteTarget?.name}
+        deleting={deleting}
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+      />
 
       <dialog
         is="fig-dialog"
@@ -5287,19 +4700,6 @@ export default function App() {
       </dialog>
 
       <dialog
-        is="fig-toast"
-        ref={noticeToastRef}
-        class="notice-toast"
-        theme={notice?.error ? "danger" : notice?.brand ? "brand" : "dark"}
-        live={notice?.error ? "assertive" : "polite"}
-        duration={notice?.error ? "0" : notice?.brand ? "5000" : "3200"}
-        offset="24"
-        dismiss={notice?.error ? "" : undefined}
-        onClose={() => setNotice(null)}
-      >
-        <span>{notice?.message}</span>
-      </dialog>
-      <dialog
         is="fig-popup"
         ref={publishDialogRef}
         class="publish-popup settings-popup"
@@ -5340,29 +4740,18 @@ export default function App() {
           </fig-button>
         </fig-footer>
       </dialog>
-      <dialog
-        is="fig-toast"
-        ref={publishToastRef}
-        class="publish-toast"
-        theme="brand"
-        duration="0"
-        offset="24"
-        onClose={() => setPublishToast(null)}
-      >
-        {publishToast?.phase === "publishing" ? (
-          <>
-            <fig-spinner aria-label="Publishing" />
-            <span>Publishing…</span>
-          </>
-        ) : publishToast?.phase === "done" ? (
-          <span className="publish-toast-body">
-            Published to{" "}
-            <a href={publishToast.url} target="_blank" rel="noreferrer">
-              community
-            </a>
-          </span>
-        ) : null}
-      </dialog>
+      <AppToasts
+        videoExportToastRef={videoExportToastRef}
+        videoExportedToastRef={videoExportedToastRef}
+        videoExportProgress={videoExportProgress}
+        inputLoadingToastRef={inputLoadingToastRef}
+        noticeToastRef={noticeToastRef}
+        notice={notice}
+        onNoticeClose={() => setNotice(null)}
+        publishToastRef={publishToastRef}
+        publishToast={publishToast}
+        onPublishToastClose={() => setPublishToast(null)}
+      />
       <input
         ref={fileInputRef}
         type="file"

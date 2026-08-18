@@ -1,15 +1,55 @@
+export const PREVIEW_PIXEL_RATIO_STORAGE_KEY = "figma-shader-preview-pixel-ratio";
+
+const previewPixelRatioListeners = new Set();
+
 /** Current device pixel ratio (1 on non-retina, often 2/3 on retina). */
 export function getDevicePixelRatio() {
   if (typeof window === "undefined") return 1;
   return Math.max(1, Number(window.devicePixelRatio) || 1);
 }
 
+export function readPreviewPixelRatioMode(
+  storage = typeof localStorage === "undefined" ? null : localStorage
+) {
+  try {
+    return storage?.getItem(PREVIEW_PIXEL_RATIO_STORAGE_KEY) === "1x"
+      ? "1x"
+      : "2x";
+  } catch {
+    return "2x";
+  }
+}
+
+export function writePreviewPixelRatioMode(
+  mode,
+  storage = typeof localStorage === "undefined" ? null : localStorage
+) {
+  const normalized = mode === "1x" ? "1x" : "2x";
+  try {
+    storage?.setItem(PREVIEW_PIXEL_RATIO_STORAGE_KEY, normalized);
+  } catch {
+    // Rendering should continue when storage is unavailable.
+  }
+  previewPixelRatioListeners.forEach((listener) => listener(normalized));
+  return normalized;
+}
+
+export function subscribePreviewPixelRatioMode(listener) {
+  previewPixelRatioListeners.add(listener);
+  return () => previewPixelRatioListeners.delete(listener);
+}
+
 /**
  * Convert a CSS-pixel box into a device-pixel buffer size, capped by maxDim.
  * Returns both the buffer size and the original CSS size for canvas styling.
  */
-export function cssSizeToDevicePixels(cssWidth, cssHeight, maxDim = 2048) {
-  const dpr = getDevicePixelRatio();
+export function cssSizeToDevicePixels(
+  cssWidth,
+  cssHeight,
+  maxDim = 2048,
+  pixelRatio = getDevicePixelRatio()
+) {
+  const dpr = Math.max(1, Number(pixelRatio) || 1);
   const cssW = Math.max(1, Number(cssWidth) || 1);
   const cssH = Math.max(1, Number(cssHeight) || 1);
   let width = Math.max(1, Math.round(cssW * dpr));

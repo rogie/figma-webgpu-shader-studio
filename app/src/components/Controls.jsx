@@ -10,65 +10,17 @@ import {
   hexToColor,
   showsInPropertyPanel,
 } from "../lib/canvasControls.js";
-
-function readNumber(event) {
-  const value = event.target.value ?? event.detail;
-  return Number(value);
-}
-
-function readPropskitSliderNumber(event) {
-  const detail = event.nativeEvent?.detail ?? event.detail;
-  const value =
-    detail && typeof detail === "object" && "value" in detail
-      ? detail.value
-      : detail;
-  return Number(value);
-}
+import {
+  formatSelectOptions,
+  readNumber,
+  readPropskitSliderNumber,
+  sliderTypeForProperty,
+} from "./controls/controlValues.js";
+import { useCoalescedPropertyCallback } from "./controls/useCoalescedPropertyCallback.js";
 
 // FigUI3 controls generate their implementation in light DOM. Marking that
 // content as opaque prevents React from deleting it on subsequent renders.
 const opaqueContent = { __html: "" };
-const PROPERTY_INPUT_INTERVAL_MS = 24;
-
-function useCoalescedPropertyCallback(callback) {
-  const callbackRef = useRef(callback);
-  const pendingRef = useRef(new Map());
-
-  useLayoutEffect(() => {
-    callbackRef.current = callback;
-  }, [callback]);
-
-  useEffect(
-    () => () => {
-      pendingRef.current.forEach(({ timer }) => window.clearTimeout(timer));
-      pendingRef.current.clear();
-    },
-    []
-  );
-
-  return useCallback((name, value) => {
-    const pending = pendingRef.current.get(name);
-    if (pending) {
-      pending.value = value;
-      pending.hasTrailingValue = true;
-      return;
-    }
-
-    callbackRef.current(name, value);
-    const timer = window.setTimeout(() => {
-      const latest = pendingRef.current.get(name);
-      pendingRef.current.delete(name);
-      if (latest?.hasTrailingValue) {
-        callbackRef.current(name, latest.value);
-      }
-    }, PROPERTY_INPUT_INTERVAL_MS);
-    pendingRef.current.set(name, {
-      timer,
-      value,
-      hasTrailingValue: false,
-    });
-  }, []);
-}
 
 function NumberControl({ def, value, onChange }) {
   const current = value ?? def.defaultValue ?? 0;
@@ -153,42 +105,6 @@ function PropskitTextControl({ name, def, value, onChange }) {
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
-}
-
-function isSymmetricDeltaRange(min, max) {
-  return (
-    Number.isFinite(min) &&
-    Number.isFinite(max) &&
-    min < 0 &&
-    max > 0 &&
-    min === -max
-  );
-}
-
-function isOpacityPercentRange(name, min, max) {
-  const key = String(name || "").toLowerCase();
-  return (
-    (key === "opacity" || key === "alpha") &&
-    Number.isFinite(min) &&
-    Number.isFinite(max) &&
-    min === 0 &&
-    max === 100
-  );
-}
-
-function stepCountBetween(min, max, step) {
-  if (!(Number.isFinite(min) && Number.isFinite(max) && Number.isFinite(step))) {
-    return Infinity;
-  }
-  if (!(step > 0) || !(max > min)) return Infinity;
-  return (max - min) / step;
-}
-
-function sliderTypeForProperty(name, min, max, step) {
-  if (isOpacityPercentRange(name, min, max)) return "opacity";
-  if (stepCountBetween(min, max, step) < 16) return "stepper";
-  if (isSymmetricDeltaRange(min, max)) return "delta";
-  return null;
 }
 
 function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
@@ -296,17 +212,6 @@ function SwitchControl({ name, def, value, onChange }) {
       {...(defaultChecked ? { default: "" } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
-  );
-}
-
-// Match figui3 /propskit/lab: options attr is comma-separated, newline, or JSON
-// array of strings / { value, label } objects (same as fig-options / fig-select).
-function formatSelectOptions(options) {
-  return JSON.stringify(
-    options.map((option) => ({
-      value: String(option.value),
-      label: String(option.label ?? option.value),
-    }))
   );
 }
 

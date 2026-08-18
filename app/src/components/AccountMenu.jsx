@@ -16,6 +16,11 @@ import {
   testFigmaConnection,
 } from "../services/figmaShaders.js";
 import { getProfile, saveProfile } from "../services/shaders.js";
+import {
+  readPreviewPixelRatioMode,
+  subscribePreviewPixelRatioMode,
+  writePreviewPixelRatioMode,
+} from "../runtime/dpi.js";
 
 function accountDisplayName(user) {
   return (
@@ -32,6 +37,8 @@ export default function AccountMenu({
   onOpenChange,
   theme,
   onThemeChange,
+  canvasTheme,
+  onCanvasThemeChange,
   settingsOpen = false,
   onSettingsOpenChange,
   onProfileChange,
@@ -47,6 +54,8 @@ export default function AccountMenu({
   const settingsDialogRef = useRef(null);
   const settingsAnchorRef = useRef(null);
   const themeControlRef = useRef(null);
+  const pixelRatioControlRef = useRef(null);
+  const canvasThemeControlRef = useRef(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [openaiKey, setOpenaiKey] = useState(() => getProviderKeys().openai);
@@ -54,6 +63,9 @@ export default function AccountMenu({
     () => getProviderKeys().anthropic
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
+  const [pixelRatioMode, setPixelRatioMode] = useState(
+    readPreviewPixelRatioMode
+  );
   const [figmaConnected, setFigmaConnected] = useState(
     () => Boolean(getFigmaAccessToken())
   );
@@ -80,6 +92,11 @@ export default function AccountMenu({
       setGeminiKey(keys.gemini);
     });
   }, []);
+
+  useEffect(
+    () => subscribePreviewPixelRatioMode(setPixelRatioMode),
+    []
+  );
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) return undefined;
@@ -143,6 +160,34 @@ export default function AccountMenu({
     control.addEventListener("input", updateTheme);
     return () => control.removeEventListener("input", updateTheme);
   }, [onThemeChange]);
+
+  useEffect(() => {
+    const control = pixelRatioControlRef.current;
+    if (!control) return;
+    const updatePixelRatio = (event) => {
+      const detail = event.detail;
+      const value =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value);
+      writePreviewPixelRatioMode(value);
+    };
+    control.addEventListener("input", updatePixelRatio);
+    return () => control.removeEventListener("input", updatePixelRatio);
+  }, []);
+
+  useEffect(() => {
+    const control = canvasThemeControlRef.current;
+    if (!control) return;
+    const updateCanvasTheme = (event) => {
+      const value = event.detail ?? event.target.value;
+      if (value === "light" || value === "dark") {
+        onCanvasThemeChange?.(value);
+      }
+    };
+    control.addEventListener("input", updateCanvasTheme);
+    return () => control.removeEventListener("input", updateCanvasTheme);
+  }, [onCanvasThemeChange]);
 
   const close = () => {
     onOpenChange(false);
@@ -336,28 +381,75 @@ export default function AccountMenu({
           <h3>Settings</h3>
         </fig-header>
         <fig-content>
-          <fig-field direction="horizontal">
-            <label>Theme</label>
-            <fig-segmented-control
-              ref={themeControlRef}
-              full=""
-              sizing="equal"
-              value={theme}
-            >
-              <fig-segment
-                value="light"
-                selected={theme === "light"}
+          <fig-group name="App" collapsible="" open="">
+            <fig-field direction="horizontal">
+              <label>Theme</label>
+              <fig-segmented-control
+                ref={themeControlRef}
+                full=""
+                sizing="equal"
+                value={theme}
               >
-                Light
-              </fig-segment>
-              <fig-segment
-                value="dark"
-                selected={theme === "dark"}
+                <fig-segment
+                  value="light"
+                  selected={theme === "light"}
+                >
+                  Light
+                </fig-segment>
+                <fig-segment
+                  value="dark"
+                  selected={theme === "dark"}
+                >
+                  Dark
+                </fig-segment>
+              </fig-segmented-control>
+            </fig-field>
+            <fig-field direction="horizontal">
+              <label>Pixel ratio</label>
+              <fig-segmented-control
+                ref={pixelRatioControlRef}
+                full=""
+                sizing="equal"
+                value={pixelRatioMode}
+                aria-label="Preview pixel ratio"
               >
-                Dark
-              </fig-segment>
-            </fig-segmented-control>
-          </fig-field>
+                <fig-segment
+                  value="1x"
+                  selected={pixelRatioMode === "1x"}
+                >
+                  Standard 1×
+                </fig-segment>
+                <fig-segment
+                  value="2x"
+                  selected={pixelRatioMode === "2x"}
+                >
+                  High-res 2×
+                </fig-segment>
+              </fig-segmented-control>
+            </fig-field>
+            <fig-field direction="horizontal">
+              <label>Canvas theme</label>
+              <fig-segmented-control
+                ref={canvasThemeControlRef}
+                full=""
+                sizing="equal"
+                value={canvasTheme}
+              >
+                <fig-segment
+                  value="light"
+                  selected={canvasTheme === "light"}
+                >
+                  Light
+                </fig-segment>
+                <fig-segment
+                  value="dark"
+                  selected={canvasTheme === "dark"}
+                >
+                  Dark
+                </fig-segment>
+              </fig-segmented-control>
+            </fig-field>
+          </fig-group>
 
           {user && (
             <fig-group name="User details">

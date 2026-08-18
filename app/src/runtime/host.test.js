@@ -607,6 +607,23 @@ test("setSize defers canvas resize while a capture is in progress", async () => 
   assert.equal(host.canvas.height, 16);
 });
 
+test("preview pixel ratio changes resize fill previews", () => {
+  const host = makeHost();
+  host.ready = true;
+  host.isFill = true;
+  host.stageCssSize = { width: 800, height: 600 };
+  let resized = null;
+  host.resizeFill = (width, height) => {
+    resized = { width, height };
+    return true;
+  };
+
+  assert.equal(host.setPreviewPixelRatioMode("1x"), true);
+  assert.equal(host.previewPixelRatioMode, "1x");
+  assert.deepEqual(resized, { width: 800, height: 600 });
+  assert.equal(host.setPreviewPixelRatioMode("1x"), false);
+});
+
 test("supported shaders supersample after zoom settles without replacing input", () => {
   const originalSetTimeout = globalThis.setTimeout;
   const originalClearTimeout = globalThis.clearTimeout;
@@ -659,6 +676,41 @@ test("supported shaders supersample after zoom settles without replacing input",
   } finally {
     globalThis.setTimeout = originalSetTimeout;
     globalThis.clearTimeout = originalClearTimeout;
+  }
+});
+
+test("playback disables supersampling and user pause restores it", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    host.canvas.width = 1000;
+    host.canvas.height = 500;
+    host.canvas.style = { removeProperty() {} };
+    host.canvas.dataset = {};
+    host.logicalOutputSize = { width: 1000, height: 500 };
+    host.supportsRenderScale = true;
+    host.previewZoom = 2;
+    host.device = { limits: { maxTextureDimension2D: 8192 } };
+    let resets = 0;
+    host.resetShaderState = () => {
+      resets += 1;
+    };
+
+    host._applyAdaptiveOutputSize();
+    assert.equal(host.canvas.width, 2000);
+    assert.equal(host.frame.renderScale, 2);
+
+    host.start();
+    assert.equal(host.canvas.width, 1000);
+    assert.equal(host.frame.renderScale, 1);
+    assert.equal(resets, 1);
+
+    host.stop({ resetTime: true });
+    assert.equal(host.canvas.width, 2000);
+    assert.equal(host.frame.renderScale, 2);
+    assert.equal(resets, 2);
+  } finally {
+    raf.restore();
   }
 });
 

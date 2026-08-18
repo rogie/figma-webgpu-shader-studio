@@ -462,25 +462,11 @@ body,
       overflow: hidden;
       padding: 0;
       border-radius: var(--viewer-radius);
-      background: var(--checkerboard);
-
-      &::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-radius: var(--viewer-radius);
-        box-shadow: inset 0 0 0 1px var(--figma-color-bordertranslucent);
-        z-index: 4;
-      }
-
-      &.background--dark {
-        background-color: #000;
-      }
 
       .canvas-stage {
         position: absolute;
         inset: 0;
+        border-radius: var(--viewer-radius);
         min-width: 0;
         min-height: 0;
         display: grid;
@@ -488,13 +474,17 @@ body,
         overflow: hidden;
         container-type: size;
 
+        &.canvas-stage--light {
+          background-color: #f5f5f5;
+        }
+
+        &.canvas-stage--dark {
+          background-color: #1e1e1e;
+        }
+
         /* Zoom/pan transform applies to the canvas only — controls stay unscaled. */
         .canvas-frame {
           position: relative;
-          width: fit-content;
-          height: fit-content;
-          max-width: 100%;
-          max-height: 100%;
           line-height: 0;
           transform-origin: center center;
           will-change: transform;
@@ -502,11 +492,8 @@ body,
 
         .preview-canvas {
           display: block;
-          width: auto;
-          height: auto;
-          max-width: 100cqw;
-          max-height: 100cqh;
-          object-fit: contain;
+          width: 100% !important;
+          height: 100% !important;
         }
 
         .preview-html-input {
@@ -776,17 +763,52 @@ body,
           }
         }
 
-        .upload-overlay {
-          position: absolute;
-          z-index: 7;
+      }
+
+      .preview-performance {
+        position: absolute;
+        right: var(--spacer-2);
+        bottom: var(--spacer-2);
+        z-index: 5;
+        box-sizing: border-box;
+        height: 2.5rem;
+        padding: var(--spacer-2);
+        display: flex;
+        align-items: center;
+        gap: var(--spacer-2);
+        color: var(--figma-color-text);
+        background: var(--figma-color-bg);
+        border-radius: var(--radius-large);
+        box-shadow: var(--figma-elevation-200);
+
+        .preview-resolution {
+          flex: 0 0 auto;
+        }
+
+        .preview-fps {
+          min-width: 3.5rem;
+          height: 100%;
+          padding-inline: var(--spacer-1);
           display: flex;
           align-items: center;
-          gap: var(--spacer-2);
-          padding: var(--spacer-2) var(--spacer-3);
-          color: var(--figma-color-text);
-          background: var(--figma-color-bg);
-          border-radius: var(--radius-medium);
-          box-shadow: var(--figma-elevation-400-menu-panel);
+          justify-content: center;
+          gap: var(--spacer-1);
+          pointer-events: none;
+          font-variant-numeric: tabular-nums;
+
+          strong {
+            min-width: 2ch;
+            text-align: right;
+            font-size: var(--font-size-small);
+            line-height: 1;
+          }
+
+          span {
+            color: var(--figma-color-text-secondary);
+            font-weight: var(--body-medium-strong-fontWeight);
+            line-height: 1;
+            letter-spacing: 0.06em;
+          }
         }
       }
 
@@ -805,7 +827,7 @@ body,
         padding: var(--spacer-2);
         background: var(--figma-color-bg);
         border-radius: var(--radius-large);
-        box-shadow: var(--figma-elevation-400-menu-panel);
+        box-shadow: var(--figma-elevation-200);
 
         .tools-zoom {
           min-width: 2.75rem;
