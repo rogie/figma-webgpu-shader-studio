@@ -1207,6 +1207,8 @@ export default function App() {
       // just remounted). Remember the choice instead of dropping it, otherwise
       // the select shows the new value while nothing ever loads.
       if (!host?.ready) {
+        // Supersede the bootstrap image load even if it has not started yet.
+        inputApplyGenRef.current += 1;
         pendingInputSourceRef.current = next;
         setInputSource(next);
         return;
@@ -1372,6 +1374,9 @@ export default function App() {
     host.setPreviewZoom(previewZoom);
     // The overlay mounts before this effect runs, so adopt the surface it reported.
     host.setPointerSurface(pointerSurfaceRef.current);
+    // The initial image load must be cancellable by a source selection made
+    // while WebGPU is initializing or while that image is decoding.
+    const initialInputGeneration = ++inputApplyGenRef.current;
 
     // Pause the render loop and video decode while the tab is backgrounded so a
     // hidden Shader Studio stops driving the GPU and video decoder.
@@ -1386,7 +1391,7 @@ export default function App() {
         if (cancelled) return;
         // A tab opened in the background starts inactive.
         host.setActive(document.visibilityState === "visible");
-        await restoreSample();
+        await restoreSample(initialInputGeneration);
         if (cancelled) return;
         // Compile via the source/preset effect once runtimeReady flips — avoids
         // racing a stale sourceRef when opening a shader from the home page.
