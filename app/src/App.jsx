@@ -57,7 +57,7 @@ import {
 import {
   hasUncheckpointedShaderState,
   isShaderStateConflict,
-  sanitizeVersionSummary,
+  summarizeAgentVersion,
   summarizeManualVersion,
 } from "./lib/shaderVersions.js";
 import { validateModuleSource } from "./lib/chatApply.js";
@@ -2724,10 +2724,7 @@ export default function App() {
         presetId,
         shaderId: currentShader.id,
         source: appliedSource,
-        summary: sanitizeVersionSummary(
-          summary,
-          "Applied an AI-generated shader update"
-        ),
+        summary: summarizeAgentVersion(summary),
       };
       if (
         lastSuccessfulCompileRef.current.presetId === presetId &&

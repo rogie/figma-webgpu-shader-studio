@@ -4,6 +4,7 @@ import {
   hasUncheckpointedShaderState,
   isShaderStateConflict,
   sanitizeVersionSummary,
+  summarizeAgentVersion,
   summarizeManualVersion,
   versionOptionLabel,
 } from "../src/lib/shaderVersions.js";
@@ -14,6 +15,23 @@ test("version summaries reuse prose without markdown or code", () => {
       "**Will add** a stagger control.\n\n```ts\nconst hidden = true;\n```"
     ),
     "Will add a stagger control."
+  );
+});
+
+test("agent summaries keep only the first sentence of the reply", () => {
+  assert.equal(
+    summarizeAgentVersion(
+      "I'll replace the color-swap effect with a motion mask. It will ping-pong between two state textures, compare frame luminance, and decay trails."
+    ),
+    "I'll replace the color-swap effect with a motion mask."
+  );
+  assert.equal(
+    summarizeAgentVersion("Adds a 0.5 second stagger to the reveal"),
+    "Adds a 0.5 second stagger to the reveal"
+  );
+  assert.equal(
+    summarizeAgentVersion(""),
+    "Applied an AI-generated shader update"
   );
 });
 

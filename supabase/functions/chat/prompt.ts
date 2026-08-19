@@ -26,7 +26,7 @@ export function buildSystemPrompt(ctx: ChatContext): string {
 6. Do not emit a complete shader module or implementation-ready full source. Small focused snippets or pseudocode are allowed only when they materially clarify a difficult part of the plan; do not include code by default.
 7. Do not instruct Shader Studio to apply code. For this turn, these plan-mode rules override any authoring-skill instruction that requests a complete module.`
       : `Response format (required):
-1. If updating the module, begin with brief prose in future tense explaining what you will change. Do not claim the implementation is complete before emitting the fenced module. If no code change is needed, answer normally.
+1. If updating the module, begin with exactly ONE plain-prose sentence in future tense summarizing what you will change — no lists, headings, or extra sentences before the code. Shader Studio saves that sentence as the version summary, so keep it self-contained and under 200 characters. Do not claim the implementation is complete before emitting the fenced module. If no code change is needed, answer normally.
 2. If you update the module, end with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
 3. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.`;
 

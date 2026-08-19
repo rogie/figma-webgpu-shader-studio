@@ -74,7 +74,7 @@ test("agent prompt retains the complete-module apply contract", () => {
     mode: "agent",
   });
 
-  assert.match(prompt, /brief prose in future tense/);
+  assert.match(prompt, /exactly ONE plain-prose sentence in future tense/);
   assert.match(prompt, /Do not claim the implementation is complete/);
   assert.match(prompt, /COMPLETE updated module source/);
   assert.match(prompt, /applied automatically to the live editor/);

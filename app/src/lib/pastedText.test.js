@@ -359,6 +359,38 @@ test("keeps wrapped WebGL argument lists inside the paste", async () => {
   assert.doesNotMatch(result.content, /TEXTURE_/);
 });
 
+test("keeps a multi-line // comment inside a JS paste", async () => {
+  const comment = [
+    "  // We use separate read and write textures for broader WebGPU support.",
+    "  // These two nodes let each frame swap which texture holds",
+    "  // the previous state.",
+  ].join("\n");
+  assert.ok(scoreLine(comment.split("\n")[0]) >= 0.25);
+
+  const paste = [
+    "const createComputeNodes = ({",
+    "  resources,",
+    "}) => {",
+    "  const createComputeNode = (readIndex, writeIndex) =>",
+    "    computeMotionMask({",
+    "      stateReadTexture: texture(resources.stateTextures[readIndex]),",
+    "    }).compute(detectionWidth * detectionHeight, [8]);",
+    "",
+    comment,
+    "  return [",
+    "    createComputeNode(0, 1), // Read A, write B.",
+    "    createComputeNode(1, 0), // Read B, write A.",
+    "  ];",
+    "};",
+  ].join("\n");
+
+  const result = await splitComposerPaste({ text: paste });
+  assert.equal(result.content, "");
+  assert.equal(result.pastes.length, 1);
+  assert.match(result.pastes[0].text, /We use separate read and write textures/);
+  assert.match(result.pastes[0].text, /return \[/);
+});
+
 test("scores wrapped member arguments as code", () => {
   assert.ok(
     scoreLine("    gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR,") >=

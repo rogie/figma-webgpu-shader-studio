@@ -244,15 +244,27 @@ export function scoreLine(line) {
   if (/[a-z][A-Z]|_[a-z]/.test(trimmed)) score += 0.15;
   if (/^\s{2,}|^\t/.test(line)) score += 0.2;
 
-  // Prose signals. Numeric tokens in `ascii: [0, 128, …]` are not English words.
-  const alphaWords = trimmed.split(/\s+/).filter((word) => /[A-Za-z]{2,}/.test(word));
-  if (/[.!?]["')]?$/.test(trimmed) && !/[;{}]/.test(trimmed)) score -= 0.35;
-  if (alphaWords.length > 6 && symbolRatio < 0.06) score -= 0.4;
-  if (/^(?:the|this|a|an|we|i|you|it|here|there|and|but|so|if you|note|however)\b/i.test(trimmed)) {
-    score -= 0.3;
+  // Line comments are English by nature; sentence and word-count penalties
+  // would peel `// We use…` out of a JS paste as chat prose.
+  if (!isCodeCommentLine(line)) {
+    const alphaWords = trimmed.split(/\s+/).filter((word) => /[A-Za-z]{2,}/.test(word));
+    if (/[.!?]["')]?$/.test(trimmed) && !/[;{}]/.test(trimmed)) score -= 0.35;
+    if (alphaWords.length > 6 && symbolRatio < 0.06) score -= 0.4;
+    if (
+      /^(?:the|this|a|an|we|i|you|it|here|there|and|but|so|if you|note|however)\b/i.test(
+        trimmed
+      )
+    ) {
+      score -= 0.3;
+    }
   }
 
   return Math.max(-1, Math.min(1, score));
+}
+
+/** `//`, `/*`, or `--` so English comments are not scored as chat prose. */
+function isCodeCommentLine(line) {
+  return /^(?:\/\/|\/\*|--)/.test(line.trim());
 }
 
 /** Short "Do this:" leads. A colon on a tiny line looks like a high symbol ratio. */
@@ -469,6 +481,25 @@ function classifyPlainLines(lines, offset) {
   // Absorb isolated prose lines that sit inside a code run (comments, labels).
   for (let index = 1; index < flags.length - 1; index++) {
     if (!flags[index] && flags[index - 1] && flags[index + 1]) flags[index] = true;
+  }
+
+  // A block of `//` comments is still code even when every line is English.
+  for (let index = 0; index < flags.length; ) {
+    if (flags[index]) {
+      index += 1;
+      continue;
+    }
+    let end = index;
+    while (end < flags.length && !flags[end]) end += 1;
+    const before = index > 0 && flags[index - 1];
+    const after = end < flags.length && flags[end];
+    const commentShaped = lines
+      .slice(index, end)
+      .every((line) => !line.trim() || /^\s*(?:\/\/|\/\*|\*|#|--)/.test(line));
+    if (before && after && commentShaped) {
+      for (let cursor = index; cursor < end; cursor += 1) flags[cursor] = true;
+    }
+    index = end;
   }
 
   // Absorb short code-shaped gaps (object properties, array rows) between code.

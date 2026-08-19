@@ -9,6 +9,15 @@ export function sanitizeVersionSummary(value, fallback = "Saved version") {
   return (summary || fallback).slice(0, MAX_SUMMARY_LENGTH);
 }
 
+export function summarizeAgentVersion(
+  prose,
+  fallback = "Applied an AI-generated shader update"
+) {
+  const cleaned = sanitizeVersionSummary(prose, "");
+  const sentence = cleaned.match(/^.*?[.!?](?=\s|$)/)?.[0] || cleaned;
+  return sanitizeVersionSummary(sentence, fallback);
+}
+
 function lineCount(source) {
   const text = String(source || "");
   return text ? text.split(/\r?\n/).length : 0;
