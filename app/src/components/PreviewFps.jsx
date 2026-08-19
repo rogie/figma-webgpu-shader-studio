@@ -83,7 +83,7 @@ function PreviewFps({ hostRef, canvasTheme = "light", onCanvasThemeChange }) {
         <fig-select
           ref={resolutionControlRef}
           class="preview-resolution"
-          position="top left"
+          position="bottom left"
           value={pixelRatioMode}
           options={JSON.stringify([
             { value: "1x", label: "1x" },

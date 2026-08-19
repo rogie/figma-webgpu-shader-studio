@@ -193,6 +193,7 @@ body,
         display: inline-flex;
         flex: 0 0 auto;
         align-items: center;
+        color: var(--figma-color-icon-tertiary);
       }
 
       fig-input-text.shader-name {
@@ -211,10 +212,20 @@ body,
           outline: none !important;
           cursor: text;
           user-select: none;
+          flex: 0 1 auto;
+          width: auto;
+          max-width: 100%;
+          transition: background-color 120ms ease;
+
+          > input {
+            field-sizing: content;
+            min-width: 3ch;
+            cursor: pointer;
+          }
 
           &:hover,
           &:has(:is(input, textarea):focus) {
-            background-color: transparent;
+            background-color: var(--figma-color-bg-secondary);
             box-shadow: none !important;
             outline: none !important;
           }
@@ -767,8 +778,11 @@ body,
 
       .preview-performance {
         position: absolute;
-        right: var(--spacer-2);
-        bottom: var(--spacer-2);
+        top: var(--spacer-2);
+        left: 0;
+        right: 0;
+        width: max-content;
+        margin-inline: auto;
         z-index: 5;
         box-sizing: border-box;
         height: 2.5rem;
