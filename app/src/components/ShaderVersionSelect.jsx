@@ -1,15 +1,20 @@
-import { useEffect, useRef } from "react";
-import { versionOptionParts } from "../lib/shaderVersions.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  groupVersionsByDay,
+  versionRowParts,
+} from "../lib/shaderVersions.js";
 import "./ShaderVersionSelect.css";
 
-function versionSelectValue({
-  dirty,
-  hasUncheckpointedChanges,
-  versions,
-}) {
-  if (dirty) return "__unsaved";
-  if (hasUncheckpointedChanges) return "__autosaved";
-  return versions[0]?.id || "";
+const opaqueContent = { __html: "" };
+const PENDING_VALUE = "__pending";
+const PREVIEW_CLEAR_MS = 50;
+
+function selectState({ dirty, hasUncheckpointedChanges, versions }) {
+  if (dirty) return { value: "__unsaved", label: "Unsaved" };
+  if (hasUncheckpointedChanges) return { value: "__autosaved", label: "Autosave" };
+  const number = Number(versions[0]?.version_number || 0);
+  if (!number) return { value: "", label: "History" };
+  return { value: String(versions[0].id), label: `Version ${number}` };
 }
 
 function tooltipText({ dirty, hasUncheckpointedChanges }) {
@@ -20,92 +25,304 @@ function tooltipText({ dirty, hasUncheckpointedChanges }) {
   return "Shader version history";
 }
 
+function pendingRow({ dirty, hasUncheckpointedChanges }) {
+  if (dirty) {
+    return { title: "Unsaved changes", subtitle: "Not in version history" };
+  }
+  if (hasUncheckpointedChanges) {
+    return { title: "Autosave", subtitle: "Not in version history" };
+  }
+  return null;
+}
+
+function VersionMenuItem({
+  title,
+  time,
+  subtitle,
+  versionNumber,
+  current,
+  onRestore,
+}) {
+  const trailingInteractive = Boolean(time && !current);
+
+  return (
+    <div className="shader-version-item">
+      <h3 className="shader-version-item-label">{title}</h3>
+      {time ? (
+        <div
+          className={
+            trailingInteractive
+              ? "shader-version-item-trailing shader-version-item-trailing--interactive"
+              : "shader-version-item-trailing"
+          }
+        >
+          <span className="shader-version-item-time">{time}</span>
+          {!current && (
+            <div className="shader-version-item-actions">
+              <fig-menu class="shader-version-item-menu" position="bottom right">
+                <fig-button
+                  fig-menu-trigger=""
+                  variant="ghost"
+                  icon="true"
+                  aria-label={`More actions for Version ${versionNumber}`}
+                  onMouseDown={(event) => event.stopPropagation()}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <fig-icon name="more" />
+                </fig-button>
+                <fig-menu-item
+                  value="restore"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onRestore?.();
+                  }}
+                >
+                  Restore this version
+                </fig-menu-item>
+              </fig-menu>
+            </div>
+          )}
+        </div>
+      ) : null}
+      {subtitle ? (
+        <span className="shader-version-item-sublabel">{subtitle}</span>
+      ) : null}
+    </div>
+  );
+}
+
 export default function ShaderVersionSelect({
   versions = [],
   versionsLoading = false,
   dirty = false,
   hasUncheckpointedChanges = false,
   disabled = false,
+  onPreviewVersion,
   onChange,
 }) {
   const selectRef = useRef(null);
-  const value = versionSelectValue({
+  const popupRef = useRef(null);
+  const previewClearTimerRef = useRef(0);
+  const [open, setOpen] = useState(false);
+  const groups = useMemo(() => groupVersionsByDay(versions), [versions]);
+  const pending = pendingRow({ dirty, hasUncheckpointedChanges });
+  const currentVersionId = pending ? null : versions[0]?.id || null;
+  const { value: selectValue, label: selectLabel } = selectState({
     dirty,
     hasUncheckpointedChanges,
     versions,
   });
+  const selectOptions = useMemo(
+    () => JSON.stringify([{ value: selectValue, label: selectLabel }]),
+    [selectLabel, selectValue]
+  );
+
+  const clearPreview = useCallback(() => {
+    window.clearTimeout(previewClearTimerRef.current);
+    onPreviewVersion?.(null);
+  }, [onPreviewVersion]);
+
+  const closePopup = useCallback(() => {
+    clearPreview();
+    setOpen(false);
+  }, [clearPreview]);
+
+  const schedulePreviewClear = useCallback(() => {
+    window.clearTimeout(previewClearTimerRef.current);
+    previewClearTimerRef.current = window.setTimeout(() => {
+      onPreviewVersion?.(null);
+    }, PREVIEW_CLEAR_MS);
+  }, [onPreviewVersion]);
+
+  const previewVersion = useCallback(
+    (versionId) => {
+      window.clearTimeout(previewClearTimerRef.current);
+      onPreviewVersion?.(versionId);
+    },
+    [onPreviewVersion]
+  );
+
+  const getSelectTrigger = useCallback(() => {
+    return selectRef.current?.shadowRoot?.querySelector(".fig-select-trigger");
+  }, []);
+
+  useEffect(() => {
+    const select = selectRef.current;
+    const popup = popupRef.current;
+    const trigger = getSelectTrigger();
+    if (!popup) return;
+    if (open) {
+      popup.anchor = trigger || select;
+      popup.open = true;
+      trigger?.setAttribute("aria-expanded", "true");
+      trigger?.setAttribute("aria-haspopup", "dialog");
+    } else {
+      popup.open = false;
+      trigger?.setAttribute("aria-expanded", "false");
+    }
+  }, [getSelectTrigger, open]);
+
+  useEffect(() => {
+    if (disabled) closePopup();
+  }, [closePopup, disabled]);
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(previewClearTimerRef.current);
+    },
+    []
+  );
 
   useEffect(() => {
     const select = selectRef.current;
     if (!select) return;
-    const handleChange = (event) => {
-      const detail = event.detail;
-      const nextValue =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target?.value);
-      onChange?.(String(nextValue || ""));
+
+    const openHistory = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      if (select.open) select.open = false;
+      if (disabled) return;
+      setOpen((value) => !value);
     };
-    select.addEventListener("change", handleChange);
-    return () => select.removeEventListener("change", handleChange);
-  }, [onChange]);
+
+    const onKeydown = (event) => {
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "Enter" &&
+        event.key !== " "
+      ) {
+        return;
+      }
+      openHistory(event);
+    };
+
+    const trigger = getSelectTrigger();
+    trigger?.addEventListener("click", openHistory, true);
+    trigger?.addEventListener("keydown", onKeydown, true);
+
+    const keepSelectClosed = () => {
+      if (select.open) select.open = false;
+    };
+    const observer = new MutationObserver(keepSelectClosed);
+    observer.observe(select, { attributes: true, attributeFilter: ["open"] });
+
+    return () => {
+      trigger?.removeEventListener("click", openHistory, true);
+      trigger?.removeEventListener("keydown", onKeydown, true);
+      observer.disconnect();
+    };
+  }, [disabled, getSelectTrigger, selectOptions]);
+
+  const restore = useCallback(
+    (versionId) => {
+      closePopup();
+      if (
+        !versionId ||
+        versionId === currentVersionId ||
+        versionId === PENDING_VALUE
+      ) {
+        return;
+      }
+      const select = selectRef.current;
+      const restored = versions.find((version) => version.id === versionId);
+      if (select && restored) {
+        const number = Number(restored.version_number || 0);
+        const label = number ? `Version ${number}` : "History";
+        select.value = String(versionId);
+        select.setAttribute("label", label);
+      }
+      onChange?.(String(versionId));
+    },
+    [closePopup, currentVersionId, onChange, versions]
+  );
 
   return (
-    <fig-tooltip text={tooltipText({ dirty, hasUncheckpointedChanges })}>
-      <fig-select
-        ref={selectRef}
-        class="shader-version-select"
-        label="Version history"
+    <>
+      <fig-tooltip text={tooltipText({ dirty, hasUncheckpointedChanges })}>
+        <fig-select
+          ref={selectRef}
+          class="shader-version-select"
+          aria-label="Shader version history"
+          value={selectValue}
+          label={selectLabel}
+          options={selectOptions}
+          disabled={disabled ? "" : undefined}
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-tooltip>
+
+      <dialog
+        is="fig-popup"
+        ref={popupRef}
+        class="shader-version-popup"
         position="bottom right"
-        value={value}
-        disabled={disabled ? "" : undefined}
-        aria-label="Shader version history"
+        offset="8 0"
+        variant="popover"
+        closedby="any"
+        onClose={closePopup}
+        onCancel={closePopup}
       >
-        <fig-select-options>
+        <fig-header>
+          <h3>Version history</h3>
+        </fig-header>
+        <fig-content
+          onPointerLeave={clearPreview}
+        >
+          {pending && (
+            <fig-group name="Now">
+              <fig-menu-item value={PENDING_VALUE} disabled="" subtle="">
+                <VersionMenuItem
+                  title={pending.title}
+                  subtitle={pending.subtitle}
+                />
+              </fig-menu-item>
+            </fig-group>
+          )}
           {versionsLoading && versions.length === 0 && (
-            <fig-select-option value="" disabled="" label="Loading…">
+            <div className="shader-version-empty">
               <fig-spinner></fig-spinner>
-            </fig-select-option>
+              <span>Loading versions…</span>
+            </div>
           )}
-          {dirty && (
-            <fig-select-option value="__unsaved">
-              Unsaved
-            </fig-select-option>
+          {!versionsLoading && versions.length === 0 && (
+            <div className="shader-version-empty">
+              <span>No saved versions yet.</span>
+            </div>
           )}
-          {!dirty && hasUncheckpointedChanges && (
-            <fig-select-option value="__autosaved" label="Autosave">
-              <div className="shader-version-select-option">
-                <h3>Autosave</h3>
-                <label>Not in version history</label>
-              </div>
-            </fig-select-option>
-          )}
-          {versions.map((version, index) => {
-            const { title, date, subtitle } = versionOptionParts(version, {
-              current:
-                index === 0 && !dirty && !hasUncheckpointedChanges,
-            });
-            return (
-              <fig-select-option
-                key={version.id}
-                value={version.id}
-                label={title}
-              >
-                <div className="shader-version-select-option">
-                  <h3>
-                    {title}
-                  </h3>
-                  {subtitle ? (
-                    <label>
-                      {subtitle}
-                    </label>
-                  ) : null}
-                </div>
-              </fig-select-option>
-            );
-          })}
-        </fig-select-options>
-      </fig-select>
-    </fig-tooltip>
+          {groups.map((group) => (
+            <fig-group key={group.key} name={group.label}>
+              {group.versions.map((version) => {
+                const current = version.id === currentVersionId;
+                const { title, time, subtitle, fullDate } = versionRowParts(
+                  version,
+                  { current }
+                );
+                return (
+                  <fig-menu-item
+                    key={version.id}
+                    value={version.id}
+                    selected={current ? "" : undefined}
+                    subtle=""
+                    title={fullDate || undefined}
+                    onPointerEnter={() => previewVersion(version.id)}
+                    onPointerLeave={schedulePreviewClear}
+                  >
+                    <VersionMenuItem
+                      title={title}
+                      time={time}
+                      subtitle={subtitle}
+                      versionNumber={version.version_number}
+                      current={current}
+                      onRestore={() => restore(version.id)}
+                    />
+                  </fig-menu-item>
+                );
+              })}
+            </fig-group>
+          ))}
+        </fig-content>
+      </dialog>
+    </>
   );
 }

@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  groupVersionsByDay,
   hasUncheckpointedShaderState,
   isShaderStateConflict,
   sanitizeVersionSummary,
   summarizeAgentVersion,
   summarizeManualVersion,
-  versionOptionLabel,
+  versionRowParts,
 } from "../src/lib/shaderVersions.js";
 
 test("version summaries reuse prose without markdown or code", () => {
@@ -70,14 +71,47 @@ test("uncheckpointed state compares state revision counters", () => {
   );
 });
 
-test("version labels and conflicts normalize service metadata", () => {
-  const label = versionOptionLabel({
-    version_number: 7,
-    created_at: "2026-08-16T16:00:00.000Z",
-    summary: "Changed pixel shape",
-  });
-  assert.match(label, /^Version 7 · /);
-  assert.match(label, /Changed pixel shape$/);
+test("version rows lead with the summary and label the version below", () => {
+  const row = versionRowParts(
+    {
+      version_number: 7,
+      created_at: "2026-08-16T16:00:00.000Z",
+      summary: "Changed pixel shape",
+      checkpoint_kind: "agent",
+    },
+    { current: true }
+  );
+  assert.equal(row.title, "Changed pixel shape");
+  assert.equal(row.subtitle, "Version 7 · Current · AI");
+  assert.match(row.time, /\d/);
+
+  const unsummarized = versionRowParts({ version_number: 3 });
+  assert.equal(unsummarized.title, "Version 3");
+  assert.equal(unsummarized.subtitle, "Version 3");
+  assert.equal(unsummarized.time, "");
+});
+
+test("versions group by calendar day with relative day labels", () => {
+  const now = new Date("2026-08-19T18:00:00.000Z");
+  const day = (iso) => new Date(iso);
+  const groups = groupVersionsByDay(
+    [
+      { id: "c", created_at: day("2026-08-19T17:00:00.000Z").toISOString() },
+      { id: "b", created_at: day("2026-08-19T15:00:00.000Z").toISOString() },
+      { id: "a", created_at: day("2026-07-14T21:00:00.000Z").toISOString() },
+    ],
+    now
+  );
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].label, "Today");
+  assert.deepEqual(
+    groups[0].versions.map((version) => version.id),
+    ["c", "b"]
+  );
+  assert.match(groups[1].label, /July 14, 2026|Jul(y)? 2026/);
+});
+
+test("state conflicts normalize service metadata", () => {
   assert.equal(isShaderStateConflict({ code: "40001" }), true);
   assert.equal(
     isShaderStateConflict({ message: "shader_state_conflict" }),

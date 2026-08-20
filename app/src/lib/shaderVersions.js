@@ -63,34 +63,87 @@ export function hasUncheckpointedShaderState(shader) {
   return stateRevision > 0 && stateRevision !== versionedRevision;
 }
 
-export function versionOptionParts(version, { current = false } = {}) {
-  const number = Number(version?.version_number || 0);
+const VERSION_KIND_LABELS = {
+  agent: "AI",
+  publish: "Published",
+  restore: "Restored",
+  before_restore: "Safety copy",
+};
+
+function versionDate(version) {
   const createdAt = version?.created_at ? new Date(version.created_at) : null;
-  const date =
-    createdAt && !Number.isNaN(createdAt.valueOf())
-      ? createdAt.toLocaleString([], {
-          month: "short",
-          day: "numeric",
+  return createdAt && !Number.isNaN(createdAt.valueOf()) ? createdAt : null;
+}
+
+export function versionRowParts(version, { current = false } = {}) {
+  const number = Number(version?.version_number || 0);
+  const createdAt = versionDate(version);
+  const summary = sanitizeVersionSummary(version?.summary, "");
+  const kindLabel = VERSION_KIND_LABELS[version?.checkpoint_kind];
+  return {
+    title: summary || `Version ${number}`,
+    time: createdAt
+      ? createdAt.toLocaleTimeString([], {
           hour: "numeric",
           minute: "2-digit",
         })
-      : "";
-  const kindLabel = {
-    agent: "AI",
-    publish: "Published",
-    restore: "Restored",
-    before_restore: "Safety copy",
-  }[version?.checkpoint_kind];
-  return {
-    title: current ? `Current (Version ${number})` : `Version ${number}`,
-    date,
-    subtitle: [kindLabel, version?.summary].filter(Boolean).join(" · "),
+      : "",
+    subtitle: [
+      `Version ${number}`,
+      current ? "Current" : null,
+      summary ? kindLabel : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
+    fullDate: createdAt
+      ? createdAt.toLocaleString([], {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "",
   };
 }
 
-export function versionOptionLabel(version, { current = false } = {}) {
-  const { title, date, subtitle } = versionOptionParts(version, { current });
-  return [title, date, subtitle].filter(Boolean).join(" · ");
+function dayKey(date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function dayLabel(date, now) {
+  const today = dayKey(now);
+  if (dayKey(date) === today) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (dayKey(date) === dayKey(yesterday)) return "Yesterday";
+  return date.toLocaleDateString([], {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+export function groupVersionsByDay(versions = [], now = new Date()) {
+  const groups = [];
+  const byKey = new Map();
+  for (const version of versions) {
+    const createdAt = versionDate(version);
+    const key = createdAt ? dayKey(createdAt) : "unknown";
+    let group = byKey.get(key);
+    if (!group) {
+      group = {
+        key,
+        label: createdAt ? dayLabel(createdAt, now) : "Earlier",
+        versions: [],
+      };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.versions.push(version);
+  }
+  return groups;
 }
 
 export function isShaderStateConflict(error) {

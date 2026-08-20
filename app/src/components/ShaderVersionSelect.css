@@ -1,13 +1,117 @@
-.shader-version-select-option {
-  padding-left: var(--spacer-1);
-  min-width: 0;
+fig-select.shader-version-select {
+  --fig-select-trigger-width: max-content;
+  max-width: 12rem;
+}
 
-  & label {
+dialog[is="fig-popup"].shader-version-popup {
+  width: min(320px, calc(100vw - var(--spacer-6)));
+  padding: 0;
+
+  > fig-content {
+    max-height: min(60vh, 32rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  fig-menu-item {
+    height: auto;
+    min-height: var(--spacer-4);
+    align-items: stretch;
+    padding-block: var(--spacer-2);
+    padding-inline: var(--spacer-3);
+    cursor: default;
+
+    &[selected]:not([selected="false"])::before {
+      background-color: var(--figma-color-bg-selected);
+    }
+  }
+
+  .shader-version-item {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    align-items: start;
+    gap: 0 var(--spacer-2);
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .shader-version-item-label {
+    grid-column: 1;
+    grid-row: 1;
+    margin: 0;
     min-width: 0;
     display: -webkit-box;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
     overflow-wrap: anywhere;
+    font-weight: var(--body-medium-strong-fontWeight);
+  }
+
+  .shader-version-item-trailing {
+    grid-column: 2;
+    grid-row: 1 / -1;
+    position: relative;
+    flex-shrink: 0;
+    width: 2.75rem;
+    align-self: stretch;
+    min-height: var(--spacer-4);
+  }
+
+  .shader-version-item-time {
+    position: absolute;
+    inset: 0 0 auto;
+    height: var(--spacer-4);
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    color: var(--figma-color-text-secondary);
+    white-space: nowrap;
+    font-size: var(--body-small-fontSize);
+    line-height: 1;
+    text-align: right;
+  }
+
+  .shader-version-item-actions {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    align-items: center;
+    justify-items: end;
+    visibility: hidden;
+  }
+
+  fig-menu-item:hover .shader-version-item-trailing--interactive {
+    & .shader-version-item-time {
+      visibility: hidden;
+    }
+
+    & .shader-version-item-actions {
+      visibility: visible;
+    }
+  }
+
+  .shader-version-item-sublabel {
+    grid-column: 1;
+    grid-row: 2;
+    min-width: 0;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+    overflow-wrap: anywhere;
+    color: var(--figma-color-text-secondary);
+    font-size: var(--body-small-fontSize);
+  }
+
+  .shader-version-empty {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-2);
+    padding: var(--spacer-3) var(--spacer-2);
+    color: var(--figma-color-text-secondary);
   }
 }

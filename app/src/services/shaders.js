@@ -1,4 +1,5 @@
 import { supabase } from "../lib/supabase.js";
+import { formatSupabaseError } from "../lib/supabaseFetch.js";
 import { shaderPlanPath } from "../lib/chatPlans.js";
 
 export { shaderPlanPath };
@@ -15,7 +16,14 @@ function requireClient() {
 }
 
 function unwrap(result) {
-  if (result.error) throw result.error;
+  if (result.error) {
+    const error = result.error;
+    const wrapped = new Error(formatSupabaseError(error));
+    if (error.code) wrapped.code = error.code;
+    if (error.details) wrapped.details = error.details;
+    if (error.hint) wrapped.hint = error.hint;
+    throw wrapped;
+  }
   return result.data;
 }
 

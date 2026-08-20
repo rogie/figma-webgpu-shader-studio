@@ -110,6 +110,22 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - `fig-chat-message` is now a column flex container with `gap: var(--spacer-2-5)` and even `padding: var(--spacer-2-5)` on user messages. Extra top margins on `.pasted-text`, `.streaming-code-block`, and `fig-chat-message > fig-attachments` would stack on that gap — keep those children at `margin: 0`.
 - No README/JS API changes. Avatar positioning still uses `> fig-avatar`; this app wraps avatars in `fig-tooltip`, so the existing chat.css override remains required.
 
+## 8.9.4 notes
+
+- Patch-only: `fig-easing-curve` styling and drag behavior (`Shift` snaps handle Y to 0/1, minimal handles, fixed 45px padding). This app does not use `fig-easing-curve`; no app wiring required.
+
+## 8.9.5 notes
+
+- Patch-only: popover/popup shadow tokens (`--fig-popover-shadow`, `--fig-popup-shadow`) and dark-mode-aware drop shadows on `fig-popup` variants. Version history and other menu popovers pick this up automatically; no app CSS changes required.
+
+## 8.9.6 notes
+
+- `propskit-select` can now take an authored `<fig-select-options slot="panel">` child for rich option content instead of the `options` attribute alone. This app still serializes enum options into `options` in `Controls.jsx`; no wiring change required unless a property needs multi-line select rows.
+
+## 8.9.7 notes
+
+- Patch-only: `fig-menu-item[subtle]` hover/focus uses `--figma-color-bg-secondary` instead of `--figma-color-bg-menu-hover`. No README/JS API changes; version history menu items pick this up only if authored with `subtle`.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

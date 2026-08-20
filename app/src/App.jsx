@@ -67,6 +67,7 @@ import {
   figmaLibraryKey,
   filterShaderLibraryCards,
 } from "./lib/shaderLibrary.js";
+import { formatSupabaseError } from "./lib/supabaseFetch.js";
 import {
   getFigmaAccessToken,
   subscribeFigmaAccessToken,
@@ -114,6 +115,7 @@ import {
   isDraftId,
   shaderContentFingerprint,
 } from "./lib/shaderIdentity.js";
+import { shaderSaveQueue } from "./lib/shaderSaveQueue.js";
 import {
   getFigmaShader,
   listAllFigmaShaders,
@@ -476,6 +478,9 @@ export default function App() {
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
   const compileGenerationRef = useRef(0);
+  const versionPreviewCacheRef = useRef(new Map());
+  const versionPreviewStateRef = useRef(null);
+  const versionPreviewRequestRef = useRef(0);
   useEffect(() => {
     if (presetId) persistInputSource(presetId, inputSource);
   }, [presetId, inputSource]);
@@ -1619,19 +1624,21 @@ export default function App() {
           const current = existing.source
             ? existing
             : { ...existing, ...(await getShader(existing.id)) };
-          await saveShaderState({
-            shaderId: existing.id,
-            expectedStateRevision: current.state_revision,
-            source: sourceText,
-            kind: shaderKind,
-            parameterValues: {},
-            features: inferFeatures(sourceText),
-            checkpointKind: "manual",
-            summary: `Imported ${name} from Figma`,
-          });
-          saved = await updateShader(existing.id, {
-            name,
-            ...link,
+          saved = await shaderSaveQueue.enqueue(existing.id, async () => {
+            await saveShaderState({
+              shaderId: existing.id,
+              expectedStateRevision: current.state_revision,
+              source: sourceText,
+              kind: shaderKind,
+              parameterValues: {},
+              features: inferFeatures(sourceText),
+              checkpointKind: "manual",
+              summary: `Imported ${name} from Figma`,
+            });
+            return updateShader(existing.id, {
+              name,
+              ...link,
+            });
           });
         } else {
           saved = await createShader({
@@ -1775,9 +1782,14 @@ export default function App() {
         return changed ? next : previous;
       });
     } catch (libraryError) {
-      setError(libraryError.message || String(libraryError));
+      const message = formatSupabaseError(
+        libraryError,
+        "Could not load shaders from the server."
+      );
+      setError(message);
+      showNotice(message, { error: true });
     }
-  }, [authConfigured, userId]);
+  }, [authConfigured, showNotice, userId]);
 
   useEffect(() => {
     refreshLibrary();
@@ -1826,19 +1838,21 @@ export default function App() {
           const existing = await getShaderMaybe(cloudId);
           let saved;
           if (existing) {
-            await saveShaderState({
-              shaderId: existing.id,
-              expectedStateRevision: existing.state_revision,
-              source: payload.source,
-              kind: payload.kind,
-              parameterValues: payload.parameter_values,
-              features: payload.features,
-              checkpointKind: "manual",
-              summary: "Migrated local draft",
-            });
-            saved = await updateShader(existing.id, {
-              name: payload.name,
-              ...figmaShaderLink(editorActive ? session : draft),
+            saved = await shaderSaveQueue.enqueue(existing.id, async () => {
+              await saveShaderState({
+                shaderId: existing.id,
+                expectedStateRevision: existing.state_revision,
+                source: payload.source,
+                kind: payload.kind,
+                parameterValues: payload.parameter_values,
+                features: payload.features,
+                checkpointKind: "manual",
+                summary: "Migrated local draft",
+              });
+              return updateShader(existing.id, {
+                name: payload.name,
+                ...figmaShaderLink(editorActive ? session : draft),
+              });
             });
           } else {
             saved = await createShader(payload);
@@ -2468,6 +2482,18 @@ export default function App() {
         isPublic: publicFlag,
         pendingMedia,
       };
+      const shaderId =
+        isOwner && currentShader?.id ? currentShader.id : null;
+      if (
+        shaderId &&
+        background &&
+        !checkpointKind &&
+        shaderSaveQueue.isBusy(shaderId)
+      ) {
+        return currentShader ?? null;
+      }
+
+      const runSave = async () => {
       if (!background) setSaving(true);
       setError(null);
       try {
@@ -2692,12 +2718,18 @@ export default function App() {
           );
         }
         if (saveStillActive) {
-          setError(saveError.message || String(saveError));
+          setError(formatSupabaseError(saveError, "Could not save shader."));
         }
         throw saveError;
       } finally {
         if (!background) setSaving(false);
       }
+      };
+
+      if (shaderId) {
+        return shaderSaveQueue.enqueue(shaderId, runSave);
+      }
+      return runSave();
     },
     [
       currentShader,
@@ -2754,6 +2786,7 @@ export default function App() {
     if (
       !pendingAgentCheckpoint ||
       agentCheckpointSavingRef.current ||
+      saving ||
       !isOwner ||
       !currentShader?.id ||
       currentShader.id !== pendingAgentCheckpoint.shaderId ||
@@ -2782,7 +2815,7 @@ export default function App() {
       .finally(() => {
         agentCheckpointSavingRef.current = false;
       });
-  }, [currentShader?.id, isOwner, pendingAgentCheckpoint, saveShader]);
+  }, [currentShader?.id, isOwner, pendingAgentCheckpoint, saveShader, saving]);
 
   useEffect(() => {
     if (
@@ -2792,6 +2825,98 @@ export default function App() {
       pendingAgentCheckpointRef.current = null;
     }
   }, [presetId]);
+
+  useEffect(() => {
+    versionPreviewCacheRef.current.clear();
+    versionPreviewStateRef.current = null;
+    versionPreviewRequestRef.current += 1;
+  }, [currentShader?.id]);
+
+  const clearShaderVersionPreview = useCallback(() => {
+    if (!versionPreviewStateRef.current) return;
+    versionPreviewStateRef.current = null;
+    versionPreviewRequestRef.current += 1;
+    compile(sourceRef.current);
+  }, [compile]);
+
+  const previewShaderVersion = useCallback(
+    async (versionId) => {
+      if (!currentShader?.id || !runtimeReady) return;
+
+      if (!versionId) {
+        clearShaderVersionPreview();
+        return;
+      }
+
+      const liveVersionId = shaderVersions[0]?.id || null;
+      if (
+        versionId === liveVersionId &&
+        !dirty &&
+        !hasUncheckpointedShaderState(currentShader)
+      ) {
+        clearShaderVersionPreview();
+        return;
+      }
+
+      if (versionPreviewStateRef.current?.versionId === versionId) return;
+
+      const requestId = ++versionPreviewRequestRef.current;
+
+      try {
+        let target = versionPreviewCacheRef.current.get(versionId);
+        if (!target) {
+          target = await getShaderVersion(currentShader.id, versionId);
+          versionPreviewCacheRef.current.set(versionId, target);
+        }
+        if (requestId !== versionPreviewRequestRef.current) return;
+
+        const host = hostRef.current;
+        if (!host?.ready) return;
+
+        versionPreviewStateRef.current = { versionId };
+
+        let loaded;
+        try {
+          loaded = loadModule(target.source);
+        } catch {
+          return;
+        }
+
+        const nextValues = mergeValues(
+          loaded.props,
+          target.parameter_values || {}
+        );
+        const nextFeatures = inferFeatures(target.source);
+        const ok = await host.setModule(
+          { setup: loaded.setup, render: loaded.render },
+          {
+            isFill: detectKind(target.source) === "fill",
+            isAnimated: nextFeatures.isAnimated,
+            usesMouse: nextFeatures.usesMouse,
+            supportsRenderScale: supportsRenderScale(target.source),
+          }
+        );
+        if (requestId !== versionPreviewRequestRef.current || !ok) return;
+
+        host.setParams(nextValues);
+        host.setActive(true);
+        if (playPreferenceRef.current && nextFeatures.isAnimated) {
+          host.start();
+        } else {
+          host.redraw();
+        }
+      } catch {
+        // Ignore preview failures while browsing version history.
+      }
+    },
+    [
+      clearShaderVersionPreview,
+      currentShader,
+      dirty,
+      runtimeReady,
+      shaderVersions,
+    ]
+  );
 
   const restoreSelectedVersion = useCallback(
     async (versionId) => {
@@ -2804,6 +2929,8 @@ export default function App() {
       ) {
         return;
       }
+      versionPreviewStateRef.current = null;
+      versionPreviewRequestRef.current += 1;
       const restoreShaderId = currentShader.id;
       const restorePresetId = cloudChoiceId(restoreShaderId);
       setRestoringVersion(true);
@@ -2901,6 +3028,7 @@ export default function App() {
       setAuthOpen(true);
       return;
     }
+    if (saving) return;
     setPublishOpen(false);
     setPublishToast({ phase: "publishing" });
     try {
@@ -2915,9 +3043,11 @@ export default function App() {
       });
     } catch (publishError) {
       setPublishToast(null);
-      showNotice(publishError.message || "Publish failed", { error: true });
+      const message = formatSupabaseError(publishError, "Publish failed.");
+      setError(message);
+      showNotice(message, { error: true });
     }
-  }, [saveShader, showNotice, user]);
+  }, [saveShader, saving, showNotice, user]);
 
   const duplicateShader = useCallback(async () => {
     if (duplicating) return;
@@ -4037,6 +4167,7 @@ export default function App() {
                     dirty={dirty}
                     hasUncheckpointedChanges={hasUncheckpointedChanges}
                     disabled={saving || restoringVersion || versionsLoading}
+                    onPreviewVersion={previewShaderVersion}
                     onChange={restoreSelectedVersion}
                   />
                 )}
