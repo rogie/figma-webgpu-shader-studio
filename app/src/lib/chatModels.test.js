@@ -18,6 +18,9 @@ test("keeps only the shader-focused model shortlist", () => {
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.1-pro-preview",
+    "grok-4.6",
+    "grok-4.5",
+    "grok-4.3",
   ]);
 });
 
@@ -35,6 +38,7 @@ test("filters OpenAI models by availability in curated order", () => {
   assert.deepEqual(openaiIds, ["gpt-5.6-sol", "gpt-5.6-terra"]);
   assert.ok(groups.some((group) => group.label === "Anthropic"));
   assert.ok(groups.some((group) => group.label === "Gemini"));
+  assert.ok(groups.some((group) => group.label === "Grok"));
 });
 
 test("falls back to the curated groups when discovery is unavailable", () => {
@@ -57,6 +61,7 @@ test("filters Anthropic and Gemini without affecting undiscovered providers", ()
     ["gemini-3.5-flash"]
   );
   assert.ok(models.some((model) => model.provider === "openai"));
+  assert.ok(models.some((model) => model.provider === "grok"));
 });
 
 test("reconciles an unavailable saved model to the first available option", () => {

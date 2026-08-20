@@ -251,6 +251,7 @@ export default function PastedTextPlayground() {
                     <fig-tooltip text="Model: GPT-5.2">
                       <fig-select
                         class="chat-model-select"
+                        variant="ghost"
                         label="Model"
                         position="top left"
                         value="gpt-5.2"

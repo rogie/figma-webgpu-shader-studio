@@ -480,6 +480,8 @@ export default function App() {
   const compileGenerationRef = useRef(0);
   const versionPreviewCacheRef = useRef(new Map());
   const versionPreviewStateRef = useRef(null);
+  const versionPreviewAppliedRef = useRef(false);
+  const versionPreviewSnapshotRef = useRef(null);
   const versionPreviewRequestRef = useRef(0);
   useEffect(() => {
     if (presetId) persistInputSource(presetId, inputSource);
@@ -2831,15 +2833,23 @@ export default function App() {
   useEffect(() => {
     versionPreviewCacheRef.current.clear();
     versionPreviewStateRef.current = null;
+    versionPreviewAppliedRef.current = false;
+    versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
   }, [currentShader?.id]);
 
   const clearShaderVersionPreview = useCallback(() => {
-    if (!versionPreviewStateRef.current) return;
+    const snapshot = versionPreviewSnapshotRef.current;
+    const shouldRestore = versionPreviewAppliedRef.current && snapshot;
     versionPreviewStateRef.current = null;
+    versionPreviewAppliedRef.current = false;
+    versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
-    compile(sourceRef.current);
-  }, [compile]);
+    if (!shouldRestore) return;
+    setProps(snapshot.props);
+    setRuntimeValues(snapshot.values);
+    compile(snapshot.source);
+  }, [compile, setRuntimeValues]);
 
   const previewShaderVersion = useCallback(
     async (versionId) => {
@@ -2875,8 +2885,6 @@ export default function App() {
         const host = hostRef.current;
         if (!host?.ready) return;
 
-        versionPreviewStateRef.current = { versionId };
-
         let loaded;
         try {
           loaded = loadModule(target.source);
@@ -2900,6 +2908,18 @@ export default function App() {
         );
         if (requestId !== versionPreviewRequestRef.current || !ok) return;
 
+        compileGenerationRef.current += 1;
+        versionPreviewStateRef.current = { versionId };
+        versionPreviewAppliedRef.current = true;
+        if (!versionPreviewSnapshotRef.current) {
+          versionPreviewSnapshotRef.current = {
+            source: sourceRef.current,
+            props: structuredClone(propsRef.current),
+            values: structuredClone(valuesRef.current),
+          };
+        }
+        setProps(loaded.props);
+        setRuntimeValues(nextValues);
         host.setParams(nextValues);
         host.setActive(true);
         if (playPreferenceRef.current && nextFeatures.isAnimated) {
@@ -2932,6 +2952,8 @@ export default function App() {
         return;
       }
       versionPreviewStateRef.current = null;
+      versionPreviewAppliedRef.current = false;
+      versionPreviewSnapshotRef.current = null;
       versionPreviewRequestRef.current += 1;
       const restoreShaderId = currentShader.id;
       const restorePresetId = cloudChoiceId(restoreShaderId);

@@ -107,10 +107,15 @@ export function chatApplyTargetStatus({
 
 /**
  * @param {string} [provider]
- * @returns {"openai" | "anthropic" | "gemini" | null}
+ * @returns {"openai" | "anthropic" | "gemini" | "grok" | null}
  */
 function normalizeProvider(provider) {
-  if (provider === "openai" || provider === "anthropic" || provider === "gemini") {
+  if (
+    provider === "openai" ||
+    provider === "anthropic" ||
+    provider === "gemini" ||
+    provider === "grok"
+  ) {
     return provider;
   }
   return null;
@@ -132,6 +137,9 @@ function summarizeProviderError(text, provider) {
     }
     if (known === "anthropic") {
       return "API quota or rate limit exceeded. Check your Anthropic plan/billing, or switch model/provider.";
+    }
+    if (known === "grok") {
+      return "API quota or rate limit exceeded. Check your Grok plan/billing at console.x.ai, or switch model/provider.";
     }
     return "API quota or rate limit exceeded. Check your plan/billing for the selected provider, or switch model/provider.";
   }

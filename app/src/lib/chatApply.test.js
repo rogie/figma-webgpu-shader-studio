@@ -34,6 +34,13 @@ test("rate-limit errors mention the selected provider, not Gemini by default", (
   const gemini = formatChatError("RESOURCE_EXHAUSTED", { provider: "gemini" });
   assert.match(gemini, /Gemini/);
   assert.match(gemini, /ai\.google\.dev/);
+
+  const grok = formatChatError("Error 429: rate limit exceeded", {
+    provider: "grok",
+  });
+  assert.match(grok, /Grok/);
+  assert.match(grok, /console\.x\.ai/);
+  assert.doesNotMatch(grok, /Gemini|OpenAI/);
 });
 
 test("only applies chat output to its unchanged target shader", () => {

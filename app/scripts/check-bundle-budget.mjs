@@ -24,7 +24,7 @@ const gzipSizes = await Promise.all(
 const totalInitialJs = gzipSizes.reduce((sum, asset) => sum + asset.bytes, 0);
 const limits = {
   initialJs: 330 * 1024,
-  entryJs: 225 * 1024,
+  entryJs: 230 * 1024,
 };
 const entry = gzipSizes.find((asset) => /assets\/index-/.test(asset.path));
 

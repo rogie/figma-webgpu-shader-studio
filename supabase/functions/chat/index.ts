@@ -1,4 +1,4 @@
-import { isAllowedModel, MODELS, type Provider } from "./models.ts";
+import { isAllowedModel, isProvider, MODELS, type Provider } from "./models.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -440,14 +440,15 @@ function toGeminiContents(messages: ChatMessage[]) {
   });
 }
 
-async function streamOpenAI(
+async function streamOpenAICompatible(
   apiKey: string,
   model: string,
   system: string,
   messages: ChatMessage[],
+  options: { url: string; label: string },
 ): Promise<Response> {
   const fetchCompletion = (partialResponse = "") =>
-    fetch("https://api.openai.com/v1/chat/completions", {
+    fetch(options.url, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -469,7 +470,7 @@ async function streamOpenAI(
 
   if (!upstream.ok || !upstream.body) {
     const text = await upstream.text();
-    throw new Error(text || `OpenAI error ${upstream.status}`);
+    throw new Error(text || `${options.label} error ${upstream.status}`);
   }
 
   return sseStreamFromUpstream(upstream, (json) => {
@@ -502,6 +503,30 @@ async function streamOpenAI(
   }, fetchCompletion);
 }
 
+async function streamOpenAI(
+  apiKey: string,
+  model: string,
+  system: string,
+  messages: ChatMessage[],
+): Promise<Response> {
+  return streamOpenAICompatible(apiKey, model, system, messages, {
+    url: "https://api.openai.com/v1/chat/completions",
+    label: "OpenAI",
+  });
+}
+
+async function streamGrok(
+  apiKey: string,
+  model: string,
+  system: string,
+  messages: ChatMessage[],
+): Promise<Response> {
+  return streamOpenAICompatible(apiKey, model, system, messages, {
+    url: "https://api.x.ai/v1/chat/completions",
+    label: "Grok",
+  });
+}
+
 async function listProviderModels(
   provider: Provider,
   apiKey: string,
@@ -509,6 +534,12 @@ async function listProviderModels(
   let upstream: Response;
   if (provider === "openai") {
     upstream = await fetch("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+      },
+    });
+  } else if (provider === "grok") {
+    upstream = await fetch("https://api.x.ai/v1/models", {
       headers: {
         Authorization: `Bearer ${apiKey}`,
       },
@@ -773,13 +804,9 @@ Deno.serve(async (req) => {
 
   const provider = body.provider as Provider;
   if (body.action === "list-models") {
-    if (
-      provider !== "openai" &&
-      provider !== "anthropic" &&
-      provider !== "gemini"
-    ) {
+    if (!isProvider(provider)) {
       return jsonResponse(400, {
-        error: "provider must be openai, anthropic, or gemini",
+        error: "provider must be openai, anthropic, gemini, or grok",
       });
     }
     try {
@@ -797,9 +824,9 @@ Deno.serve(async (req) => {
   const fileName = typeof body.fileName === "string" ? body.fileName : "main.ts";
   const mode = body.mode === "plan" ? "plan" : "agent";
 
-  if (provider !== "openai" && provider !== "anthropic" && provider !== "gemini") {
+  if (!isProvider(provider)) {
     return jsonResponse(400, {
-      error: "provider must be openai, anthropic, or gemini",
+      error: "provider must be openai, anthropic, gemini, or grok",
     });
   }
   if (!isAllowedModel(provider, model)) {
@@ -846,6 +873,9 @@ Deno.serve(async (req) => {
 
     if (provider === "openai") {
       return await streamOpenAI(apiKey, model, system, history);
+    }
+    if (provider === "grok") {
+      return await streamGrok(apiKey, model, system, history);
     }
     if (provider === "anthropic") {
       return await streamAnthropic(apiKey, model, system, history);

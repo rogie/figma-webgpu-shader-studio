@@ -131,6 +131,13 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - `fig-menu` popups now portal to `[data-figui-overlay-root]` when the browser supports Popover API (`popover="manual"`), with `pointer-events: auto` on menu popups inside the overlay root. Fixes nested menus (e.g. version history inside an open `fig-popup`) clipping or positioning incorrectly. No app wiring required — editor/home menus pick this up automatically.
 - Fallback browsers keep the previous in-place menu popup behavior.
 
+## 8.9.11 notes
+
+- `fig-select` and `fig-dropdown` gain `variant="ghost"` (borderless, secondary hover fill). Toolbar/nav selects in this app already sit in chrome that expects the default trigger; do not switch them unless a surface should look like a ghost button.
+- README now documents `<fig-select>` in the core component table (still requires `fig-editor.js` / `fig-editor.css`, which this app already imports).
+- Package README lists shipped `.cursor/skills/` (`figui3`, `fig-editor`, `fig-lab`, `propkit`). App integrations still follow this repo's `/update` skill.
+- Layer docs no longer claim `fig-editor.js` registers `fig-layer`; this app does not rely on that transitive registration.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

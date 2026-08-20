@@ -24,6 +24,14 @@ export const CHAT_MODEL_GROUPS = [
       { provider: "gemini", id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
     ],
   },
+  {
+    label: "Grok",
+    models: [
+      { provider: "grok", id: "grok-4.6", label: "Grok 4.6" },
+      { provider: "grok", id: "grok-4.5", label: "Grok 4.5" },
+      { provider: "grok", id: "grok-4.3", label: "Grok 4.3" },
+    ],
+  },
 ];
 
 export const CHAT_MODELS = CHAT_MODEL_GROUPS.flatMap((group) => group.models);

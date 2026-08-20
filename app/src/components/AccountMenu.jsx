@@ -66,6 +66,7 @@ export default function AccountMenu({
     () => getProviderKeys().anthropic
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
+  const [grokKey, setGrokKey] = useState(() => getProviderKeys().grok);
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
   );
@@ -93,6 +94,7 @@ export default function AccountMenu({
       setOpenaiKey(keys.openai);
       setAnthropicKey(keys.anthropic);
       setGeminiKey(keys.gemini);
+      setGrokKey(keys.grok);
     });
   }, []);
 
@@ -232,6 +234,7 @@ export default function AccountMenu({
       setProviderKey("openai", openaiKey);
       setProviderKey("anthropic", anthropicKey);
       setProviderKey("gemini", geminiKey);
+      setProviderKey("grok", grokKey);
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
@@ -536,14 +539,25 @@ export default function AccountMenu({
                 dangerouslySetInnerHTML={{ __html: "" }}
               />
             </fig-field>
+            <fig-field>
+              <label>Grok</label>
+              <fig-input-text
+                type="password"
+                full=""
+                value={grokKey}
+                placeholder="xai-…"
+                autocomplete="off"
+                onInput={(event) => setGrokKey(event.target.value)}
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
+            </fig-field>
           </fig-group>
 
           {FIGMA_LIBRARY_UI_ENABLED && (
             <fig-group name="Figma" collapsible="" open="">
               <p>
                 Connect with OAuth to browse and import your Figma shader effects
-                and fills. OAuth tokens stay on this device; the client secret
-                stays in the server function.
+                and fills.
               </p>
               <fig-footer borderless="">
                 {figmaConnected ? (

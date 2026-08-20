@@ -1,4 +1,10 @@
-export type Provider = "openai" | "anthropic" | "gemini";
+export type Provider = "openai" | "anthropic" | "gemini" | "grok";
+
+export const PROVIDERS: Provider[] = ["openai", "anthropic", "gemini", "grok"];
+
+export function isProvider(value: string | undefined): value is Provider {
+  return PROVIDERS.includes(value as Provider);
+}
 
 export type ModelOption = {
   provider: Provider;
@@ -21,6 +27,11 @@ export const MODELS: ModelOption[] = [
   { provider: "gemini", id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
   { provider: "gemini", id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   { provider: "gemini", id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+
+  // Grok (xAI)
+  { provider: "grok", id: "grok-4.6", label: "Grok 4.6" },
+  { provider: "grok", id: "grok-4.5", label: "Grok 4.5" },
+  { provider: "grok", id: "grok-4.3", label: "Grok 4.3" },
 ];
 
 export function isAllowedModel(provider: string, model: string): boolean {

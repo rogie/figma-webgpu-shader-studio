@@ -6,7 +6,12 @@ export function providerSupportsChatVideo(provider) {
 }
 
 export function providerSupportsChatImage(provider) {
-  return provider === "openai" || provider === "anthropic" || provider === "gemini";
+  return (
+    provider === "openai" ||
+    provider === "anthropic" ||
+    provider === "gemini" ||
+    provider === "grok"
+  );
 }
 
 /**

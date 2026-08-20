@@ -4,13 +4,13 @@ fig-select.shader-version-select {
 }
 
 dialog[is="fig-popup"].shader-version-popup {
-  width: min(320px, calc(100vw - var(--spacer-6)));
-  padding: 0;
+  max-width: min(20rem, calc(100vw - var(--spacer-6)));
 
   > fig-content {
     max-height: min(60vh, 32rem);
     overflow-y: auto;
     overscroll-behavior: contain;
+    padding-top: 0;
   }
 
   .shader-version-menu-item {
@@ -31,7 +31,7 @@ dialog[is="fig-popup"].shader-version-popup {
     grid-template-columns: 1fr auto;
     grid-template-rows: auto auto;
     align-items: start;
-    gap: 0 var(--spacer-2);
+    gap: 0 var(--spacer-3);
     flex: 1 1 auto;
     min-width: 0;
   }
@@ -39,7 +39,6 @@ dialog[is="fig-popup"].shader-version-popup {
   .shader-version-item-label {
     grid-column: 1;
     grid-row: 1;
-    margin: 0;
     min-width: 0;
     display: -webkit-box;
     -webkit-box-orient: vertical;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   groupVersionsByDay,
   versionRowParts,
@@ -7,7 +7,15 @@ import "./ShaderVersionSelect.css";
 
 const opaqueContent = { __html: "" };
 const PENDING_VALUE = "__pending";
-const PREVIEW_CLEAR_MS = 50;
+
+function readVersionMenuItem(node) {
+  if (!(node instanceof Element)) return null;
+  const item = node.closest("fig-menu-item.shader-version-menu-item");
+  if (!item || item.hasAttribute("disabled")) return null;
+  const versionId = item.getAttribute("value");
+  if (!versionId || versionId === PENDING_VALUE) return null;
+  return versionId;
+}
 
 function selectState({ dirty, hasUncheckpointedChanges, versions }) {
   if (dirty) return { value: "__unsaved", label: "Unsaved" };
@@ -102,7 +110,7 @@ export default function ShaderVersionSelect({
 }) {
   const selectRef = useRef(null);
   const popupRef = useRef(null);
-  const previewClearTimerRef = useRef(0);
+  const hoveredVersionRef = useRef(null);
   const [open, setOpen] = useState(false);
   const groups = useMemo(() => groupVersionsByDay(versions), [versions]);
   const pending = pendingRow({ dirty, hasUncheckpointedChanges });
@@ -118,7 +126,6 @@ export default function ShaderVersionSelect({
   );
 
   const clearPreview = useCallback(() => {
-    window.clearTimeout(previewClearTimerRef.current);
     onPreviewVersion?.(null);
   }, [onPreviewVersion]);
 
@@ -127,32 +134,54 @@ export default function ShaderVersionSelect({
     setOpen(false);
   }, [clearPreview]);
 
-  const schedulePreviewClear = useCallback(() => {
-    window.clearTimeout(previewClearTimerRef.current);
-    previewClearTimerRef.current = window.setTimeout(() => {
-      onPreviewVersion?.(null);
-    }, PREVIEW_CLEAR_MS);
-  }, [onPreviewVersion]);
-
   const previewVersion = useCallback(
     (versionId) => {
-      window.clearTimeout(previewClearTimerRef.current);
       onPreviewVersion?.(versionId);
     },
     [onPreviewVersion]
   );
+
+  useEffect(() => {
+    if (!open) {
+      hoveredVersionRef.current = null;
+      return undefined;
+    }
+
+    const popup = popupRef.current;
+    const content = popup?.querySelector("fig-content");
+    if (!content) return undefined;
+
+    const previewHoveredItem = (event) => {
+      const versionId = readVersionMenuItem(event.target);
+      if (!versionId || versionId === hoveredVersionRef.current) return;
+      hoveredVersionRef.current = versionId;
+      previewVersion(versionId);
+    };
+
+    const restoreWhenLeavingList = (event) => {
+      const related = event.relatedTarget;
+      if (related instanceof Node && content.contains(related)) return;
+      hoveredVersionRef.current = null;
+      clearPreview();
+    };
+
+    content.addEventListener("pointerover", previewHoveredItem);
+    content.addEventListener("pointerleave", restoreWhenLeavingList);
+    return () => {
+      content.removeEventListener("pointerover", previewHoveredItem);
+      content.removeEventListener("pointerleave", restoreWhenLeavingList);
+    };
+  }, [clearPreview, open, previewVersion]);
 
   const getSelectTrigger = useCallback(() => {
     return selectRef.current?.shadowRoot?.querySelector(".fig-select-trigger");
   }, []);
 
   useEffect(() => {
-    const select = selectRef.current;
     const popup = popupRef.current;
     const trigger = getSelectTrigger();
     if (!popup) return;
     if (open) {
-      popup.anchor = trigger || select;
       popup.open = true;
       trigger?.setAttribute("aria-expanded", "true");
       trigger?.setAttribute("aria-haspopup", "dialog");
@@ -173,13 +202,6 @@ export default function ShaderVersionSelect({
   useEffect(() => {
     if (disabled) closePopup();
   }, [closePopup, disabled]);
-
-  useEffect(
-    () => () => {
-      window.clearTimeout(previewClearTimerRef.current);
-    },
-    []
-  );
 
   useEffect(() => {
     const select = selectRef.current;
@@ -251,10 +273,12 @@ export default function ShaderVersionSelect({
         <fig-select
           ref={selectRef}
           class="shader-version-select"
+          variant="ghost"
           aria-label="Shader version history"
           value={selectValue}
           label={selectLabel}
           options={selectOptions}
+          id="shader-version-select"
           disabled={disabled ? "" : undefined}
           dangerouslySetInnerHTML={opaqueContent}
         />
@@ -264,22 +288,19 @@ export default function ShaderVersionSelect({
         is="fig-popup"
         ref={popupRef}
         class="shader-version-popup"
-        popover="manual"
         position="bottom right"
-        offset="8 0"
-        variant="popover"
         closedby="any"
+        anchor="#shader-version-select"
         onClose={closePopup}
         onCancel={closePopup}
       >
         <fig-header>
           <h3>Version history</h3>
         </fig-header>
-        <fig-content
-          onPointerLeave={clearPreview}
-        >
+        <fig-content>
           {pending && (
-            <fig-group name="Now">
+            <>
+              <fig-separator label="Now" sticky="" />
               <fig-menu-item
                 class="shader-version-menu-item"
                 value={PENDING_VALUE}
@@ -291,7 +312,7 @@ export default function ShaderVersionSelect({
                   subtitle={pending.subtitle}
                 />
               </fig-menu-item>
-            </fig-group>
+            </>
           )}
           {versionsLoading && versions.length === 0 && (
             <div className="shader-version-empty">
@@ -305,7 +326,8 @@ export default function ShaderVersionSelect({
             </div>
           )}
           {groups.map((group) => (
-            <fig-group key={group.key} name={group.label}>
+            <Fragment key={group.key}>
+              <fig-separator label={group.label} sticky="" />
               {group.versions.map((version) => {
                 const current = version.id === currentVersionId;
                 const { title, time, subtitle, fullDate } = versionRowParts(
@@ -320,8 +342,6 @@ export default function ShaderVersionSelect({
                     selected={current ? "" : undefined}
                     subtle=""
                     title={fullDate || undefined}
-                    onPointerEnter={() => previewVersion(version.id)}
-                    onPointerLeave={schedulePreviewClear}
                   >
                     <VersionMenuItem
                       title={title}
@@ -334,7 +354,7 @@ export default function ShaderVersionSelect({
                   </fig-menu-item>
                 );
               })}
-            </fig-group>
+            </Fragment>
           ))}
         </fig-content>
       </dialog>

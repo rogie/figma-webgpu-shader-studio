@@ -89,9 +89,9 @@ shader id). Legacy single-segment links like `/dither` still load.
 ## AI chat (BYOK)
 
 The Code pane’s **Chat** mode iterates on the open shader module using your own
-OpenAI, Anthropic, or Gemini API key.
+OpenAI, Anthropic, Gemini, or Grok API key.
 
-1. Open **Settings** and paste an OpenAI, Anthropic, and/or Gemini key. Keys are
+1. Open **Settings** and paste an OpenAI, Anthropic, Gemini, and/or Grok key. Keys are
    stored only in `localStorage` on this device — never in Supabase.
 2. Deploy the Edge Function that proxies provider calls (needed for Anthropic
    CORS and to keep the system prompt server-side):
@@ -102,8 +102,8 @@ OpenAI, Anthropic, or Gemini API key.
 
    The function reads `x-user-api-key` from each request. No platform
    provider secrets are required.
-3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-4.1 / 4o /
-   o-series, Claude Opus/Sonnet/Haiku, Gemini 2.x / 3.x), send a message, and
+3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-5.6, Claude,
+   Gemini 3.x, or Grok 4.x), send a message, and
    when the model returns a full TypeScript fence it is applied to the editor
    (with Undo apply).
 

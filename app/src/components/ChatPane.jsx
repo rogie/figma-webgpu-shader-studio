@@ -204,6 +204,10 @@ const ChatPane = forwardRef(function ChatPane(
     () => getProviderKey("gemini"),
     [keyVersion]
   );
+  const grokApiKey = useMemo(
+    () => getProviderKey("grok"),
+    [keyVersion]
+  );
   const modelGroups = useMemo(
     () => groupsForAvailableProviderModels(availableProviderModels),
     [availableProviderModels]
@@ -292,6 +296,7 @@ const ChatPane = forwardRef(function ChatPane(
       ["openai", openaiApiKey],
       ["anthropic", anthropicApiKey],
       ["gemini", geminiApiKey],
+      ["grok", grokApiKey],
     ];
     for (const [provider, providerKey] of providerKeys) {
       if (!providerKey) continue;
@@ -309,7 +314,7 @@ const ChatPane = forwardRef(function ChatPane(
         });
     }
     return () => controller.abort();
-  }, [openaiApiKey, anthropicApiKey, geminiApiKey]);
+  }, [openaiApiKey, anthropicApiKey, geminiApiKey, grokApiKey]);
 
   useEffect(() => {
     if (Object.keys(availableProviderModels).length === 0) return;
@@ -1179,6 +1184,7 @@ ${pendingPlan.content}
     <fig-select
       ref={modelControlRef}
       class="chat-model-select"
+      variant="ghost"
       label="Model"
       position="top left"
       value={model.id}
