@@ -162,8 +162,7 @@ body,
       margin-top: calc(var(--spacer-2) * -1);
 
       .shader-title {
-        flex: 1;
-        width: 100%;
+        flex: 1 1 auto;
         min-width: 0;
         display: flex;
         align-items: center;
@@ -194,6 +193,13 @@ body,
         flex: 0 0 auto;
         align-items: center;
         color: var(--figma-color-icon-tertiary);
+      }
+
+      > hstack:last-child {
+        flex: 0 0 auto;
+        align-items: center;
+        position: relative;
+        z-index: 1;
       }
 
       fig-input-text.shader-name {
@@ -238,10 +244,6 @@ body,
 
       .shader-title:has(.shader-author-avatar) fig-input-text.shader-name {
         margin-left: 0;
-      }
-
-      > hstack:last-child {
-        flex: 0 0 auto;
       }
     }
 

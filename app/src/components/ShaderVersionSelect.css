@@ -13,7 +13,7 @@ dialog[is="fig-popup"].shader-version-popup {
     overscroll-behavior: contain;
   }
 
-  fig-menu-item {
+  .shader-version-menu-item {
     height: auto;
     min-height: var(--spacer-4);
     align-items: stretch;
@@ -83,7 +83,7 @@ dialog[is="fig-popup"].shader-version-popup {
     visibility: hidden;
   }
 
-  fig-menu-item:hover .shader-version-item-trailing--interactive {
+  fig-menu-item.shader-version-menu-item:hover .shader-version-item-trailing--interactive {
     & .shader-version-item-time {
       visibility: hidden;
     }

@@ -163,6 +163,14 @@ export default function ShaderVersionSelect({
   }, [getSelectTrigger, open]);
 
   useEffect(() => {
+    const popup = popupRef.current;
+    if (!popup) return;
+    const root =
+      document.body.querySelector("[data-figui-overlay-root]") ?? document.body;
+    if (popup.parentElement !== root) root.append(popup);
+  }, []);
+
+  useEffect(() => {
     if (disabled) closePopup();
   }, [closePopup, disabled]);
 
@@ -256,6 +264,7 @@ export default function ShaderVersionSelect({
         is="fig-popup"
         ref={popupRef}
         class="shader-version-popup"
+        popover="manual"
         position="bottom right"
         offset="8 0"
         variant="popover"
@@ -271,7 +280,12 @@ export default function ShaderVersionSelect({
         >
           {pending && (
             <fig-group name="Now">
-              <fig-menu-item value={PENDING_VALUE} disabled="" subtle="">
+              <fig-menu-item
+                class="shader-version-menu-item"
+                value={PENDING_VALUE}
+                disabled=""
+                subtle=""
+              >
                 <VersionMenuItem
                   title={pending.title}
                   subtitle={pending.subtitle}
@@ -300,6 +314,7 @@ export default function ShaderVersionSelect({
                 );
                 return (
                   <fig-menu-item
+                    class="shader-version-menu-item"
                     key={version.id}
                     value={version.id}
                     selected={current ? "" : undefined}

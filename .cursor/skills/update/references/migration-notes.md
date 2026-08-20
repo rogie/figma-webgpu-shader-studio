@@ -126,6 +126,11 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 
 - Patch-only: `fig-menu-item[subtle]` hover/focus uses `--figma-color-bg-secondary` instead of `--figma-color-bg-menu-hover`. No README/JS API changes; version history menu items pick this up only if authored with `subtle`.
 
+## 8.9.8 notes
+
+- `fig-menu` popups now portal to `[data-figui-overlay-root]` when the browser supports Popover API (`popover="manual"`), with `pointer-events: auto` on menu popups inside the overlay root. Fixes nested menus (e.g. version history inside an open `fig-popup`) clipping or positioning incorrectly. No app wiring required — editor/home menus pick this up automatically.
+- Fallback browsers keep the previous in-place menu popup behavior.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

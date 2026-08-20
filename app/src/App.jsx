@@ -2067,10 +2067,10 @@ export default function App() {
         const draft = drafts.find((item) => item.id === id);
         if (draft) openDraft(draft);
       } else if (id.startsWith("cloud:")) {
-        const shader = cloudShaders.find(
-          (item) => item.id === id.slice("cloud:".length)
-        );
+        const cloudId = id.slice("cloud:".length);
+        const shader = cloudShaders.find((item) => item.id === cloudId);
         if (shader) openCloudShader(shader);
+        else openRouteId(cloudId);
       } else {
         choosePreset(id).catch((presetError) =>
           setError(presetError.message || String(presetError))
@@ -2083,6 +2083,7 @@ export default function App() {
       drafts,
       openCloudShader,
       openDraft,
+      openRouteId,
     ]
   );
 
@@ -2122,12 +2123,13 @@ export default function App() {
           ? event.detail.slice("cloud:".length)
           : event.detail;
         pushShaderUrl(id);
+        setRouteId(id);
       }
       chooseItem(event.detail);
     };
     chooser.addEventListener("change", handleChange);
     return () => chooser.removeEventListener("change", handleChange);
-  }, [chooseItem, viewMode]);
+  }, [chooseItem, setRouteId, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "home") return;
@@ -3807,47 +3809,9 @@ export default function App() {
         />
       );
 
-      if (!card.canDelete) {
-        return (
-          <fig-choice key={card.key} value={card.key} aria-label={card.name}>
-            {cardNode}
-          </fig-choice>
-        );
-      }
-
       return (
         <fig-choice key={card.key} value={card.key} aria-label={card.name}>
-          <fig-menu
-            class="shader-context-menu"
-            trigger="contextmenu"
-            position="center right"
-          >
-            <div fig-menu-trigger="">{cardNode}</div>
-            <fig-menu-item
-              value="publish"
-              onClick={(event) => {
-                openPublishForCard(
-                  card,
-                  event.currentTarget.closest("fig-choice")
-                );
-              }}
-            >
-              Publish
-            </fig-menu-item>
-            <fig-separator />
-            <fig-menu-item
-              value="delete"
-              onClick={() => {
-                if (card.draft) {
-                  setDeleteTarget({ draft: card.draft, name: card.name });
-                } else if (card.cloud) {
-                  setDeleteTarget({ cloud: card.cloud, name: card.name });
-                }
-              }}
-            >
-              Delete
-            </fig-menu-item>
-          </fig-menu>
+          {cardNode}
         </fig-choice>
       );
     });
@@ -4136,16 +4100,6 @@ export default function App() {
                   }}
                   dangerouslySetInnerHTML={{ __html: "" }}
                 />
-                {!renaming && currentShader?.is_public && (
-                  <span
-                    className="shader-published-status"
-                    aria-label="Published"
-                  >
-                    <fig-tooltip text="Published">
-                      <fig-icon name="globe" />
-                    </fig-tooltip>
-                  </span>
-                )}
                 {renaming && (
                   <fig-button
                     variant="primary"
@@ -4160,6 +4114,16 @@ export default function App() {
             </div>
             {!renaming && (
               <hstack>
+                {currentShader?.is_public && (
+                  <span
+                    className="shader-published-status"
+                    aria-label="Published"
+                  >
+                    <fig-tooltip text="Published">
+                      <fig-icon name="globe" />
+                    </fig-tooltip>
+                  </span>
+                )}
                 {isOwner && currentShader && (
                   <ShaderVersionSelect
                     versions={shaderVersions}

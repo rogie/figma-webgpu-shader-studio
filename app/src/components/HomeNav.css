@@ -70,33 +70,6 @@
       }
     }
 
-    .shader-context-menu {
-      display: block;
-      width: 100%;
-
-      > [fig-menu-trigger] {
-        display: block;
-        width: 100%;
-      }
-    }
-
-    fig-choice {
-      width: 100%;
-      height: max-content;
-      min-width: 0;
-      align-self: start;
-      align-items: stretch;
-
-      &:hover,
-      &[selected]:not([selected="false"]) {
-        background: transparent;
-      }
-
-      &[selected]:not([selected="false"])::after {
-        content: none;
-      }
-    }
-
     .shader-nav-card {
       width: 100%;
       min-height: 10rem;
@@ -146,6 +119,22 @@
       }
     }
 
+    fig-choice {
+      width: 100%;
+      height: max-content;
+      min-width: 0;
+      align-self: start;
+      align-items: stretch;
+
+      &:hover,
+      &[selected]:not([selected="false"]) {
+        background: transparent;
+      }
+
+      &[selected]:not([selected="false"])::after {
+        content: none;
+      }
+    }
   }
 
   @media (min-width: 1400px) {
