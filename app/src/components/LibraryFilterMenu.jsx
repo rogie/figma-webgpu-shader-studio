@@ -6,9 +6,9 @@ import "./LibraryFilterMenu.css";
 
 const KIND_OPTIONS = [
   { value: "all", label: "All types" },
-  { value: "effect", label: "Effects" },
-  { value: "fill", label: "Fills" },
-  { value: "composition", label: "Composers" },
+  { value: "effect", label: "Shader effects" },
+  { value: "fill", label: "Shader fills" },
+  { value: "composition", label: "Compositions" },
 ];
 
 function FilterMenuItem({ value, checked, children }) {
@@ -32,7 +32,6 @@ export default function LibraryFilterMenu({
   origin = "all",
   onOriginChange,
   authors = [],
-  composerUiEnabled = false,
 }) {
   const filtersActive =
     kind !== "all" || author !== "all" || origin !== "all";
@@ -56,10 +55,6 @@ export default function LibraryFilterMenu({
     [onMenuChange]
   );
 
-  const kinds = KIND_OPTIONS.filter(
-    (option) => option.value !== "composition" || composerUiEnabled
-  );
-
   return (
     <fig-menu ref={menuRef} class="library-filter-menu" position="bottom right">
       <fig-tooltip text="Filter">
@@ -75,7 +70,7 @@ export default function LibraryFilterMenu({
         </fig-button>
       </fig-tooltip>
       <fig-separator label="Types" />
-      {kinds.map((option) => (
+      {KIND_OPTIONS.map((option) => (
         <FilterMenuItem
           key={option.value}
           value={`kind:${option.value}`}

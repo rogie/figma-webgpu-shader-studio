@@ -3,7 +3,6 @@ import test from "node:test";
 import {
   collectCompositionFeatures,
   compositionsReferencing,
-  COMPOSER_UI_STORAGE_KEY,
   emptyComposition,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
@@ -12,30 +11,12 @@ import {
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
-  readComposerUiEnabled,
   reorderCompositionEffects,
   referencedShaderKeys,
   resolvedLibraryKind,
   unpublishedCompositionRefs,
-  writeComposerUiEnabled,
+  promoteCompositionRefs,
 } from "./composition.js";
-
-test("composer UI defaults off and persists only an explicit true", () => {
-  const values = {};
-  const storage = {
-    getItem: (key) => values[key] ?? null,
-    setItem: (key, value) => {
-      values[key] = String(value);
-    },
-  };
-
-  assert.equal(readComposerUiEnabled(storage), false);
-  assert.equal(writeComposerUiEnabled(true, storage), true);
-  assert.equal(values[COMPOSER_UI_STORAGE_KEY], "true");
-  assert.equal(readComposerUiEnabled(storage), true);
-  assert.equal(writeComposerUiEnabled(false, storage), false);
-  assert.equal(readComposerUiEnabled(storage), false);
-});
 
 test("empty composition defaults to an image fill", () => {
   assert.deepEqual(emptyComposition(), {
@@ -235,6 +216,39 @@ test("publish requires every referenced shader to be public", () => {
     ),
     []
   );
+});
+
+test("publish uses live cloud publicity over a stale resolved cache", () => {
+  const graph = {
+    fill: { type: "shader", shaderId: "cloud:fill" },
+    effects: [{ shaderId: "draft:fx" }],
+  };
+  assert.deepEqual(
+    unpublishedCompositionRefs(
+      graph,
+      new Map([
+        ["cloud:fill", { is_public: false }],
+        ["draft:fx", { is_public: false }],
+      ]),
+      [
+        { id: "fill", is_public: true },
+        { id: "fx", is_public: true },
+      ]
+    ),
+    []
+  );
+});
+
+test("promoteCompositionRefs rewrites published draft ids to cloud ids", () => {
+  const promoted = promoteCompositionRefs(
+    {
+      fill: { type: "shader", shaderId: "draft:fill" },
+      effects: [{ id: "a", shaderId: "draft:fx" }],
+    },
+    [{ id: "fill", is_public: true }, { id: "fx", is_public: false }]
+  );
+  assert.equal(promoted.fill.shaderId, "cloud:fill");
+  assert.equal(promoted.effects[0].shaderId, "cloud:fx");
 });
 
 test("finds compositions that reference a shader", () => {

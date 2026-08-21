@@ -132,9 +132,7 @@ import {
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
   emptyComposition,
-  readComposerUiEnabled,
   resolvedLibraryKind,
-  subscribeComposerUiEnabled,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
   mediaFillType,
@@ -142,6 +140,7 @@ import {
   parseCompositionShaderId,
   referencedShaderKeys,
   unpublishedCompositionRefs,
+  promoteCompositionRefs,
 } from "./lib/composition.js";
 import {
   cloudChoiceId,
@@ -233,13 +232,10 @@ function groupByKind(
   fillLabel,
   compositionLabel,
   keyPrefix,
-  composerUiEnabled,
 ) {
   const effects = cards.filter((card) => card.kind === "effect");
   const fills = cards.filter((card) => card.kind === "fill");
-  const compositions = composerUiEnabled
-    ? cards.filter((card) => card.kind === COMPOSITION_KIND)
-    : [];
+  const compositions = cards.filter((card) => card.kind === COMPOSITION_KIND);
   return [
     ...(compositions.length
       ? [
@@ -265,20 +261,14 @@ function groupByKind(
   ];
 }
 
-function groupLibraryCards(cards, composerUiEnabled) {
+function groupLibraryCards(cards) {
   return groupByKind(
     cards,
-    "Shader effect",
-    "Shader fill",
+    "Shader effects",
+    "Shader fills",
     "Compositions",
     "studio",
-    composerUiEnabled,
   );
-}
-
-function visibleLibraryKind(kind, composerUiEnabled) {
-  if (!composerUiEnabled && kind === COMPOSITION_KIND) return "all";
-  return kind;
 }
 
 function compositionWithLayerValues(graph, layerId, values) {
@@ -465,9 +455,6 @@ export default function App() {
   } = usePanelLayout();
   const [theme, setTheme] = useState(savedTheme);
   const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
-  const [composerUiEnabled, setComposerUiEnabled] = useState(
-    readComposerUiEnabled,
-  );
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [routeKind, setRouteKind] = useState(() => getAppRoute().kind);
   const [homeQuery, setHomeQuery] = useState("");
@@ -572,6 +559,8 @@ export default function App() {
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
   const compileGenerationRef = useRef(0);
+  const compileCompositionRef = useRef(null);
+  const compileRef = useRef(null);
   const versionPreviewCacheRef = useRef(new Map());
   const versionPreviewStateRef = useRef(null);
   const versionPreviewAppliedRef = useRef(false);
@@ -580,6 +569,7 @@ export default function App() {
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
+  const liveShaderSourceRef = useRef(new Map());
   const previewParamsRafRef = useRef(0);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
@@ -692,8 +682,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, libraryView);
   }, [libraryView]);
-
-  useEffect(() => subscribeComposerUiEnabled(setComposerUiEnabled), []);
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) {
@@ -1055,12 +1043,45 @@ export default function App() {
   const rememberResolved = useCallback((rows) => {
     if (!rows?.length) return;
     setResolvedShaders((current) => {
+      let changed = false;
       const next = { ...current };
       for (const row of rows) {
-        if (row?.key) next[row.key] = row;
+        if (!row?.key) continue;
+        const prev = current[row.key];
+        if (
+          prev &&
+          prev.source === row.source &&
+          prev.is_public === row.is_public &&
+          prev.broken === row.broken &&
+          prev.name === row.name
+        ) {
+          continue;
+        }
+        next[row.key] = row;
+        changed = true;
       }
-      return next;
+      return changed ? next : current;
     });
+  }, []);
+
+  const rememberLiveShaderSource = useCallback((entry) => {
+    if (!entry?.source || entry.kind === COMPOSITION_KIND) return;
+    const parsed = entry.key ? parseCompositionShaderId(entry.key) : null;
+    const bare =
+      (parsed?.origin === "cloud" && parsed.id) ||
+      (typeof entry.id === "string" && entry.id.startsWith("draft:")
+        ? entry.id.slice("draft:".length)
+        : entry.id) ||
+      (parsed?.id?.startsWith("draft:")
+        ? parsed.id.slice("draft:".length)
+        : parsed?.id) ||
+      null;
+    const keys = new Set(
+      [entry.key, entry.id, bare, bare ? `cloud:${bare}` : null, bare ? `draft:${bare}` : null].filter(
+        Boolean
+      )
+    );
+    for (const key of keys) liveShaderSourceRef.current.set(key, entry);
   }, []);
 
   const hydrateCompositionRefs = useCallback(
@@ -1069,84 +1090,122 @@ export default function App() {
       const latest = { ...resolvedShaders };
       const found = [];
       const cloudIds = [];
+      const draftAliases = new Map();
+      const store = (row, aliasKey) => {
+        if (!row?.key) return;
+        found.push(row);
+        latest[row.key] = row;
+        if (aliasKey && aliasKey !== row.key) latest[aliasKey] = row;
+      };
+      const rowFromLive = (key, live, id, isPublic) => ({
+        key,
+        id: id || live.id || key,
+        name: live.name,
+        kind: live.kind || "effect",
+        source: live.source,
+        is_public: isPublic,
+        features: inferFeatures(live.source || ""),
+        broken: live.kind === COMPOSITION_KIND || !live.source,
+      });
+
       for (const key of keys) {
-        if (latest[key]?.source || latest[key]?.broken) continue;
         const parsed = parseCompositionShaderId(key);
         if (!parsed) continue;
+        const cloudId =
+          parsed.origin === "cloud"
+            ? parsed.id
+            : parsed.id.startsWith("draft:")
+              ? parsed.id.slice("draft:".length)
+              : null;
+        const cloudKey = cloudId ? `cloud:${cloudId}` : null;
+        if (parsed.origin === "draft" && cloudKey) {
+          draftAliases.set(cloudKey, key);
+        }
+        const live =
+          liveShaderSourceRef.current.get(key) ||
+          (cloudKey && liveShaderSourceRef.current.get(cloudKey)) ||
+          (cloudId && liveShaderSourceRef.current.get(cloudId));
+        const liveCloud = cloudId
+          ? cloudShaders.find((item) => item.id === cloudId)
+          : null;
+        if (live?.source) {
+          store(
+            rowFromLive(
+              cloudKey || key,
+              live,
+              cloudId,
+              liveCloud?.is_public ?? live.is_public
+            ),
+            key
+          );
+          continue;
+        }
         if (parsed.origin === "draft") {
           const draft = drafts.find((item) => item.id === parsed.id);
-          const row = draft
-            ? {
-                key,
-                id: draft.id,
-                name: draft.name,
-                kind: draft.kind,
-                source: draft.source,
-                is_public: false,
-                features: inferFeatures(draft.source || ""),
-                broken:
-                  draft.kind === COMPOSITION_KIND || !draft.source,
-              }
-            : {
-                key,
-                name: "Missing shader",
-                kind: "effect",
-                broken: true,
-              };
-          found.push(row);
-          latest[key] = row;
-        } else if (parsed.origin === "cloud") {
-          cloudIds.push(parsed.id);
+          if (draft && !liveCloud) {
+            store(
+              rowFromLive(key, draft, draft.id, false),
+              null
+            );
+            continue;
+          }
         }
+        if (cloudId) cloudIds.push(cloudId);
       }
+
       if (cloudIds.length) {
         try {
           const rows = await getShadersByIds(cloudIds);
           const byId = new Map(rows.map((row) => [row.id, row]));
           for (const id of cloudIds) {
             const key = `cloud:${id}`;
+            const live =
+              liveShaderSourceRef.current.get(key) ||
+              liveShaderSourceRef.current.get(id);
             const row = byId.get(id);
-            const next = !row || row.kind === COMPOSITION_KIND || !row.source
-              ? {
-                  key,
-                  id,
-                  name: row?.name || "Missing shader",
-                  kind: row?.kind || "effect",
-                  is_public: row?.is_public,
-                  broken: true,
-                }
-              : {
-                  key,
-                  id,
-                  name: row.name,
-                  kind: row.kind,
-                  source: row.source,
-                  is_public: row.is_public,
-                  features: row.features || inferFeatures(row.source),
-                  broken: false,
-                };
-            found.push(next);
-            latest[key] = next;
+            const source = live?.source || row?.source;
+            const next =
+              !row || row.kind === COMPOSITION_KIND || !source
+                ? {
+                    key,
+                    id,
+                    name: row?.name || live?.name || "Missing shader",
+                    kind: row?.kind || live?.kind || "effect",
+                    is_public: row?.is_public,
+                    broken: true,
+                  }
+                : {
+                    key,
+                    id,
+                    name: live?.name || row.name,
+                    kind: row.kind,
+                    source,
+                    is_public: row.is_public,
+                    features: inferFeatures(source),
+                    broken: false,
+                  };
+            store(next, draftAliases.get(key));
           }
         } catch {
           for (const id of cloudIds) {
             const key = `cloud:${id}`;
-            const next = {
-              key,
-              id,
-              name: "Missing shader",
-              kind: "effect",
-              broken: true,
-            };
-            found.push(next);
-            latest[key] = next;
+            store(
+              {
+                key,
+                id,
+                name: "Missing shader",
+                kind: "effect",
+                broken: true,
+              },
+              draftAliases.get(key)
+            );
           }
         }
       }
       rememberResolved(found);
       return latest;
     },
-    [drafts, rememberResolved, resolvedShaders]
+    [cloudShaders, drafts, rememberResolved, resolvedShaders]
   );
 
   const compileComposition = useCallback(
@@ -1246,15 +1305,23 @@ export default function App() {
     },
     [hydrateCompositionRefs, rememberResolved, setRuntimeValues]
   );
+  compileCompositionRef.current = compileComposition;
 
   const compile = useCallback(
     (nextSource) => {
       if (sessionKindRef.current === COMPOSITION_KIND) {
-        compileComposition();
+        compileCompositionRef.current?.(nextSource);
         return;
       }
       const host = hostRef.current;
       if (!host?.ready) return;
+      if (
+        lastSuccessfulCompileRef.current.presetId ===
+          draftSessionRef.current.presetId &&
+        lastSuccessfulCompileRef.current.source === nextSource
+      ) {
+        return;
+      }
       const compileGeneration = ++compileGenerationRef.current;
       host.stop();
 
@@ -1332,8 +1399,9 @@ export default function App() {
           /* Destroyed hosts / GPU teardown can reject; ignore stale work. */
         });
     },
-    [compileComposition, setRuntimeValues]
+    [setRuntimeValues]
   );
+  compileRef.current = compile;
 
   const applyMediaBlob = useCallback(
     async (blob, mimeType = blob.type, generation = null) => {
@@ -1799,10 +1867,10 @@ export default function App() {
     const switchedShader = lastCompiledPresetRef.current !== presetId;
     lastCompiledPresetRef.current = presetId;
     if (switchedShader) {
-      compile(source);
+      compileRef.current(source);
       return;
     }
-    compileTimer.current = setTimeout(() => compile(source), 350);
+    compileTimer.current = setTimeout(() => compileRef.current(source), 350);
     return () => clearTimeout(compileTimer.current);
   }, [
     source,
@@ -1810,7 +1878,6 @@ export default function App() {
       ? compositionStructureKey(composition)
       : "",
     presetId,
-    compile,
     runtimeReady,
   ]);
 
@@ -1856,6 +1923,14 @@ export default function App() {
 
   const persistActiveDraft = useCallback(() => {
     const session = draftSessionRef.current;
+    rememberLiveShaderSource({
+      key: session.presetId,
+      id: session.presetId,
+      name: session.shaderName,
+      kind: session.kind,
+      source: session.source,
+      is_public: session.isPublic,
+    });
     if (!isDraftId(session.presetId)) return;
     setDrafts((current) =>
       current.map((draft) =>
@@ -1873,7 +1948,27 @@ export default function App() {
           : draft
       )
     );
-  }, []);
+  }, [rememberLiveShaderSource]);
+
+  useEffect(() => {
+    if (sessionKind === COMPOSITION_KIND) return;
+    rememberLiveShaderSource({
+      key: presetId,
+      id: currentShader?.id || presetId,
+      name: shaderName,
+      kind: sessionKind,
+      source,
+      is_public: isPublic,
+    });
+  }, [
+    currentShader?.id,
+    isPublic,
+    presetId,
+    rememberLiveShaderSource,
+    sessionKind,
+    shaderName,
+    source,
+  ]);
 
   const activateShaderSession = useShaderSession({
     persistActiveDraft,
@@ -2998,17 +3093,45 @@ export default function App() {
           : null;
         const isComposition = sessionKindRef.current === COMPOSITION_KIND;
         const graph = isComposition
-          ? compositionWithLayerValues(
-              compositionRef.current,
-              selectedLayerIdRef.current,
-              valuesRef.current
+          ? promoteCompositionRefs(
+              compositionWithLayerValues(
+                compositionRef.current,
+                selectedLayerIdRef.current,
+                valuesRef.current
+              ),
+              cloudShaders
             )
           : {};
+        if (
+          isComposition &&
+          referencedShaderKeys(graph).join() !==
+            referencedShaderKeys(compositionRef.current).join()
+        ) {
+          compositionRef.current = graph;
+          setComposition(graph);
+        }
         if (makePublic && isComposition) {
-          const unpublished = unpublishedCompositionRefs(
+          let unpublished = unpublishedCompositionRefs(
             graph,
-            new Map(Object.entries(resolvedShaders))
+            new Map(Object.entries(resolvedShaders)),
+            cloudShaders
           );
+          if (unpublished.length) {
+            const ids = unpublished
+              .map((key) => parseCompositionShaderId(key)?.id)
+              .map((id) =>
+                typeof id === "string" && id.startsWith("draft:")
+                  ? id.slice("draft:".length)
+                  : id
+              )
+              .filter(Boolean);
+            const fresh = ids.length ? await getShadersByIds(ids) : [];
+            unpublished = unpublishedCompositionRefs(
+              graph,
+              new Map(Object.entries(resolvedShaders)),
+              [...cloudShaders, ...fresh]
+            );
+          }
           if (unpublished.length) {
             throw new Error(
               "Publish every referenced fill and effect before publishing this composition."
@@ -3267,6 +3390,7 @@ export default function App() {
       presetId,
       protectedPreview,
       resolvedShaders,
+      cloudShaders,
       refreshShaderVersions,
       setShaderRoute,
       shaderName,
@@ -4143,26 +4267,24 @@ export default function App() {
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: homeQuery,
-          kind: visibleLibraryKind(homeKind, composerUiEnabled),
+          kind: homeKind,
           origin: homeOrigin,
           author: homeAuthor,
         }),
-        composerUiEnabled,
       ),
-    [composerUiEnabled, homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
+    [homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
   );
   const groupedEditorCards = useMemo(
     () =>
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: editorQuery,
-          kind: visibleLibraryKind(editorKind, composerUiEnabled),
+          kind: editorKind,
           origin: editorOrigin,
           author: editorAuthor,
         }),
-        composerUiEnabled,
       ),
-    [composerUiEnabled, editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
+    [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
   const compositionFillCards = useMemo(
     () => filterShaderLibraryCards(libraryCards, { kind: "fill" }),
@@ -4936,7 +5058,7 @@ export default function App() {
         <HomeView
           query={homeQuery}
           onQueryChange={setHomeQuery}
-          kind={visibleLibraryKind(homeKind, composerUiEnabled)}
+          kind={homeKind}
           onKindChange={setHomeKind}
           origin={homeOrigin}
           onOriginChange={setHomeOrigin}
@@ -4953,7 +5075,6 @@ export default function App() {
           onThemeChange={setTheme}
           canvasTheme={canvasTheme}
           onCanvasThemeChange={setCanvasTheme}
-          composerUiEnabled={composerUiEnabled}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
           onProfileChange={(displayName) => {
@@ -5013,11 +5134,9 @@ export default function App() {
                   <fig-menu-item value="fill">
                     Shader fill
                   </fig-menu-item>
-                  {composerUiEnabled && (
-                    <fig-menu-item value="composition">
-                      Composer
-                    </fig-menu-item>
-                  )}
+                  <fig-menu-item value="composition">
+                    Composition
+                  </fig-menu-item>
                   {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
                     <>
                       <fig-separator />
@@ -5061,14 +5180,13 @@ export default function App() {
               />
               <hstack class="app-nav-library-toggles">
                 <LibraryFilterMenu
-                  kind={visibleLibraryKind(editorKind, composerUiEnabled)}
+                  kind={editorKind}
                   onKindChange={setEditorKind}
                   author={editorAuthor}
                   onAuthorChange={setEditorAuthor}
                   origin={editorOrigin}
                   onOriginChange={setEditorOrigin}
                   authors={publishedAuthors}
-                  composerUiEnabled={composerUiEnabled}
                 />
                 <fig-tooltip
                   text={

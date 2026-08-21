@@ -421,6 +421,16 @@ export class ShaderHost {
     return true;
   }
 
+  _syncOutputSizeForMode() {
+    if (this.isFill) {
+      if (this.frame.input || this.inputTexture || this.video || this.htmlElement) {
+        this.clearInput();
+      }
+      return this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
+    }
+    return this._applyAdaptiveOutputSize();
+  }
+
   setFillSize(cssWidth, cssHeight) {
     const size = cssSizeToDevicePixels(
       cssWidth,
@@ -1307,14 +1317,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     const effects = this.effectVisible
       ? layers.filter((layer) => layer.role === "effect" && layer.enabled)
       : [];
-    const width =
-      this.frame.input?.width ||
-      this.logicalOutputSize.width ||
-      swapchain.width;
-    const height =
-      this.frame.input?.height ||
-      this.logicalOutputSize.height ||
-      swapchain.height;
+    const fromInput = !this.isFill && this.frame.input;
+    const width = fromInput
+      ? this.frame.input.width
+      : this.logicalOutputSize.width || swapchain.width;
+    const height = fromInput
+      ? this.frame.input.height
+      : this.logicalOutputSize.height || swapchain.height;
 
     let current = this.frame.input;
     if (fillLayer) {
@@ -1381,11 +1390,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.startTime = performance.now();
     this.lastTime = this.startTime;
 
-    if (this.isFill && !this.frame.input) {
-      this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
-    } else {
-      this._applyAdaptiveOutputSize();
-    }
+    this._syncOutputSizeForMode();
 
     this.device.pushErrorScope("validation");
     let jsError = null;
@@ -1440,11 +1445,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.lastTime = this.startTime;
 
     // Fills have no input — size the target to the preview stage at device DPI.
-    if (this.isFill && !this.frame.input) {
-      this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
-    } else {
-      this._applyAdaptiveOutputSize();
-    }
+    this._syncOutputSizeForMode();
 
     this.device.pushErrorScope("validation");
     let jsError = null;

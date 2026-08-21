@@ -790,3 +790,38 @@ test("shader compilation diagnostics replace generic command buffer errors", asy
     "Shader compilation error at WGSL line 37, column 11: 'active' is a reserved keyword"
   );
 });
+
+test("fill mode drops leftover effect input and sizes to the stage", () => {
+  const host = makeHost();
+  host.stageCssSize = { width: 800, height: 600 };
+  host.logicalOutputSize = { width: 128, height: 96 };
+  host.frame.input = { width: 128, height: 96 };
+  host.inputTexture = host.frame.input;
+  let fillSize = null;
+  host.clearInput = () => {
+    host.frame.input = null;
+    host.inputTexture = null;
+  };
+  host.setFillSize = (width, height) => {
+    fillSize = { width, height };
+    return true;
+  };
+  let adaptive = 0;
+  host._applyAdaptiveOutputSize = () => {
+    adaptive += 1;
+    return false;
+  };
+
+  host.isFill = true;
+  host._syncOutputSizeForMode();
+  assert.equal(host.frame.input, null);
+  assert.deepEqual(fillSize, { width: 800, height: 600 });
+  assert.equal(adaptive, 0);
+
+  host.isFill = false;
+  host.frame.input = { width: 128, height: 96 };
+  fillSize = null;
+  host._syncOutputSizeForMode();
+  assert.equal(fillSize, null);
+  assert.equal(adaptive, 1);
+});

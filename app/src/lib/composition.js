@@ -3,39 +3,7 @@ import { inferFeatures } from "../runtime/params.js";
 export const COMPOSITION_KIND = "composition";
 export const COMPOSITION_FILL_ID = "fill";
 export const MAX_COMPOSITION_EFFECTS = 8;
-export const COMPOSER_UI_STORAGE_KEY = "figma-shader-studio:composer-ui";
 export const FILL_TYPES = ["shader", "image", "video", "html"];
-
-const composerUiListeners = new Set();
-
-export function readComposerUiEnabled(
-  storage = typeof localStorage === "undefined" ? null : localStorage,
-) {
-  try {
-    return storage?.getItem(COMPOSER_UI_STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
-export function writeComposerUiEnabled(
-  enabled,
-  storage = typeof localStorage === "undefined" ? null : localStorage,
-) {
-  const next = Boolean(enabled);
-  try {
-    storage?.setItem(COMPOSER_UI_STORAGE_KEY, next ? "true" : "false");
-  } catch {
-    // Settings should still apply when storage is unavailable.
-  }
-  composerUiListeners.forEach((listener) => listener(next));
-  return next;
-}
-
-export function subscribeComposerUiEnabled(listener) {
-  composerUiListeners.add(listener);
-  return () => composerUiListeners.delete(listener);
-}
 
 export function isLibraryKind(kind) {
   return kind === "effect" || kind === "fill" || kind === COMPOSITION_KIND;
@@ -263,9 +231,55 @@ export function mergeLayerValues(definitions, candidate = {}) {
   return values;
 }
 
-export function unpublishedCompositionRefs(graph, resolvedByKey = new Map()) {
+function liveCloudId(shaderId) {
+  const parsed = parseCompositionShaderId(shaderId);
+  if (!parsed) return null;
+  if (parsed.origin === "cloud") return parsed.id;
+  return parsed.id.startsWith("draft:")
+    ? parsed.id.slice("draft:".length)
+    : parsed.id;
+}
+
+function cloudShaderById(liveCloudShaders, id) {
+  if (!id) return null;
+  if (liveCloudShaders instanceof Map) return liveCloudShaders.get(id) || null;
+  return (liveCloudShaders || []).find((row) => row.id === id) || null;
+}
+
+export function promoteCompositionRefs(graph, liveCloudShaders = []) {
+  const normalized = normalizeComposition(graph);
+  const promote = (shaderId) => {
+    const cloudId = liveCloudId(shaderId);
+    if (!cloudId || !cloudShaderById(liveCloudShaders, cloudId)) return shaderId;
+    return `cloud:${cloudId}`;
+  };
+  return {
+    ...normalized,
+    fill: {
+      ...normalized.fill,
+      shaderId: normalized.fill.shaderId
+        ? promote(normalized.fill.shaderId)
+        : null,
+    },
+    effects: normalized.effects.map((effect) => ({
+      ...effect,
+      shaderId: promote(effect.shaderId),
+    })),
+  };
+}
+
+export function unpublishedCompositionRefs(
+  graph,
+  resolvedByKey = new Map(),
+  liveCloudShaders = [],
+) {
   return referencedShaderKeys(graph).filter((key) => {
-    const resolved = resolvedByKey.get(key);
+    const cloudId = liveCloudId(key);
+    const live = cloudShaderById(liveCloudShaders, cloudId);
+    if (live) return live.is_public === false;
+    const resolved =
+      resolvedByKey.get(key) ||
+      (cloudId ? resolvedByKey.get(`cloud:${cloudId}`) : null);
     if (!resolved) return true;
     return resolved.is_public === false;
   });

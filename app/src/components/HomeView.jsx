@@ -25,7 +25,6 @@ export default function HomeView({
   onThemeChange,
   canvasTheme,
   onCanvasThemeChange,
-  composerUiEnabled = false,
   settingsOpen,
   onSettingsOpenChange,
   onProfileChange,
@@ -84,11 +83,9 @@ export default function HomeView({
               value={kind}
               options={JSON.stringify([
                 { value: "all", label: "All types" },
-                { value: "effect", label: "Effects" },
-                { value: "fill", label: "Fills" },
-                ...(composerUiEnabled
-                  ? [{ value: "composition", label: "Composers" }]
-                  : []),
+                { value: "effect", label: "Shader effects" },
+                { value: "fill", label: "Shader fills" },
+                { value: "composition", label: "Compositions" },
               ])}
               dangerouslySetInnerHTML={opaqueContent}
             />
