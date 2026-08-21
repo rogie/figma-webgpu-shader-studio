@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import CompositionEditor from "./components/CompositionEditor.jsx";
-import { SHADER_EFFECT_PICKER_ANCHOR_ID } from "./components/ShaderEffectPicker.jsx";
+import Composer from "./components/Composer.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
@@ -49,6 +49,7 @@ import {
   makeSampleBitmap,
   makeSampleVectorBitmap,
   makeSampleVideoBlob,
+  rasterizeSvgBlob,
 } from "./runtime/sample.js";
 import { CANVAS_PROP_TYPES } from "./lib/canvasControls.js";
 import {
@@ -116,9 +117,10 @@ import {
   compositionStructureKey,
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
-  COMPOSITIONS_UI_ENABLED,
   emptyComposition,
-  MAX_COMPOSITION_EFFECTS,
+  readComposerUiEnabled,
+  subscribeComposerUiEnabled,
+  fillTypeForDroppedMedia,
   isCompositionPlayable,
   mediaFillType,
   normalizeComposition,
@@ -208,10 +210,17 @@ const FIGMA_SHADER_CATEGORIES = [
   { kind: "fill", label: "Shader fill" },
 ];
 
-function groupByKind(cards, effectLabel, fillLabel, compositionLabel, keyPrefix) {
+function groupByKind(
+  cards,
+  effectLabel,
+  fillLabel,
+  compositionLabel,
+  keyPrefix,
+  composerUiEnabled,
+) {
   const effects = cards.filter((card) => card.kind === "effect");
   const fills = cards.filter((card) => card.kind === "fill");
-  const compositions = COMPOSITIONS_UI_ENABLED
+  const compositions = composerUiEnabled
     ? cards.filter((card) => card.kind === COMPOSITION_KIND)
     : [];
   return [
@@ -239,18 +248,19 @@ function groupByKind(cards, effectLabel, fillLabel, compositionLabel, keyPrefix)
   ];
 }
 
-function groupLibraryCards(cards) {
+function groupLibraryCards(cards, composerUiEnabled) {
   return groupByKind(
     cards,
     "Shader effect",
     "Shader fill",
-    "Composition",
-    "studio"
+    "Composer",
+    "studio",
+    composerUiEnabled,
   );
 }
 
-function visibleLibraryKind(kind) {
-  if (!COMPOSITIONS_UI_ENABLED && kind === COMPOSITION_KIND) return "all";
+function visibleLibraryKind(kind, composerUiEnabled) {
+  if (!composerUiEnabled && kind === COMPOSITION_KIND) return "all";
   return kind;
 }
 
@@ -280,16 +290,16 @@ function mergeValues(definitions, candidate = {}) {
   return defaults;
 }
 
-function replaceShaderUrl(id) {
+function replaceShaderUrl(id, kind) {
   window.history.replaceState(
     {},
     "",
-    id ? makeShareUrl(id) : makeHomeUrl()
+    id ? makeShareUrl(id, kind) : makeHomeUrl()
   );
 }
 
-function pushShaderUrl(id) {
-  window.history.pushState({}, "", makeShareUrl(id));
+function pushShaderUrl(id, kind) {
+  window.history.pushState({}, "", makeShareUrl(id, kind));
 }
 
 function AuthorAvatar({ class: className, tooltip, src, name }) {
@@ -436,6 +446,9 @@ export default function App() {
   } = usePanelLayout();
   const [theme, setTheme] = useState(savedTheme);
   const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
+  const [composerUiEnabled, setComposerUiEnabled] = useState(
+    readComposerUiEnabled,
+  );
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
@@ -464,8 +477,8 @@ export default function App() {
   );
   const viewMode = routeId ? "editor" : "home";
 
-  const setShaderRoute = useCallback((id) => {
-    replaceShaderUrl(id);
+  const setShaderRoute = useCallback((id, kind) => {
+    replaceShaderUrl(id, kind);
     setRouteId(id || null);
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
@@ -653,6 +666,8 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
   }, [canvasTheme]);
+
+  useEffect(() => subscribeComposerUiEnabled(setComposerUiEnabled), []);
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) {
@@ -1386,7 +1401,10 @@ export default function App() {
         host.setVideoInput(video);
         setInputSource("video");
       } else {
-        const bitmap = await createImageBitmap(blob);
+        const bitmap =
+          mimeType === "image/svg+xml"
+            ? await rasterizeSvgBlob(blob)
+            : await createImageBitmap(blob);
         if (!isInputApplyCurrent(generation)) {
           bitmap.close?.();
           return false;
@@ -1857,7 +1875,7 @@ export default function App() {
 
   const openDraft = useCallback(
     async (draft) => {
-      setShaderRoute(draft.id);
+      setShaderRoute(draft.id, draft.kind);
       if (draftSessionRef.current.presetId === draft.id) return;
       await activateShaderSession({
         sessionId: draft.id,
@@ -1933,7 +1951,7 @@ export default function App() {
     const id = `draft:${crypto.randomUUID()}`;
     const draft = {
       id,
-      name: "New Composition",
+      name: "New Composer",
       kind: COMPOSITION_KIND,
       source: "",
       values: {},
@@ -2117,7 +2135,7 @@ export default function App() {
   const openCloudShader = useCallback(
     async (shader) => {
       if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) {
-        setShaderRoute(shader.id);
+        setShaderRoute(shader.id, shader.kind);
         return;
       }
       // Resolve source before flipping into the editor so host init / compile
@@ -2349,7 +2367,7 @@ export default function App() {
         pendingValuesRef.current = activeMigration.parameter_values || {};
         setCurrentShader(activeMigration);
         setPresetId(cloudChoiceId(activeMigration.id));
-        setShaderRoute(activeMigration.id);
+        setShaderRoute(activeMigration.id, activeMigration.kind);
         setShaderName(activeMigration.name);
         setSource(activeMigration.source);
         setIsPublic(false);
@@ -2383,7 +2401,7 @@ export default function App() {
   const choosePreset = useCallback(
     async (id, { syncUrl = true } = {}) => {
       const preset = getPreset(id);
-      if (syncUrl) setShaderRoute(preset.id);
+      if (syncUrl) setShaderRoute(preset.id, preset.kind);
       if (draftSessionRef.current.presetId === preset.id) return;
       await activateShaderSession({
         sessionId: preset.id,
@@ -2510,11 +2528,17 @@ export default function App() {
       const nextRouteId = id.startsWith("cloud:")
         ? id.slice("cloud:".length)
         : id;
-      pushShaderUrl(nextRouteId);
+      let kind;
+      if (isDraftId(id)) {
+        kind = drafts.find((item) => item.id === id)?.kind;
+      } else if (id.startsWith("cloud:")) {
+        kind = cloudShaders.find((item) => item.id === nextRouteId)?.kind;
+      }
+      pushShaderUrl(nextRouteId, kind);
       setRouteId(nextRouteId);
       chooseItem(id);
     },
-    [chooseItem]
+    [chooseItem, cloudShaders, drafts]
   );
 
   const openPublishForCard = useCallback(
@@ -2673,7 +2697,7 @@ export default function App() {
       }
       const mimeType = mediaType(file);
       if (!mimeType) {
-        throw new Error("Choose a supported image or video file.");
+        throw new Error("Choose a supported image, SVG, or video file.");
       }
       const generation = ++inputApplyGenRef.current;
       setUploading(true);
@@ -2681,6 +2705,17 @@ export default function App() {
         const applied = await applyMediaBlob(file, mimeType, generation);
         if (!applied) return;
         setPendingMedia(file);
+        if (sessionKindRef.current === COMPOSITION_KIND && !protectedPreview) {
+          const fillType = fillTypeForDroppedMedia(mimeType);
+          if (fillType) {
+            const graph = normalizeComposition({
+              ...compositionRef.current,
+              fill: { type: fillType, shaderId: null, values: {} },
+            });
+            compositionRef.current = graph;
+            setComposition(graph);
+          }
+        }
         if (!protectedPreview) setDirty(true);
       } finally {
         if (isInputApplyCurrent(generation)) setUploading(false);
@@ -3092,7 +3127,7 @@ export default function App() {
         if (makePublic) setIsPublic(true);
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
-        setShaderRoute(saved.id);
+        setShaderRoute(saved.id, saved.kind);
         lastSavedFingerprintRef.current = contentFingerprint;
         const latest = draftSessionRef.current;
         const unchanged =
@@ -3522,7 +3557,7 @@ export default function App() {
       }
       setPublishToast({
         phase: "done",
-        url: makeShareUrl(saved.id),
+        url: makeShareUrl(saved.id, saved.kind),
       });
     } catch (publishError) {
       setPublishToast(null);
@@ -3595,7 +3630,7 @@ export default function App() {
         });
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
-        setShaderRoute(saved.id);
+        setShaderRoute(saved.id, saved.kind);
         setShaderName(name);
         setIsPublic(false);
         setPendingMedia(mediaFile);
@@ -3610,7 +3645,7 @@ export default function App() {
       setDrafts((current) => [draft, ...current]);
       setCurrentShader(null);
       setPresetId(id);
-      setShaderRoute(id);
+      setShaderRoute(id, draft.kind);
       setShaderName(name);
       setIsPublic(false);
       setPendingMedia(mediaFile);
@@ -3702,7 +3737,9 @@ export default function App() {
       showNotice("Make the shader public before sharing");
       return;
     }
-    await navigator.clipboard.writeText(makeShareUrl(currentShader.id));
+    await navigator.clipboard.writeText(
+      makeShareUrl(currentShader.id, currentShader.kind)
+    );
     showNotice("Share link copied");
   }, [currentShader, dirty, showNotice]);
 
@@ -3712,7 +3749,7 @@ export default function App() {
   }, []);
 
   const embedUrl = currentShader
-    ? makeShareUrl(currentShader.id)
+    ? makeShareUrl(currentShader.id, currentShader.kind)
     : window.location.href;
   const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
   const standaloneEmbedCode = useMemo(
@@ -4048,24 +4085,26 @@ export default function App() {
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: homeQuery,
-          kind: visibleLibraryKind(homeKind),
+          kind: visibleLibraryKind(homeKind, composerUiEnabled),
           origin: homeOrigin,
           author: homeAuthor,
-        })
+        }),
+        composerUiEnabled,
       ),
-    [homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
+    [composerUiEnabled, homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
   );
   const groupedEditorCards = useMemo(
     () =>
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: editorQuery,
-          kind: visibleLibraryKind(editorKind),
+          kind: visibleLibraryKind(editorKind, composerUiEnabled),
           origin: editorOrigin,
           author: editorAuthor,
-        })
+        }),
+        composerUiEnabled,
       ),
-    [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
+    [composerUiEnabled, editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
   const compositionFillCards = useMemo(
     () => libraryCards.filter((card) => card.kind === "fill"),
@@ -4082,19 +4121,13 @@ export default function App() {
       const graph = normalizeComposition(next);
       compositionRef.current = graph;
       setComposition(graph);
-      const fillType = mediaFillType(graph.fill.type);
-      if (fillType && fillType !== inputSource) {
-        applyInputSource(fillType).catch((sourceError) =>
-          setError(sourceError.message || String(sourceError))
-        );
-      }
       if (graph.fill.type === "shader") {
         clearObjectUrl();
         hostRef.current?.clearInput();
       }
       setDirty(true);
     },
-    [applyInputSource, clearObjectUrl, inputSource, protectedPreview]
+    [clearObjectUrl, protectedPreview]
   );
 
   const onCompositionSelectLayer = useCallback((layerId) => {
@@ -4267,37 +4300,63 @@ export default function App() {
     <aside
       ref={propertiesPanelRef}
       className="shader-properties-panel"
-      aria-label="Shader properties"
+      aria-label="Properties"
     >
-      <fig-header borderless>
-        <h3>
-          {kind === COMPOSITION_KIND ? "Shader effects" : "Properties"}
-        </h3>
-        {kind === COMPOSITION_KIND && !protectedPreview && (
-          <hstack>
-            <fig-tooltip text="Add shader effect">
-              <fig-button
-                id={SHADER_EFFECT_PICKER_ANCHOR_ID}
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label="Add shader effect"
-                aria-haspopup="dialog"
-                aria-expanded="false"
-                disabled={
-                  (composition?.effects?.length || 0) >= MAX_COMPOSITION_EFFECTS
-                    ? ""
-                    : undefined
-                }
-              >
-                <fig-icon name="add" />
-              </fig-button>
-            </fig-tooltip>
-          </hstack>
-        )}
+      <fig-header>
+        <h3>Properties</h3>
       </fig-header>
 
-      <fig-content class="shader-properties-panel-content">
+      <fig-content class="shader-properties-panel-content" padding="none">
+          {kind === COMPOSITION_KIND ? (
+            <>
+              <CompositionEditor
+                graph={composition}
+                resolvedByKey={resolvedByKey}
+                fillCards={compositionFillCards}
+                effectCards={compositionEffectCards}
+                selectedLayerId={selectedLayerId}
+                readOnly={protectedPreview}
+                layerControls={
+                  <Suspense fallback={null}>
+                    <Controls
+                      props={props}
+                      values={values}
+                      onChange={updateControl}
+                      onInput={previewControl}
+                    />
+                  </Suspense>
+                }
+                onChange={onCompositionChange}
+                onSelectLayer={onCompositionSelectLayer}
+                onOpenShader={(shaderId) => chooseItem(shaderId)}
+                onResetLayer={resetProperties}
+                onMediaFill={(type) => {
+                  applyInputSource(type).catch((sourceError) =>
+                    setError(sourceError.message || String(sourceError))
+                  );
+                }}
+              />
+              {user && !protectedPreview && (
+                <div className="sharing-controls">
+                  <fig-field label="Public" direction="horizontal">
+                    <fig-switch
+                      checked={isPublic}
+                      label={
+                        isPublic
+                          ? "Anyone with the link can view the source and input."
+                          : "Only you can open this cloud shader."
+                      }
+                      onInput={(event) => {
+                        setIsPublic(event.target.checked);
+                        setDirty(true);
+                      }}
+                      dangerouslySetInnerHTML={{ __html: "" }}
+                    />
+                  </fig-field>
+                </div>
+              )}
+            </>
+          ) : (
           <fig-group name={shaderName}>
             <fig-header borderless>
               <h3>{shaderName}</h3>
@@ -4368,6 +4427,7 @@ export default function App() {
               </div>
             )}
           </fig-group>
+          )}
       </fig-content>
     </aside>
   );
@@ -4442,244 +4502,7 @@ export default function App() {
     }
   });
 
-  return (
-    <>
-      {viewMode === "home" && (
-        <HomeView
-          query={homeQuery}
-          onQueryChange={setHomeQuery}
-          kind={visibleLibraryKind(homeKind)}
-          onKindChange={setHomeKind}
-          origin={homeOrigin}
-          onOriginChange={setHomeOrigin}
-          author={homeAuthor}
-          onAuthorChange={setHomeAuthor}
-          publishedAuthors={publishedAuthors}
-          choices={renderLibraryChoices(groupedHomeCards, {
-            cardSize: "large",
-          })}
-          onChoice={openHomeChoice}
-          authOpen={authOpen}
-          onAuthOpenChange={setAuthOpen}
-          theme={theme}
-          onThemeChange={setTheme}
-          canvasTheme={canvasTheme}
-          onCanvasThemeChange={setCanvasTheme}
-          settingsOpen={settingsOpen}
-          onSettingsOpenChange={setSettingsOpen}
-          onProfileChange={(displayName) => {
-            if (!user) return;
-            setCloudShaders((current) =>
-              current.map((shader) =>
-                shader.owner_id === user.id
-                  ? { ...shader, author_name: displayName }
-                  : shader,
-              ),
-            );
-          }}
-        />
-      )}
-
-      {viewMode === "editor" && (
-      <div className="editor-view">
-        <nav
-          className="app-nav"
-          style={{ "--app-nav-width": `${appNavWidth}px` }}
-        >
-          <div className="app-nav-headers">
-            <fig-header class="app-nav-header">
-              <fig-tooltip text="Back to home">
-                <fig-button
-                  class="app-nav-back-button"
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Back to home"
-                  onClick={() => setShaderRoute()}
-                >
-                  <fig-icon name="back" />
-                </fig-button>
-              </fig-tooltip>
-              <h2 className="app-title">Studio</h2>
-              <div className="app-nav-header-actions">
-                <fig-menu
-                  ref={newShaderMenuRef}
-                  class="new-shader-menu"
-                  position="bottom right"
-                >
-                  <fig-tooltip text="New Figma shader">
-                    <fig-button
-                      fig-menu-trigger=""
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="New Figma shader"
-                    >
-                      <fig-icon name="add" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-menu-item value="effect">
-                    Shader effect
-                  </fig-menu-item>
-                  <fig-menu-item value="fill">
-                    Shader fill
-                  </fig-menu-item>
-                  {COMPOSITIONS_UI_ENABLED && (
-                    <fig-menu-item value="composition">
-                      Composition
-                    </fig-menu-item>
-                  )}
-                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
-                    <>
-                      <fig-separator />
-                      <fig-menu-item value="from-figma">
-                        From Figma…
-                      </fig-menu-item>
-                    </>
-                  )}
-                </fig-menu>
-                <AccountMenu
-                  open={authOpen}
-                  onOpenChange={setAuthOpen}
-                  theme={theme}
-                  onThemeChange={setTheme}
-                  canvasTheme={canvasTheme}
-                  onCanvasThemeChange={setCanvasTheme}
-                  settingsOpen={settingsOpen}
-                  onSettingsOpenChange={setSettingsOpen}
-                  onProfileChange={(displayName) => {
-                    if (!user) return;
-                    setCloudShaders((current) =>
-                      current.map((shader) =>
-                        shader.owner_id === user.id
-                          ? { ...shader, author_name: displayName }
-                          : shader
-                      )
-                    );
-                  }}
-                />
-              </div>
-            </fig-header>
-            <div className="app-nav-library-filters">
-              <hstack>
-                <fig-input-text
-                  class="app-nav-search"
-                  type="search"
-                  placeholder="Search"
-                  value={editorQuery}
-                  full=""
-                  onInput={(event) => setEditorQuery(event.target.value)}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-tooltip
-                  text={
-                    editorOrigin === "public"
-                      ? "Show all shaders"
-                      : "Show published only"
-                  }
-                >
-                  <fig-button
-                    class="app-nav-published-toggle"
-                    type="toggle"
-                    variant="ghost"
-                    icon="true"
-                    selected={editorOrigin === "public"}
-                    aria-label="Show published shaders only"
-                    onClick={() =>
-                      setEditorOrigin((current) =>
-                        current === "public" ? "all" : "public"
-                      )
-                    }
-                  >
-                    <fig-icon name="globe" />
-                  </fig-button>
-                </fig-tooltip>
-              </hstack>
-              <div className="app-nav-filter-row">
-                <fig-select
-                  ref={editorKindRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by kind"
-                  value={visibleLibraryKind(editorKind)}
-                  options={JSON.stringify([
-                    { value: "all", label: "All types" },
-                    { value: "effect", label: "Effects" },
-                    { value: "fill", label: "Fills" },
-                    ...(COMPOSITIONS_UI_ENABLED
-                      ? [{ value: "composition", label: "Compositions" }]
-                      : []),
-                  ])}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={editorAuthorRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by author"
-                  value={editorAuthor}
-                  options={JSON.stringify([
-                    { value: "all", label: "All authors" },
-                    ...publishedAuthors,
-                  ])}
-                  disabled={publishedAuthors.length ? undefined : ""}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-              </div>
-            </div>
-          </div>
-          <ShaderList
-            value={presetId}
-            cards={groupedEditorCards}
-            onChoice={chooseItem}
-            onPublish={openPublishForCard}
-            onDelete={onDeleteLibraryCard}
-          />
-        </nav>
-
-        <div
-          className="app-nav-resizer"
-          role="separator"
-          aria-label="Resize shader navigation"
-          aria-orientation="vertical"
-          aria-valuemin={MIN_APP_NAV_WIDTH}
-          aria-valuemax={MAX_APP_NAV_WIDTH}
-          aria-valuenow={appNavWidth}
-          tabIndex={0}
-          onPointerDown={resizeAppNav}
-          onDoubleClick={() => saveAppNavWidth(DEFAULT_APP_NAV_WIDTH)}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            saveAppNavWidth(
-              Math.min(
-                MAX_APP_NAV_WIDTH,
-                Math.max(
-                  MIN_APP_NAV_WIDTH,
-                  appNavWidth + (event.key === "ArrowLeft" ? -16 : 16)
-                )
-              )
-            );
-          }}
-        />
-
-      <main
-        ref={viewerRef}
-        className="shader-viewer"
-        style={{
-          "--code-width": `${codeWidth}px`,
-          "--chat-height": `${chatHeight}px`,
-          ...(previewHeight != null
-            ? { "--preview-height": `${previewHeight}px` }
-            : {}),
-        }}
-      >
-        <div
-          ref={sidebarRef}
-          className="shader-viewer-sidebar"
-          data-code-collapsed={effectiveCodeCollapsed ? "true" : "false"}
-          data-chat-collapsed={
-            protectedPreview ? "false" : chatCollapsed ? "true" : "false"
-          }
-        >
+  const shaderEditorHeader = (
           <fig-header class="shader-editor-header" borderless>
             <div
               className={
@@ -4850,23 +4673,417 @@ export default function App() {
               </hstack>
             )}
           </fig-header>
+  );
+
+  const previewCanvas = (
+    <>
+      {fatal ? (
+        <div className="fatal">{fatal}</div>
+      ) : (
+        <Preview
+          canvasRef={canvasRef}
+          props={props}
+          values={values}
+          onControlInput={previewControl}
+          onControlChange={updateControl}
+          onZoomChange={onPreviewZoomChange}
+          zoomRequest={previewZoomRequest}
+          inputSource={
+            kind === "effect" ||
+            (kind === COMPOSITION_KIND &&
+              mediaFillType(composition?.fill?.type))
+              ? inputSource
+              : "image"
+          }
+          htmlInputRef={htmlInputRef}
+          onStageSize={onStageSize}
+          onPointerSurface={onPointerSurface}
+          onPickFile={onPreviewFile}
+          onDropError={setError}
+          dropTarget={kind === COMPOSITION_KIND ? "fill" : "input"}
+          canvasTheme={canvasTheme}
+        />
+      )}
+      {!fatal && (
+        <PreviewFps
+          hostRef={hostRef}
+          canvasTheme={canvasTheme}
+          onCanvasThemeChange={setCanvasTheme}
+        />
+      )}
+    </>
+  );
+
+  const previewTools = (
+          <div
+            className="tools background--light"
+          >
+            {(kind !== COMPOSITION_KIND || compositionPlayable) && (
+            <fig-button
+              type="toggle"
+              variant="ghost"
+              icon="true"
+              selected={running}
+              aria-label={running ? "Pause" : "Play"}
+              onClick={togglePlay}
+            >
+              <fig-icon name={running ? "pause" : "play"} />
+            </fig-button>
+            )}
+            <fig-menu ref={zoomMenuRef} position="top center">
+              <fig-tooltip text="Zoom">
+                <fig-button
+                  fig-menu-trigger=""
+                  variant="ghost"
+                  class="tools-zoom"
+                  aria-label={`Zoom ${Math.round(previewZoom * 100)}%`}
+                >
+                  {Math.round(previewZoom * 100)}%
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item value="50">
+                50%
+              </fig-menu-item>
+              <fig-menu-item value="100">
+                100%
+              </fig-menu-item>
+              <fig-menu-item value="200">
+                200%
+              </fig-menu-item>
+            </fig-menu>
+            {kind === "effect" && (
+              <>
+                <fig-select
+                  ref={inputSelectRef}
+                  class="tools-input-source"
+                  position="top left"
+                  value={inputSource}
+                  options={JSON.stringify([
+                    { value: "image", label: "Image" },
+                    { value: "vector", label: "Vector" },
+                    { value: "video", label: "Video" },
+                    { value: "html", label: "HTML" },
+                  ])}
+                  aria-label="Input source"
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-tooltip text="Upload input">
+                  <fig-button
+                    variant="ghost"
+                    icon="true"
+                    disabled={uploading || inputSource === "html"}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <fig-icon name="upload" />
+                  </fig-button>
+                </fig-tooltip>
+              </>
+            )}
+            {kind === COMPOSITION_KIND &&
+              mediaFillType(composition?.fill?.type) && (
+                <fig-tooltip text="Upload input">
+                  <fig-button
+                    variant="ghost"
+                    icon="true"
+                    disabled={uploading || inputSource === "html"}
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <fig-icon name="upload" />
+                  </fig-button>
+                </fig-tooltip>
+              )}
+            <fig-menu ref={exportMenuRef} position="top right">
+              <fig-tooltip text="Export">
+                <fig-button
+                  fig-menu-trigger=""
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Export preview"
+                  disabled={videoExportProgress ? "" : undefined}
+                >
+                  <ExportIcon />
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item value="image">
+                Image
+              </fig-menu-item>
+              <fig-menu-item
+                value="video"
+                disabled={kind === COMPOSITION_KIND ? "" : undefined}
+              >
+                Video…
+              </fig-menu-item>
+              <fig-menu-item
+                value="embed"
+                disabled={kind === COMPOSITION_KIND ? "" : undefined}
+              >
+                Embed…
+              </fig-menu-item>
+            </fig-menu>
+          </div>
+  );
+
+  return (
+    <>
+      {viewMode === "home" && (
+        <HomeView
+          query={homeQuery}
+          onQueryChange={setHomeQuery}
+          kind={visibleLibraryKind(homeKind, composerUiEnabled)}
+          onKindChange={setHomeKind}
+          origin={homeOrigin}
+          onOriginChange={setHomeOrigin}
+          author={homeAuthor}
+          onAuthorChange={setHomeAuthor}
+          publishedAuthors={publishedAuthors}
+          choices={renderLibraryChoices(groupedHomeCards, {
+            cardSize: "large",
+          })}
+          onChoice={openHomeChoice}
+          authOpen={authOpen}
+          onAuthOpenChange={setAuthOpen}
+          theme={theme}
+          onThemeChange={setTheme}
+          canvasTheme={canvasTheme}
+          onCanvasThemeChange={setCanvasTheme}
+          composerUiEnabled={composerUiEnabled}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
+          onProfileChange={(displayName) => {
+            if (!user) return;
+            setCloudShaders((current) =>
+              current.map((shader) =>
+                shader.owner_id === user.id
+                  ? { ...shader, author_name: displayName }
+                  : shader,
+              ),
+            );
+          }}
+        />
+      )}
+
+      {viewMode === "editor" && (
+      <div className="editor-view">
+        <nav
+          className="app-nav"
+          style={{ "--app-nav-width": `${appNavWidth}px` }}
+        >
+          <div className="app-nav-headers">
+            <fig-header class="app-nav-header">
+              <fig-tooltip text="Back to home">
+                <fig-button
+                  class="app-nav-back-button"
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Back to home"
+                  onClick={() => setShaderRoute()}
+                >
+                  <fig-icon name="back" />
+                </fig-button>
+              </fig-tooltip>
+              <h2 className="app-title">Studio</h2>
+              <div className="app-nav-header-actions">
+                <fig-menu
+                  ref={newShaderMenuRef}
+                  class="new-shader-menu"
+                  position="bottom right"
+                >
+                  <fig-tooltip text="New Figma shader">
+                    <fig-button
+                      fig-menu-trigger=""
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="New Figma shader"
+                    >
+                      <fig-icon name="add" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item value="effect">
+                    Shader effect
+                  </fig-menu-item>
+                  <fig-menu-item value="fill">
+                    Shader fill
+                  </fig-menu-item>
+                  {composerUiEnabled && (
+                    <fig-menu-item value="composition">
+                      Composer
+                    </fig-menu-item>
+                  )}
+                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
+                    <>
+                      <fig-separator />
+                      <fig-menu-item value="from-figma">
+                        From Figma…
+                      </fig-menu-item>
+                    </>
+                  )}
+                </fig-menu>
+                <AccountMenu
+                  open={authOpen}
+                  onOpenChange={setAuthOpen}
+                  theme={theme}
+                  onThemeChange={setTheme}
+                  canvasTheme={canvasTheme}
+                  onCanvasThemeChange={setCanvasTheme}
+                  settingsOpen={settingsOpen}
+                  onSettingsOpenChange={setSettingsOpen}
+                  onProfileChange={(displayName) => {
+                    if (!user) return;
+                    setCloudShaders((current) =>
+                      current.map((shader) =>
+                        shader.owner_id === user.id
+                          ? { ...shader, author_name: displayName }
+                          : shader
+                      )
+                    );
+                  }}
+                />
+              </div>
+            </fig-header>
+            <div className="app-nav-library-filters">
+              <hstack>
+                <fig-input-text
+                  class="app-nav-search"
+                  type="search"
+                  placeholder="Search"
+                  value={editorQuery}
+                  full=""
+                  onInput={(event) => setEditorQuery(event.target.value)}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-tooltip
+                  text={
+                    editorOrigin === "public"
+                      ? "Show all shaders"
+                      : "Show published only"
+                  }
+                >
+                  <fig-button
+                    class="app-nav-published-toggle"
+                    type="toggle"
+                    variant="ghost"
+                    icon="true"
+                    selected={editorOrigin === "public"}
+                    aria-label="Show published shaders only"
+                    onClick={() =>
+                      setEditorOrigin((current) =>
+                        current === "public" ? "all" : "public"
+                      )
+                    }
+                  >
+                    <fig-icon name="globe" />
+                  </fig-button>
+                </fig-tooltip>
+              </hstack>
+              <div className="app-nav-filter-row">
+                <fig-select
+                  ref={editorKindRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by kind"
+                  value={visibleLibraryKind(editorKind, composerUiEnabled)}
+                  options={JSON.stringify([
+                    { value: "all", label: "All types" },
+                    { value: "effect", label: "Effects" },
+                    { value: "fill", label: "Fills" },
+                    ...(composerUiEnabled
+                      ? [{ value: "composition", label: "Composers" }]
+                      : []),
+                  ])}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+                <fig-select
+                  ref={editorAuthorRef}
+                  class="app-nav-filter"
+                  aria-label="Filter by author"
+                  value={editorAuthor}
+                  options={JSON.stringify([
+                    { value: "all", label: "All authors" },
+                    ...publishedAuthors,
+                  ])}
+                  disabled={publishedAuthors.length ? undefined : ""}
+                  dangerouslySetInnerHTML={opaqueContent}
+                />
+              </div>
+            </div>
+          </div>
+          <ShaderList
+            value={presetId}
+            cards={groupedEditorCards}
+            onChoice={chooseItem}
+            onPublish={openPublishForCard}
+            onDelete={onDeleteLibraryCard}
+          />
+        </nav>
+
+        <div
+          className="app-nav-resizer"
+          role="separator"
+          aria-label="Resize shader navigation"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_APP_NAV_WIDTH}
+          aria-valuemax={MAX_APP_NAV_WIDTH}
+          aria-valuenow={appNavWidth}
+          tabIndex={0}
+          onPointerDown={resizeAppNav}
+          onDoubleClick={() => saveAppNavWidth(DEFAULT_APP_NAV_WIDTH)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            event.preventDefault();
+            saveAppNavWidth(
+              Math.min(
+                MAX_APP_NAV_WIDTH,
+                Math.max(
+                  MIN_APP_NAV_WIDTH,
+                  appNavWidth + (event.key === "ArrowLeft" ? -16 : 16)
+                )
+              )
+            );
+          }}
+        />
+
+      <main
+        ref={viewerRef}
+        className="shader-viewer"
+        data-composer={kind === COMPOSITION_KIND ? "true" : undefined}
+        style={{
+          "--code-width": `${codeWidth}px`,
+          "--chat-height": `${chatHeight}px`,
+          ...(previewHeight != null
+            ? { "--preview-height": `${previewHeight}px` }
+            : {}),
+        }}
+      >
+        {kind === COMPOSITION_KIND ? (
+          <Composer
+            header={shaderEditorHeader}
+            properties={propertiesPanel}
+            visualizerRef={visualizerRef}
+          >
+            {previewCanvas}
+            {previewTools}
+          </Composer>
+        ) : (
+          <>
+        <div
+          ref={sidebarRef}
+          className="shader-viewer-sidebar"
+          data-code-collapsed={effectiveCodeCollapsed ? "true" : "false"}
+          data-chat-collapsed={
+            protectedPreview ? "false" : chatCollapsed ? "true" : "false"
+          }
+        >
+          {shaderEditorHeader}
 
           <section
             className="shader-viewer-code"
-            data-collapsed={
-              kind === COMPOSITION_KIND
-                ? "false"
-                : effectiveCodeCollapsed
-                  ? "true"
-                  : "false"
-            }
+            data-collapsed={effectiveCodeCollapsed ? "true" : "false"}
           >
-            <fig-header borderless aria-expanded={
-              kind === COMPOSITION_KIND ? true : !effectiveCodeCollapsed
-            }>
-              <h3>{kind === COMPOSITION_KIND ? "Composition" : "Code"}</h3>
+            <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
+              <h3>Code</h3>
               <hstack>
-                {kind !== COMPOSITION_KIND && (
                 <fig-tooltip text="Copy code">
                   <fig-button
                     type="button"
@@ -4878,8 +5095,7 @@ export default function App() {
                     <fig-icon name="copy" />
                   </fig-button>
                 </fig-tooltip>
-                )}
-                {kind !== COMPOSITION_KIND && !protectedPreview && (
+                {!protectedPreview && (
                   <fig-tooltip
                     text={
                       effectiveCodeCollapsed ? "Expand code" : "Collapse code"
@@ -4911,21 +5127,8 @@ export default function App() {
                 )}
               </hstack>
             </fig-header>
-            <div className="code-editor" hidden={kind !== COMPOSITION_KIND && effectiveCodeCollapsed}>
-              {kind === COMPOSITION_KIND ? (
-                <CompositionEditor
-                  graph={composition}
-                  resolvedByKey={resolvedByKey}
-                  fillCards={compositionFillCards}
-                  effectCards={compositionEffectCards}
-                  selectedLayerId={selectedLayerId}
-                  readOnly={protectedPreview}
-                  onChange={onCompositionChange}
-                  onSelectLayer={onCompositionSelectLayer}
-                  onOpenShader={(shaderId) => chooseItem(shaderId)}
-                />
-              ) : (
-                !effectiveCodeCollapsed && (
+            <div className="code-editor" hidden={effectiveCodeCollapsed}>
+              {!effectiveCodeCollapsed && (
                 <Suspense fallback={null}>
                   <CodePane
                     source={source}
@@ -4935,12 +5138,11 @@ export default function App() {
                     onSourceChange={onSourceChange}
                   />
                 </Suspense>
-                )
               )}
             </div>
           </section>
 
-          {kind !== COMPOSITION_KIND && !protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
+          {!protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
             <div
               className="pane-resizer pane-resizer-row"
               role="separator"
@@ -4964,7 +5166,7 @@ export default function App() {
             />
           )}
 
-          {kind !== COMPOSITION_KIND && !protectedPreview && (
+          {!protectedPreview && (
             <Suspense fallback={null}>
               <ShaderChatSection
                 collapsed={chatCollapsed}
@@ -5043,138 +5245,13 @@ export default function App() {
           ref={visualizerRef}
           className="shader-viewer-visualizer background--light"
         >
-          {fatal ? (
-            <div className="fatal">{fatal}</div>
-          ) : (
-            <Preview
-              canvasRef={canvasRef}
-              props={props}
-              values={values}
-              onControlInput={previewControl}
-              onControlChange={updateControl}
-              onZoomChange={onPreviewZoomChange}
-              zoomRequest={previewZoomRequest}
-              inputSource={
-                kind === "effect" ||
-                (kind === COMPOSITION_KIND &&
-                  mediaFillType(composition?.fill?.type))
-                  ? inputSource
-                  : "image"
-              }
-              htmlInputRef={htmlInputRef}
-              onStageSize={onStageSize}
-              onPointerSurface={onPointerSurface}
-              onPickFile={onPreviewFile}
-              onDropError={setError}
-              canvasTheme={canvasTheme}
-            />
-          )}
-          {!fatal && (
-            <PreviewFps
-              hostRef={hostRef}
-              canvasTheme={canvasTheme}
-              onCanvasThemeChange={setCanvasTheme}
-            />
-          )}
-          <div
-            className="tools background--light"
-          >
-            {(kind !== COMPOSITION_KIND || compositionPlayable) && (
-            <fig-button
-              type="toggle"
-              variant="ghost"
-              icon="true"
-              selected={running}
-              aria-label={running ? "Pause" : "Play"}
-              onClick={togglePlay}
-            >
-              <fig-icon name={running ? "pause" : "play"} />
-            </fig-button>
-            )}
-            <fig-menu ref={zoomMenuRef} position="top center">
-              <fig-tooltip text="Zoom">
-                <fig-button
-                  fig-menu-trigger=""
-                  variant="ghost"
-                  class="tools-zoom"
-                  aria-label={`Zoom ${Math.round(previewZoom * 100)}%`}
-                >
-                  {Math.round(previewZoom * 100)}%
-                </fig-button>
-              </fig-tooltip>
-              <fig-menu-item value="50">
-                50%
-              </fig-menu-item>
-              <fig-menu-item value="100">
-                100%
-              </fig-menu-item>
-              <fig-menu-item value="200">
-                200%
-              </fig-menu-item>
-            </fig-menu>
-            {(kind === "effect" ||
-              (kind === COMPOSITION_KIND &&
-                mediaFillType(composition?.fill?.type))) && (
-              <>
-                <fig-select
-                  ref={inputSelectRef}
-                  class="tools-input-source"
-                  position="top left"
-                  value={inputSource}
-                  options={JSON.stringify([
-                    { value: "image", label: "Image" },
-                    { value: "vector", label: "Vector" },
-                    { value: "video", label: "Video" },
-                    { value: "html", label: "HTML" },
-                  ])}
-                  aria-label="Input source"
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-tooltip text="Upload input">
-                  <fig-button
-                    variant="ghost"
-                    icon="true"
-                    disabled={uploading || inputSource === "html"}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <fig-icon name="upload" />
-                  </fig-button>
-                </fig-tooltip>
-              </>
-            )}
-            <fig-menu ref={exportMenuRef} position="top right">
-              <fig-tooltip text="Export">
-                <fig-button
-                  fig-menu-trigger=""
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Export preview"
-                  disabled={videoExportProgress ? "" : undefined}
-                >
-                  <ExportIcon />
-                </fig-button>
-              </fig-tooltip>
-              <fig-menu-item value="image">
-                Image
-              </fig-menu-item>
-              <fig-menu-item
-                value="video"
-                disabled={kind === COMPOSITION_KIND ? "" : undefined}
-              >
-                Video…
-              </fig-menu-item>
-              <fig-menu-item
-                value="embed"
-                disabled={kind === COMPOSITION_KIND ? "" : undefined}
-              >
-                Embed…
-              </fig-menu-item>
-            </fig-menu>
-          </div>
+          {previewCanvas}
+          {previewTools}
         </section>
 
         {propertiesPanel}
+          </>
+        )}
       </main>
       </div>
       )}
@@ -5505,7 +5582,7 @@ export default function App() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*,video/*"
+        accept="image/*,video/*,.svg,image/svg+xml"
         onChange={onFileInput}
         hidden
       />

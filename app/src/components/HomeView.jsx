@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
 import AccountMenu from "./AccountMenu.jsx";
-import { COMPOSITIONS_UI_ENABLED } from "../lib/composition.js";
 
 const opaqueContent = { __html: "" };
 
@@ -26,6 +25,7 @@ export default function HomeView({
   onThemeChange,
   canvasTheme,
   onCanvasThemeChange,
+  composerUiEnabled = false,
   settingsOpen,
   onSettingsOpenChange,
   onProfileChange,
@@ -86,8 +86,8 @@ export default function HomeView({
                 { value: "all", label: "All types" },
                 { value: "effect", label: "Effects" },
                 { value: "fill", label: "Fills" },
-                ...(COMPOSITIONS_UI_ENABLED
-                  ? [{ value: "composition", label: "Compositions" }]
+                ...(composerUiEnabled
+                  ? [{ value: "composition", label: "Composers" }]
                   : []),
               ])}
               dangerouslySetInnerHTML={opaqueContent}

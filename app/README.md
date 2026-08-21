@@ -71,8 +71,9 @@ That edge policy is still GitHub-only (`@figma.com`). In-app sign-in can use
 Figma or GitHub; people without GitHub still need Access to be opened or
 bypass-listed before they can reach the Figma sign-in button.
 
-The home view lives at `/`. Open shaders use `/shader/<id>` (preset id or saved
-shader id). Legacy single-segment links like `/dither` still load.
+The home view lives at `/`. Shader effects and fills use `/shader/<id>`
+(preset id or saved shader id). Compositions use `/composer/<id>`. Legacy
+single-segment links like `/dither` still load.
 
 ## How it works
 

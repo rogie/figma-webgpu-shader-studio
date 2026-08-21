@@ -26,3 +26,7 @@ any web component, such as fig-* or propskit-* cannot use className terminology 
 - JSX handlers are appropriate for standard DOM events such as `click`. Subscribe to web-component custom events with `addEventListener` on a ref and remove the listener during effect cleanup.
 - Treat presence-based boolean attributes carefully. When false should remove the attribute, use `condition ? "" : undefined` unless the component documents another format.
 - Before finishing a JSX edit, check all `fig-*`, `propskit-*`, and other hyphenated tags for accidental `className` usage.
+
+## Styling
+
+FigUI3 components already include their visual design. Do not add custom CSS, extra `class` values, or appearance overrides for `fig-*` / `propskit-*` unless the user asked. Follow `.cursor/skills/figui3-styling/SKILL.md` and ask first.

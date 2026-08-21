@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import CanvasControlsOverlay from "./CanvasControlsOverlay.jsx";
+import { mediaType } from "../lib/mediaFiles.js";
 
 const DefaultHtmlInput = lazy(() => import("./DefaultHtmlInput.jsx"));
 
@@ -28,6 +29,7 @@ function Preview({
   zoomRequest,
   onPickFile,
   onDropError,
+  dropTarget = "input",
   onStageSize,
   onPointerSurface,
   inputSource = "image",
@@ -228,12 +230,13 @@ function Preview({
     const file = e.dataTransfer.files && e.dataTransfer.files[0];
     if (!file) return;
 
-    const isMedia =
-      file.type.startsWith("image/") ||
-      file.type.startsWith("video/") ||
-      /\.(png|jpe?g|webp|gif|avif|mp4|mov|m4v|webm)$/i.test(file.name);
-    if (!isMedia) {
-      onDropError?.("Drop an image or video file.");
+    const mimeType = mediaType(file);
+    if (!mimeType) {
+      onDropError?.(
+        dropTarget === "fill"
+          ? "Drop an image, SVG, or video to replace the fill."
+          : "Drop an image, SVG, or video file."
+      );
       return;
     }
     onPickFile(file);
@@ -311,8 +314,12 @@ function Preview({
       {dragging && (
         <div className="drop-overlay">
           <fig-icon name="add" />
-          <strong>Drop image or video</strong>
-          <span>Use it as the shader input</span>
+          <strong>Drop image, SVG, or video</strong>
+          <span>
+            {dropTarget === "fill"
+              ? "Replace the composition fill"
+              : "Use it as the shader input"}
+          </span>
         </div>
       )}
     </fig-preview>

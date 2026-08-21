@@ -3,15 +3,36 @@ import test from "node:test";
 import {
   collectCompositionFeatures,
   compositionsReferencing,
+  COMPOSER_UI_STORAGE_KEY,
   emptyComposition,
+  fillTypeForDroppedMedia,
   isCompositionPlayable,
   libraryKind,
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
+  readComposerUiEnabled,
   referencedShaderKeys,
   unpublishedCompositionRefs,
+  writeComposerUiEnabled,
 } from "./composition.js";
+
+test("composer UI defaults off and persists only an explicit true", () => {
+  const values = {};
+  const storage = {
+    getItem: (key) => values[key] ?? null,
+    setItem: (key, value) => {
+      values[key] = String(value);
+    },
+  };
+
+  assert.equal(readComposerUiEnabled(storage), false);
+  assert.equal(writeComposerUiEnabled(true, storage), true);
+  assert.equal(values[COMPOSER_UI_STORAGE_KEY], "true");
+  assert.equal(readComposerUiEnabled(storage), true);
+  assert.equal(writeComposerUiEnabled(false, storage), false);
+  assert.equal(readComposerUiEnabled(storage), false);
+});
 
 test("empty composition defaults to an image fill", () => {
   assert.deepEqual(emptyComposition(), {
@@ -213,6 +234,14 @@ test("libraryKind preserves composition", () => {
   assert.equal(libraryKind("fill"), "fill");
   assert.equal(libraryKind("effect"), "effect");
   assert.equal(libraryKind("other"), "effect");
+});
+
+test("fillTypeForDroppedMedia maps image, svg, and video", () => {
+  assert.equal(fillTypeForDroppedMedia("image/png"), "image");
+  assert.equal(fillTypeForDroppedMedia("image/svg+xml"), "image");
+  assert.equal(fillTypeForDroppedMedia("video/mp4"), "video");
+  assert.equal(fillTypeForDroppedMedia("text/html"), null);
+  assert.equal(fillTypeForDroppedMedia(""), null);
 });
 
 test("referencedShaderKeys de-duplicates fill and effects", () => {

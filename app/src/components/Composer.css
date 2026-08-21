@@ -1,0 +1,52 @@
+.composer {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+.composer-stage {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.composer-stage > .shader-editor-header {
+  flex: 0 0 auto;
+}
+
+.shader-viewer[data-composer="true"] .composer-preview.shader-viewer-visualizer {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+}
+
+.composer .shader-properties-panel {
+  flex: 0 0 var(--sidebar-width);
+}
+
+@media (max-width: 900px) {
+  #root .shader-viewer[data-composer="true"] {
+    display: flex;
+    flex-direction: row;
+    align-items: stretch;
+    grid-template-columns: none;
+    grid-template-rows: none;
+  }
+
+  #root .shader-viewer[data-composer="true"] .composer-preview.shader-viewer-visualizer {
+    grid-column: auto;
+    grid-row: auto;
+    height: auto;
+    aspect-ratio: auto;
+  }
+}
+

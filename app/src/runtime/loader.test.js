@@ -17,6 +17,18 @@ test("captures defineProperties and exported lifecycle functions", () => {
   assert.equal(loaded.props.amount.defaultValue, 0.5);
 });
 
+test("captures defineProperties from figma:react the same as figma:shaders", () => {
+  const loaded = loadModule(`
+    import { defineProperties } from "figma:react";
+    export function render() {}
+    defineProperties(null, {
+      amount: { type: "number", defaultValue: 0.25 }
+    });
+  `);
+
+  assert.equal(loaded.props.amount.defaultValue, 0.25);
+});
+
 test("shadows globals unavailable in the Figma shader runtime", () => {
   const loaded = loadModule(`
     export function render() {

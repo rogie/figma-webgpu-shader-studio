@@ -143,6 +143,12 @@ body,
     margin: 1rem;
     margin-left: 0;
 
+    &[data-composer="true"] {
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+    }
+
     .shader-viewer-sidebar {
       width: var(--code-width);
       min-width: 320px;
@@ -1138,7 +1144,6 @@ dialog.delete-shader-dialog {
   fig-content.shader-properties-panel-content {
     flex: 1;
     min-height: 0;
-    padding-block: var(--spacer-2-5);
     overflow-x: hidden;
     overflow-y: auto;
     display: flex;

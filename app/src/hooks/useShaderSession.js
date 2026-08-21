@@ -54,7 +54,7 @@ export function useShaderSession({
       setError(null);
       setCurrentShader(cloudShader);
       setPresetId(sessionId);
-      setShaderRoute(nextRouteId);
+      setShaderRoute(nextRouteId, nextKind);
       setShaderName(name);
       setSource(nextSource);
       setSessionKind(nextKind);

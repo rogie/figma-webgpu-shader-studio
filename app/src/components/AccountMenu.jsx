@@ -23,6 +23,11 @@ import {
   subscribePreviewPixelRatioMode,
   writePreviewPixelRatioMode,
 } from "../runtime/dpi.js";
+import {
+  readComposerUiEnabled,
+  subscribeComposerUiEnabled,
+  writeComposerUiEnabled,
+} from "../lib/composition.js";
 
 function accountDisplayName(user) {
   return (
@@ -64,6 +69,7 @@ export default function AccountMenu({
   const themeControlRef = useRef(null);
   const pixelRatioControlRef = useRef(null);
   const canvasThemeControlRef = useRef(null);
+  const composerControlRef = useRef(null);
   const [sending, setSending] = useState(
     /** @type {"" | "figma" | "github"} */ ("")
   );
@@ -77,6 +83,9 @@ export default function AccountMenu({
   const [cursorKey, setCursorKey] = useState(() => getProviderKeys().cursor);
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
+  );
+  const [composerUiEnabled, setComposerUiEnabled] = useState(
+    readComposerUiEnabled,
   );
   const [figmaConnected, setFigmaConnected] = useState(
     () => Boolean(getFigmaAccessToken())
@@ -117,6 +126,8 @@ export default function AccountMenu({
     () => subscribePreviewPixelRatioMode(setPixelRatioMode),
     []
   );
+
+  useEffect(() => subscribeComposerUiEnabled(setComposerUiEnabled), []);
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) return undefined;
@@ -208,6 +219,29 @@ export default function AccountMenu({
     control.addEventListener("input", updateCanvasTheme);
     return () => control.removeEventListener("input", updateCanvasTheme);
   }, [onCanvasThemeChange]);
+
+  useEffect(() => {
+    const control = composerControlRef.current;
+    if (!control) return;
+    const updateComposerUi = (event) => {
+      const next =
+        typeof event.detail?.checked === "boolean"
+          ? event.detail.checked
+          : Boolean(event.target.checked);
+      writeComposerUiEnabled(next);
+    };
+    control.addEventListener("input", updateComposerUi);
+    control.addEventListener("change", updateComposerUi);
+    return () => {
+      control.removeEventListener("input", updateComposerUi);
+      control.removeEventListener("change", updateComposerUi);
+    };
+  }, []);
+
+  useEffect(() => {
+    const control = composerControlRef.current;
+    if (control) control.checked = composerUiEnabled;
+  }, [composerUiEnabled]);
 
   const close = () => {
     onOpenChange(false);
@@ -473,6 +507,15 @@ export default function AccountMenu({
                   Dark
                 </fig-segment>
               </fig-segmented-control>
+            </fig-field>
+            <fig-field direction="horizontal">
+              <label>Composer</label>
+              <fig-checkbox
+                ref={composerControlRef}
+                checked={composerUiEnabled ? "" : undefined}
+                label="Enable composer"
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
             </fig-field>
           </fig-group>
 

@@ -29,8 +29,9 @@ const FORBIDDEN_GLOBALS = [
   "importScripts",
 ];
 
-// Anything imported other than `figma:shaders` "silently proxies and produces
-// dead behavior" per the spec. Return a self-referential no-op proxy.
+// Anything imported other than `figma:shaders` / `figma:react` "silently
+// proxies and produces dead behavior" per the spec. Return a self-referential
+// no-op proxy.
 function makeDeadProxy() {
   const noop = function () {};
   const handler = {
@@ -48,10 +49,14 @@ function makeDeadProxy() {
   return proxy;
 }
 
+function isFigmaShaderImport(spec) {
+  return spec === "figma:shaders" || spec === "figma:react";
+}
+
 function makeRequire(recordProps) {
   const dead = makeDeadProxy();
   return function require(spec) {
-    if (spec === "figma:shaders") {
+    if (isFigmaShaderImport(spec)) {
       return {
         defineProperties(_effect, props) {
           recordProps(props || {});

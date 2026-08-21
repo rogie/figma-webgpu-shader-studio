@@ -45,6 +45,7 @@ export function mediaType(file) {
     webp: "image/webp",
     gif: "image/gif",
     avif: "image/avif",
+    svg: "image/svg+xml",
     mp4: "video/mp4",
     mov: "video/quicktime",
     m4v: "video/x-m4v",
