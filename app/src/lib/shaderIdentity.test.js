@@ -42,6 +42,7 @@ test("content fingerprints include every persisted state field", () => {
     source: "source",
     parameterValues: { amount: 1 },
     features: { isAnimated: false },
+    composition: { fill: { type: "image" } },
   };
   const fingerprint = shaderContentFingerprint(base);
 
@@ -57,6 +58,13 @@ test("content fingerprints include every persisted state field", () => {
     shaderContentFingerprint({
       ...base,
       features: { isAnimated: true },
+    }),
+    fingerprint,
+  );
+  assert.notEqual(
+    shaderContentFingerprint({
+      ...base,
+      composition: { fill: { type: "video" } },
     }),
     fingerprint,
   );

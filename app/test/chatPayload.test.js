@@ -128,8 +128,13 @@ test("request preserves complete source, features, and skill context", () => {
     features: { isAnimated: false, usesMouse: true },
     skills,
     mode: "plan",
+    cursorAgentId: "bc-11111111-2222-3333-4444-555555555555",
   });
 
+  assert.equal(
+    request.cursorAgentId,
+    "bc-11111111-2222-3333-4444-555555555555"
+  );
   assert.equal(request.source, source);
   assert.equal(request.skills, skills);
   assert.equal(request.mode, "plan");
@@ -182,11 +187,20 @@ test("SSE parser preserves safe provider status phases", () => {
     parser.push(
       'data: {"type":"status","phase":"thinking"}\n\n' +
         'data: {"type":"status","phase":"responding"}\n\n' +
-        'data: {"type":"status","phase":"private-reasoning"}\n\n'
+        'data: {"type":"status","phase":"starting"}\n\n' +
+        'data: {"type":"status","phase":"private-reasoning"}\n\n' +
+        'data: {"type":"cursor-agent","agentId":"bc-11111111-2222-3333-4444-555555555555"}\n\n' +
+        'data: {"type":"done","agentId":"bc-11111111-2222-3333-4444-555555555555"}\n\n'
     ),
     [
       { type: "status", phase: "thinking" },
       { type: "status", phase: "responding" },
+      { type: "status", phase: "starting" },
+      {
+        type: "cursor-agent",
+        agentId: "bc-11111111-2222-3333-4444-555555555555",
+      },
+      { type: "done", agentId: "bc-11111111-2222-3333-4444-555555555555" },
     ]
   );
 });

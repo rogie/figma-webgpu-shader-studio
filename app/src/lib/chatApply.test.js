@@ -41,6 +41,12 @@ test("rate-limit errors mention the selected provider, not Gemini by default", (
   assert.match(grok, /Grok/);
   assert.match(grok, /console\.x\.ai/);
   assert.doesNotMatch(grok, /Gemini|OpenAI/);
+
+  const cursor = formatChatError("usage_limit_exceeded", {
+    provider: "cursor",
+  });
+  assert.match(cursor, /Cursor/);
+  assert.match(cursor, /cursor\.com\/dashboard/);
 });
 
 test("only applies chat output to its unchanged target shader", () => {

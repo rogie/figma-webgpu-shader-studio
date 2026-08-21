@@ -136,6 +136,7 @@ export async function saveShaderState({
   kind,
   parameterValues,
   features,
+  composition = {},
   checkpointKind = null,
   summary = null,
 }) {
@@ -150,7 +151,17 @@ export async function saveShaderState({
       p_features: features || {},
       p_checkpoint_kind: checkpointKind,
       p_summary: summary,
+      p_composition: composition || {},
     })
+  );
+}
+
+export async function getShadersByIds(ids) {
+  const unique = [...new Set((ids || []).filter(Boolean))];
+  if (!unique.length) return [];
+  const client = requireClient();
+  return unwrap(
+    await client.from("shaders").select("*").in("id", unique)
   );
 }
 

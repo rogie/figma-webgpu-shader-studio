@@ -91,6 +91,8 @@ export class ShaderHost {
     this._passthroughBindLayout = null;
     this._passthroughBindGroup = null;
     this._passthroughInputTexture = null;
+    this.compositionLayers = null;
+    this._compositionTextures = [];
 
     this.frame = {
       input: null,
@@ -447,8 +449,8 @@ export class ShaderHost {
     return true;
   }
 
-  _teardownState() {
-    const s = this.frame.state;
+  _destroyStateObject(state) {
+    const s = state || {};
     const borrowedResources = new Set(
       [
         this.device,
@@ -456,6 +458,7 @@ export class ShaderHost {
         this.inputTexture,
         this.frame.input,
         this.frame.output,
+        ...(this._compositionTextures || []),
       ].filter(Boolean)
     );
     const destroyedResources = new Set();
@@ -476,6 +479,26 @@ export class ShaderHost {
     for (const key in s) {
       destroy(s[key]);
     }
+  }
+
+  _teardownCompositionResources() {
+    for (const layer of this.compositionLayers || []) {
+      this._destroyStateObject(layer.state);
+      layer.state = {};
+    }
+    for (const texture of this._compositionTextures) {
+      try {
+        texture.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    this._compositionTextures = [];
+  }
+
+  _teardownState() {
+    this._teardownCompositionResources();
+    this._destroyStateObject(this.frame.state);
     this.frame.state = {};
   }
 
@@ -807,6 +830,15 @@ export class ShaderHost {
     // When the RAF loop is already presenting, the next frame picks up params.
     // Forcing an extra synchronous present here hitchs the main thread and
     // cancels native range-slider drags in the properties panel.
+    if (!this._isLoopActive()) this.redraw();
+  }
+
+  setCompositionLayerParams(layerId, params) {
+    const layer = (this.compositionLayers || []).find(
+      (item) => item.id === layerId
+    );
+    if (!layer) return;
+    layer.params = params || {};
     if (!this._isLoopActive()) this.redraw();
   }
 
@@ -1208,6 +1240,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (this.video) this._uploadVideoFrame();
     if (this.htmlElement) this._uploadHtmlFrame();
     this.frame.output = this.context.getCurrentTexture();
+    if (this.compositionLayers) {
+      const output = this._presentComposition();
+      measurePerf("host.present", startedAt);
+      return output;
+    }
     if (!this.effectVisible) {
       const output = this._presentPassthrough();
       measurePerf("host.present", startedAt);
@@ -1219,10 +1256,174 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   // Load a compiled module ({ setup, render }) and re-run setup with validation.
+  _ensureCompositionTexture(index, width, height) {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    const existing = this._compositionTextures[index];
+    if (existing && existing.width === w && existing.height === h) {
+      return existing;
+    }
+    if (existing) {
+      try {
+        existing.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    const texture = this.device.createTexture({
+      size: [w, h],
+      format: "rgba8unorm",
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this._compositionTextures[index] = texture;
+    return texture;
+  }
+
+  _layerFrame(layer, input, output) {
+    return {
+      input,
+      output,
+      state: layer.state,
+      params: layer.params || {},
+      time: this.frame.time,
+      deltaTime: this.frame.deltaTime,
+      frame: this.frame.frame,
+      renderScale: this.frame.renderScale,
+      mousePosition: this.frame.mousePosition,
+    };
+  }
+
+  _presentComposition() {
+    const swapchain = this.context.getCurrentTexture();
+    this.frame.output = swapchain;
+    const layers = this.compositionLayers || [];
+    const fillLayer = layers.find((layer) => layer.role === "fill");
+    const effects = this.effectVisible
+      ? layers.filter((layer) => layer.role === "effect" && layer.enabled)
+      : [];
+    const width =
+      this.frame.input?.width ||
+      this.logicalOutputSize.width ||
+      swapchain.width;
+    const height =
+      this.frame.input?.height ||
+      this.logicalOutputSize.height ||
+      swapchain.height;
+
+    let current = this.frame.input;
+    if (fillLayer) {
+      const target = effects.length
+        ? this._ensureCompositionTexture(0, width, height)
+        : swapchain;
+      const frame = this._layerFrame(fillLayer, null, target);
+      fillLayer.render(this.device, frame);
+      current = target;
+    }
+
+    if (!effects.length) {
+      if (!fillLayer) {
+        this.frame.input = current;
+        return this._presentPassthrough();
+      }
+      return swapchain;
+    }
+
+    effects.forEach((layer, index) => {
+      const isLast = index === effects.length - 1;
+      const target = isLast
+        ? swapchain
+        : this._ensureCompositionTexture((fillLayer ? 1 : 0) + (index % 2), width, height);
+      if (!current) {
+        this.frame.input = null;
+        this.frame.output = target;
+        this._presentPassthrough();
+        current = target;
+        return;
+      }
+      const frame = this._layerFrame(layer, current, target);
+      layer.render(this.device, frame);
+      current = target;
+    });
+    return swapchain;
+  }
+
+  async setComposition(
+    layers,
+    { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
+  ) {
+    this._playbackGeneration += 1;
+    this._shaderCompilationErrorMessage = null;
+    this._teardownCompositionResources();
+    this.compositionLayers = (layers || []).map((layer) => ({
+      ...layer,
+      state: {},
+      enabled: layer.enabled !== false,
+      params: layer.params || {},
+    }));
+    this.setupFn = (device, frame) => {
+      for (const layer of this.compositionLayers) {
+        const layerFrame = this._layerFrame(layer, frame.input, frame.output);
+        layer.setup?.(device, layerFrame);
+      }
+    };
+    this.renderFn = () => this._presentComposition();
+    this.isFill = Boolean(isFill);
+    this.isAnimated = Boolean(isAnimated);
+    this.usesMouse = Boolean(usesMouse);
+    this.supportsRenderScale = Boolean(supportsRenderScale);
+    this.frame.frame = 0;
+    this.startTime = performance.now();
+    this.lastTime = this.startTime;
+
+    if (this.isFill && !this.frame.input) {
+      this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
+    } else {
+      this._applyAdaptiveOutputSize();
+    }
+
+    this.device.pushErrorScope("validation");
+    let jsError = null;
+    try {
+      this.frame.output = this.context.getCurrentTexture();
+      const setupStartedAt = perfNow();
+      if (this.setupFn) this.setupFn(this.device, this.frame);
+      measurePerf("shader.setup", setupStartedAt);
+      this._present();
+    } catch (err) {
+      jsError = err && err.message ? err.message : String(err);
+    }
+    const shaderCompilationError = await this._shaderCompilationError();
+    const gpuError = await this.device.popErrorScope();
+
+    if (jsError) {
+      this._disableRejectedModule();
+      this.onError(jsError);
+      return false;
+    }
+    if (shaderCompilationError) {
+      this._shaderCompilationErrorMessage = shaderCompilationError;
+      this._disableRejectedModule();
+      this.onError(shaderCompilationError);
+      return false;
+    }
+    if (gpuError) {
+      this._disableRejectedModule();
+      this.onError(gpuError.message);
+      return false;
+    }
+    this.onError(null);
+    return true;
+  }
+
   async setModule(
     { setup, render },
     { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
   ) {
+    this.compositionLayers = null;
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
     this.setupFn = setup;
@@ -1285,11 +1486,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._cancelVideoFrameCallback();
     this.setupFn = null;
     this.renderFn = null;
+    this.compositionLayers = null;
   }
 
   async _shaderCompilationError() {
     const modules = [];
     collectShaderModules(this.frame.state, modules, new Set());
+    for (const layer of this.compositionLayers || []) {
+      collectShaderModules(layer.state, modules, new Set());
+    }
     const errors = [];
     for (const module of modules) {
       try {

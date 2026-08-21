@@ -72,8 +72,9 @@ export function buildChatRequest({
   features,
   skills,
   mode = "agent",
+  cursorAgentId,
 }) {
-  return {
+  const request = {
     provider,
     model,
     messages,
@@ -84,6 +85,10 @@ export function buildChatRequest({
     skills,
     mode: mode === "plan" ? "plan" : "agent",
   };
+  if (typeof cursorAgentId === "string" && cursorAgentId) {
+    request.cursorAgentId = cursorAgentId;
+  }
+  return request;
 }
 
 export function createChatSseParser() {
@@ -107,11 +112,23 @@ export function createChatSseParser() {
             events.push({ type: "delta", text: event.text });
           } else if (
             event.type === "status" &&
-            (event.phase === "thinking" || event.phase === "responding")
+            (event.phase === "thinking" ||
+              event.phase === "responding" ||
+              event.phase === "starting")
           ) {
             events.push({ type: "status", phase: event.phase });
+          } else if (
+            event.type === "cursor-agent" &&
+            typeof event.agentId === "string" &&
+            event.agentId
+          ) {
+            events.push({ type: "cursor-agent", agentId: event.agentId });
           } else if (event.type === "done") {
-            events.push({ type: "done" });
+            const done = { type: "done" };
+            if (typeof event.agentId === "string" && event.agentId) {
+              done.agentId = event.agentId;
+            }
+            events.push(done);
           } else if (event.type === "error") {
             events.push({
               type: "error",

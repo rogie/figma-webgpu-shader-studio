@@ -1,0 +1,26 @@
+dialog[is="fig-popup"].shader-effect-picker {
+  width: 240px;
+  max-width: 240px;
+  max-height: min(60vh, 32rem);
+}
+
+fig-header.shader-effect-picker-search {
+  padding-inline: var(--spacer-2);
+}
+
+fig-chooser.shader-effect-picker-list {
+  --fig-chooser-grid-columns: 2;
+  --fig-chooser-inline-margin: var(--spacer-2);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  align-content: start;
+  grid-auto-rows: max-content;
+}
+
+.shader-effect-picker-empty {
+  color: var(--figma-color-text-secondary);
+  font-size: var(--body-small-fontSize);
+  margin: 0;
+  padding: var(--spacer-3) var(--spacer-2);
+}

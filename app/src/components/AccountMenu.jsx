@@ -5,6 +5,8 @@ import {
   setProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
+import { clearCursorAgent } from "../lib/cursorAgent.js";
+import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import {
   getFigmaAccessToken,
   subscribeFigmaAccessToken,
@@ -54,6 +56,11 @@ export default function AccountMenu({
   const authPopupRef = useRef(null);
   const settingsDialogRef = useRef(null);
   const settingsAnchorRef = useRef(null);
+  const accountMenuRef = useFigMenuChange((value) => {
+    if (value === "settings") openSettings();
+    else if (value === "sign-out") logout();
+    else if (value === "login") onOpenChange(true);
+  });
   const themeControlRef = useRef(null);
   const pixelRatioControlRef = useRef(null);
   const canvasThemeControlRef = useRef(null);
@@ -67,6 +74,7 @@ export default function AccountMenu({
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
   const [grokKey, setGrokKey] = useState(() => getProviderKeys().grok);
+  const [cursorKey, setCursorKey] = useState(() => getProviderKeys().cursor);
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
   );
@@ -88,6 +96,12 @@ export default function AccountMenu({
     onSettingsOpenChange?.(next);
   };
 
+  const openSettings = () => {
+    // fig-menu closes on select in the same turn. Wait a frame so the menu
+    // popover's light-dismiss does not immediately hide Settings.
+    requestAnimationFrame(() => setSettingsOpen(true));
+  };
+
   useEffect(() => {
     return subscribeProviderKeys(() => {
       const keys = getProviderKeys();
@@ -95,6 +109,7 @@ export default function AccountMenu({
       setAnthropicKey(keys.anthropic);
       setGeminiKey(keys.gemini);
       setGrokKey(keys.grok);
+      setCursorKey(keys.cursor);
     });
   }, []);
 
@@ -235,6 +250,11 @@ export default function AccountMenu({
       setProviderKey("anthropic", anthropicKey);
       setProviderKey("gemini", geminiKey);
       setProviderKey("grok", grokKey);
+      const previousCursorKey = getProviderKeys().cursor;
+      setProviderKey("cursor", cursorKey);
+      if ((cursorKey || "").trim() !== previousCursorKey) {
+        clearCursorAgent();
+      }
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
@@ -275,13 +295,9 @@ export default function AccountMenu({
     setFigmaTestMessage("Figma disconnected from this device.");
   };
 
-  // fig-menu relocates items into its popup. Remount on auth changes so React
-  // never tries to reconcile nodes that FigUI has already moved.
-  const menuKey = user ? "signed-in" : "signed-out";
-
   return (
     <>
-      <fig-menu key={menuKey} position="bottom right">
+      <fig-menu ref={accountMenuRef} position="bottom right">
         <fig-tooltip text={user ? user.email || "Account" : "Settings"}>
           <fig-button
             ref={settingsAnchorRef}
@@ -313,28 +329,15 @@ export default function AccountMenu({
         </fig-tooltip>
         {user ? (
           <>
-            <fig-menu-item
-              value="settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              Settings
-            </fig-menu-item>
-            <fig-menu-item value="sign-out" onClick={logout}>
-              Sign out
-            </fig-menu-item>
+            <fig-menu-item value="settings">Settings</fig-menu-item>
+            <fig-menu-item value="sign-out">Sign out</fig-menu-item>
           </>
         ) : (
           <>
-            <fig-menu-item
-              value="settings"
-              onClick={() => setSettingsOpen(true)}
-            >
-              Settings
-            </fig-menu-item>
+            <fig-menu-item value="settings">Settings</fig-menu-item>
             <fig-menu-item
               value="login"
               disabled={!configured ? "" : undefined}
-              onClick={() => onOpenChange(true)}
             >
               Sign in
             </fig-menu-item>
@@ -394,6 +397,7 @@ export default function AccountMenu({
         offset="8 0"
         variant="popover"
         theme="menu"
+        popover="manual"
         closedby="any"
         onClose={() => setSettingsOpen(false)}
         onCancel={() => setSettingsOpen(false)}
@@ -548,6 +552,18 @@ export default function AccountMenu({
                 placeholder="xai-…"
                 autocomplete="off"
                 onInput={(event) => setGrokKey(event.target.value)}
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
+            </fig-field>
+            <fig-field>
+              <label>Cursor</label>
+              <fig-input-text
+                type="password"
+                full=""
+                value={cursorKey}
+                placeholder="crsr_…"
+                autocomplete="off"
+                onInput={(event) => setCursorKey(event.target.value)}
                 dangerouslySetInnerHTML={{ __html: "" }}
               />
             </fig-field>

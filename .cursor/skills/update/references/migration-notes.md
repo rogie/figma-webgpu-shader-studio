@@ -138,6 +138,22 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - Package README lists shipped `.cursor/skills/` (`figui3`, `fig-editor`, `fig-lab`, `propkit`). App integrations still follow this repo's `/update` skill.
 - Layer docs no longer claim `fig-editor.js` registers `fig-layer`; this app does not rely on that transitive registration.
 
+## 8.9.12 notes
+
+- `fig-menu` slots `fig-menu-item` / `fig-separator` into the popup instead of relocating them. React can add or remove items without `removeChild` errors. `AccountMenu` no longer remounts the menu on auth changes.
+- `fig-menu-item` works as a list row outside `fig-menu` (popup + sticky `fig-separator`s + nested row-action menu). Version history already uses this pattern.
+- `fig-popup` `title` auto-generates a header with a close button (same as `fig-dialog`). Keep authored `<fig-header>` on account/settings/publish/version popups — they already have headers and do not need the extra close control or a native `title` tooltip.
+- Nested `fig-menu` inside a `fig-menu-item` no longer selects the parent row. Version history restore menus pick this up automatically.
+- Sticky labeled `fig-separator`s hide the rule while stuck. No app CSS change required.
+
+## 8.9.13 notes
+
+- Patch-only: sticky labeled `fig-separator`s stack above scrolling list items. Library list and version history already use `sticky=""`; no app wiring required.
+
+## 8.9.14 notes
+
+- Patch-only: vertical `fig-separator[direction="vertical"]` now clamps `max-width: 1px` and `padding: 0` so the rule cannot stretch in flex/grid rows. This app does not use vertical separators; no app wiring required.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

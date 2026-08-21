@@ -1,0 +1,90 @@
+.composition-editor {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding: var(--spacer-3);
+  gap: var(--spacer-4);
+}
+
+.composition-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+  min-width: 0;
+}
+
+.composition-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacer-2);
+}
+
+.composition-section-header h3 {
+  margin: 0;
+  font-size: var(--body-medium-strong-fontSize);
+  font-weight: var(--body-medium-strong-fontWeight);
+}
+
+.composition-fill-row,
+.composition-effect-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacer-2);
+  min-width: 0;
+  width: 100%;
+  padding: var(--spacer-2);
+  border: 1px solid var(--figma-color-border);
+  border-radius: var(--radius-medium);
+  background: var(--figma-color-bg);
+  text-align: start;
+}
+
+.composition-effect-row.is-selected,
+.composition-fill-row.is-selected {
+  border-color: var(--figma-color-border-selected);
+}
+
+.composition-layer-text {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.composition-layer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composition-layer-sublabel {
+  color: var(--figma-color-text-secondary);
+  font-size: var(--body-small-fontSize);
+}
+
+.composition-layer-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--spacer-1);
+}
+
+.composition-effect-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacer-2);
+}
+
+.composition-empty,
+.composition-notice {
+  color: var(--figma-color-text-secondary);
+  font-size: var(--body-small-fontSize);
+  margin: 0;
+}
+
+.composition-picker-list {
+  min-height: 240px;
+  max-height: 60vh;
+}

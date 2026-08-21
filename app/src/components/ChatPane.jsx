@@ -24,7 +24,9 @@ import {
 } from "../lib/chatAttachments.js";
 import {
   DEFAULT_CHAT_MODEL,
+  chatModelValue,
   findChatModel,
+  findSelectableChatModel,
   groupsForAvailableProviderModels,
   reconcileAvailableChatModel,
 } from "../lib/chatModels.js";
@@ -43,6 +45,7 @@ import {
   getProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
+import { cursorAgentIdForModel, saveCursorAgent } from "../lib/cursorAgent.js";
 import { toApiMessages } from "../lib/chatPayload.js";
 import { splitComposerPaste } from "../lib/pastedText.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
@@ -73,6 +76,8 @@ const MAX_AUTO_HEAL_ATTEMPTS = 2;
 
 function assistantPhaseLabel(message) {
   switch (message?.phase) {
+    case "starting":
+      return "Starting Cursor agent…";
     case "thinking":
       return "Thinking…";
     case "responding":
@@ -121,6 +126,13 @@ function isEmptyAssistant(message) {
   );
 }
 
+function rememberCursorAgent(event, model) {
+  if (model?.provider !== "cursor") return;
+  if (typeof event?.agentId === "string" && event.agentId) {
+    saveCursorAgent({ agentId: event.agentId, modelId: model.id });
+  }
+}
+
 function pruneEmptyAssistants(thread) {
   return thread.filter((message) => !isEmptyAssistant(message));
 }
@@ -130,6 +142,7 @@ function chatActivityLabel(messages) {
   if (!latest) return "New chat activity";
   if (latest.role !== "assistant") return "New message";
   if (latest.pending) {
+    if (latest.phase === "starting") return "Starting Cursor agent…";
     if (latest.mode === "plan" || latest.phase === "planning") {
       return "Writing plan…";
     }
@@ -206,6 +219,10 @@ const ChatPane = forwardRef(function ChatPane(
   );
   const grokApiKey = useMemo(
     () => getProviderKey("grok"),
+    [keyVersion]
+  );
+  const cursorApiKey = useMemo(
+    () => getProviderKey("cursor"),
     [keyVersion]
   );
   const modelGroups = useMemo(
@@ -297,6 +314,7 @@ const ChatPane = forwardRef(function ChatPane(
       ["anthropic", anthropicApiKey],
       ["gemini", geminiApiKey],
       ["grok", grokApiKey],
+      ["cursor", cursorApiKey],
     ];
     for (const [provider, providerKey] of providerKeys) {
       if (!providerKey) continue;
@@ -314,11 +332,15 @@ const ChatPane = forwardRef(function ChatPane(
         });
     }
     return () => controller.abort();
-  }, [openaiApiKey, anthropicApiKey, geminiApiKey, grokApiKey]);
+  }, [openaiApiKey, anthropicApiKey, geminiApiKey, grokApiKey, cursorApiKey]);
 
   useEffect(() => {
     if (Object.keys(availableProviderModels).length === 0) return;
-    const next = reconcileAvailableChatModel(model, modelGroups);
+    const next = reconcileAvailableChatModel(
+      model,
+      modelGroups,
+      availableProviderModels
+    );
     if (next.provider !== model.provider || next.id !== model.id) {
       setModel(next);
       setError("");
@@ -538,9 +560,7 @@ const ChatPane = forwardRef(function ChatPane(
         detail && typeof detail === "object" && "value" in detail
           ? detail.value
           : (detail ?? event.target?.value);
-      const next = selectableModels.find(
-        (entry) => entry.id === String(value || "")
-      );
+      const next = findSelectableChatModel(selectableModels, value);
       if (next) {
         setModel(next);
         setError("");
@@ -944,8 +964,10 @@ const ChatPane = forwardRef(function ChatPane(
           fileName,
           features,
           skills,
+          cursorAgentId: cursorAgentIdForModel(model),
           signal: controller.signal,
         })) {
+          rememberCursorAgent(event, model);
           if (event.type === "error") {
             throw new Error(event.message || "Automatic repair failed.");
           }
@@ -1020,8 +1042,10 @@ const ChatPane = forwardRef(function ChatPane(
         features,
         skills,
         mode: requestMode,
+        cursorAgentId: cursorAgentIdForModel(model),
         signal: controller.signal,
       })) {
+        rememberCursorAgent(event, model);
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
@@ -1053,7 +1077,12 @@ const ChatPane = forwardRef(function ChatPane(
           }
         } else if (event.type === "status") {
           updateLastAssistant({
-            phase: requestMode === "plan" ? "planning" : event.phase,
+            phase:
+              event.phase === "starting"
+                ? "starting"
+                : requestMode === "plan"
+                  ? "planning"
+                  : event.phase,
           });
         } else if (event.type === "done") {
           sawDone = true;
@@ -1187,7 +1216,7 @@ ${pendingPlan.content}
       variant="ghost"
       label="Model"
       position="top left"
-      value={model.id}
+      value={chatModelValue(model)}
       disabled={streaming ? "" : undefined}
     >
       <fig-select-options>
@@ -1195,7 +1224,10 @@ ${pendingPlan.content}
           <Fragment key={group.label}>
             <fig-separator label={group.label} />
             {group.models.map((entry) => (
-              <fig-select-option key={entry.id} value={entry.id}>
+              <fig-select-option
+                key={chatModelValue(entry)}
+                value={chatModelValue(entry)}
+              >
                 {entry.label}
               </fig-select-option>
             ))}

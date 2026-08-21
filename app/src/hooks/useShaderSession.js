@@ -1,4 +1,10 @@
 import { useCallback } from "react";
+import {
+  COMPOSITION_KIND,
+  emptyComposition,
+  mediaFillType,
+  normalizeComposition,
+} from "../lib/composition.js";
 import { readInputSource } from "../lib/inputSourceStorage.js";
 import { mediaType } from "../lib/mediaFiles.js";
 
@@ -15,6 +21,8 @@ export function useShaderSession({
   setShaderRoute,
   setShaderName,
   setSource,
+  setSessionKind,
+  setComposition,
   setIsPublic,
   setPendingMedia,
   setDirty,
@@ -31,6 +39,7 @@ export function useShaderSession({
       name,
       source: nextSource,
       kind: nextKind,
+      composition: nextComposition = null,
       values: nextValues = {},
       public: nextPublic = false,
       media = null,
@@ -48,16 +57,42 @@ export function useShaderSession({
       setShaderRoute(nextRouteId);
       setShaderName(name);
       setSource(nextSource);
+      setSessionKind(nextKind);
+      const graph =
+        nextKind === COMPOSITION_KIND
+          ? normalizeComposition(nextComposition || emptyComposition())
+          : null;
+      setComposition(graph);
       setIsPublic(Boolean(nextPublic));
       setPendingMedia(media);
       setDirty(nextDirty);
 
-      const restoredSource = readInputSource(sessionId) || "image";
-      setInputSource(restoredSource);
-      inputSourceRef.current = restoredSource;
+      const mediaTypeForSession =
+        nextKind === COMPOSITION_KIND
+          ? mediaFillType(graph.fill.type) || "image"
+          : readInputSource(sessionId) || "image";
+      setInputSource(mediaTypeForSession);
+      inputSourceRef.current = mediaTypeForSession;
 
       const host = hostRef.current;
       if (!host?.ready) return;
+      if (nextKind === COMPOSITION_KIND) {
+        if (graph.fill.type === "shader") {
+          clearObjectUrl();
+          host.clearInput();
+          return;
+        }
+        if (media) {
+          await applyMediaBlob(media, mediaType(media));
+          return;
+        }
+        if (cloudShader?.input_path) {
+          await loadMediaForShader(cloudShader);
+          return;
+        }
+        await reapplyPreferredInput();
+        return;
+      }
       if (nextKind !== "effect") {
         clearObjectUrl();
         host.clearInput();
@@ -91,6 +126,8 @@ export function useShaderSession({
       setPendingMedia,
       setPresetId,
       setRunning,
+      setComposition,
+      setSessionKind,
       setShaderName,
       setShaderRoute,
       setSource,

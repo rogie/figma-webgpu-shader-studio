@@ -7,6 +7,7 @@ import {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
+const CURSOR_IDLE_TIMEOUT_MS = 300_000;
 
 export async function listAvailableProviderModels(
   provider,
@@ -58,6 +59,7 @@ export async function listAvailableProviderModels(
  * @param {{ isAnimated?: boolean, usesMouse?: boolean }} [options.features]
  * @param {string} [options.skills]
  * @param {"agent"|"plan"} [options.mode]
+ * @param {string} [options.cursorAgentId]
  * @param {AbortSignal} [options.signal]
  */
 export async function* streamChat({
@@ -71,6 +73,7 @@ export async function* streamChat({
   features,
   skills,
   mode,
+  cursorAgentId,
   signal,
 }) {
   if (!isSupabaseConfigured) {
@@ -106,6 +109,7 @@ export async function* streamChat({
       features,
       skills,
       mode,
+      cursorAgentId,
     })),
     signal,
   });
@@ -138,6 +142,9 @@ export async function* streamChat({
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const parser = createChatSseParser();
+  const idleTimeoutMs =
+    provider === "cursor" ? CURSOR_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS;
+  const idleSeconds = Math.round(idleTimeoutMs / 1000);
   let sawDone = false;
   let receivedEvent = false;
 
@@ -151,7 +158,7 @@ export async function* streamChat({
         new Promise((resolve) => {
           timeoutId = window.setTimeout(
             () => resolve({ timedOut: true }),
-            RESPONSE_IDLE_TIMEOUT_MS
+            idleTimeoutMs
           );
         }),
       ]);
@@ -163,8 +170,8 @@ export async function* streamChat({
       yield {
         type: "error",
         message: receivedEvent
-          ? "The model stopped responding for 60 seconds. The partial reply was preserved; try again."
-          : "The model did not start responding within 60 seconds. Try again or choose a faster model.",
+          ? `The model stopped responding for ${idleSeconds} seconds. The partial reply was preserved; try again.`
+          : `The model did not start responding within ${idleSeconds} seconds. Try again or choose a faster model.`,
       };
       return;
     }

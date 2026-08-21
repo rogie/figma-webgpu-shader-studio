@@ -55,7 +55,13 @@ export default function AppToasts({
         is="fig-toast"
         ref={noticeToastRef}
         class="notice-toast"
-        theme={notice?.error ? "danger" : notice?.brand ? "brand" : "dark"}
+        theme={
+          notice?.error || notice?.danger
+            ? "danger"
+            : notice?.brand
+              ? "brand"
+              : "dark"
+        }
         live={notice?.error ? "assertive" : "polite"}
         duration={notice?.error ? "0" : notice?.brand ? "5000" : "3200"}
         offset="24"

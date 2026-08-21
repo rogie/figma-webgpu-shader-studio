@@ -12,7 +12,7 @@ const TOAST_STATES = [
   {
     id: "notice-dark",
     title: "Notice · dark",
-    description: "Default transient notice (copy, share, delete, draft).",
+    description: "Default transient notice (copy, share, draft).",
     theme: "dark",
     live: "polite",
     duration: "3200",
@@ -23,7 +23,6 @@ const TOAST_STATES = [
       "Embed code copied",
       "Private draft created",
       "Unsaved copy created",
-      "Shader deleted",
       "Duplicate this shader to make changes.",
       "Save the shader before sharing",
       "Make the shader public before sharing",
@@ -46,6 +45,18 @@ const TOAST_STATES = [
       "Code updated from chat.",
       "Agent is still working on My Shader. Changes will only apply while that shader is open.",
     ],
+    body: (message) => <span>{message}</span>,
+  },
+  {
+    id: "notice-danger-confirm",
+    title: "Notice · danger (confirm)",
+    description:
+      "Destructive-action confirmation. Danger theme, auto-dismisses.",
+    theme: "danger",
+    live: "polite",
+    duration: "3200",
+    className: "notice-toast",
+    examples: ["Shader deleted"],
     body: (message) => <span>{message}</span>,
   },
   {

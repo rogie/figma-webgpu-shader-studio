@@ -1,19 +1,25 @@
+import { useEffect, useRef } from "react";
 import AccountMenu from "./AccountMenu.jsx";
+import { COMPOSITIONS_UI_ENABLED } from "../lib/composition.js";
 
 const opaqueContent = { __html: "" };
 
+function filterValue(event) {
+  return String(event.detail ?? event.target.value ?? "all") || "all";
+}
+
 export default function HomeView({
-  chooserRef,
-  kindRef,
-  originRef,
-  authorRef,
   query,
   onQueryChange,
   kind,
+  onKindChange,
   origin,
+  onOriginChange,
   author,
+  onAuthorChange,
   publishedAuthors,
   choices,
+  onChoice,
   authOpen,
   onAuthOpenChange,
   theme,
@@ -24,6 +30,38 @@ export default function HomeView({
   onSettingsOpenChange,
   onProfileChange,
 }) {
+  const chooserRef = useRef(null);
+  const kindRef = useRef(null);
+  const originRef = useRef(null);
+  const authorRef = useRef(null);
+
+  useEffect(() => {
+    const node = chooserRef.current;
+    if (!node || !onChoice) return;
+    const handleChange = (event) => {
+      if (typeof event.detail === "string") onChoice(event.detail);
+    };
+    node.addEventListener("change", handleChange);
+    return () => node.removeEventListener("change", handleChange);
+  }, [onChoice]);
+
+  useEffect(() => {
+    const kindControl = kindRef.current;
+    const originControl = originRef.current;
+    const authorControl = authorRef.current;
+    const onKind = (event) => onKindChange?.(filterValue(event));
+    const onOrigin = (event) => onOriginChange?.(filterValue(event));
+    const onAuthor = (event) => onAuthorChange?.(filterValue(event));
+    kindControl?.addEventListener("change", onKind);
+    originControl?.addEventListener("change", onOrigin);
+    authorControl?.addEventListener("change", onAuthor);
+    return () => {
+      kindControl?.removeEventListener("change", onKind);
+      originControl?.removeEventListener("change", onOrigin);
+      authorControl?.removeEventListener("change", onAuthor);
+    };
+  }, [onAuthorChange, onKindChange, onOriginChange]);
+
   return (
     <nav className="home-nav">
       <div className="app-nav-headers">
@@ -45,9 +83,12 @@ export default function HomeView({
               aria-label="Filter by kind"
               value={kind}
               options={JSON.stringify([
-                { value: "all", label: "Types" },
+                { value: "all", label: "All types" },
                 { value: "effect", label: "Effects" },
                 { value: "fill", label: "Fills" },
+                ...(COMPOSITIONS_UI_ENABLED
+                  ? [{ value: "composition", label: "Compositions" }]
+                  : []),
               ])}
               dangerouslySetInnerHTML={opaqueContent}
             />
@@ -69,7 +110,7 @@ export default function HomeView({
               aria-label="Filter by author"
               value={author}
               options={JSON.stringify([
-                { value: "all", label: "Author" },
+                { value: "all", label: "All authors" },
                 ...publishedAuthors,
               ])}
               disabled={publishedAuthors.length ? undefined : ""}

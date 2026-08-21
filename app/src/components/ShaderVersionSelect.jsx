@@ -1,8 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   groupVersionsByDay,
   versionRowParts,
 } from "../lib/shaderVersions.js";
+import { getFigOverlayRoot } from "../lib/figOverlay.js";
+import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import "./ShaderVersionSelect.css";
 
 const opaqueContent = { __html: "" };
@@ -52,6 +55,9 @@ function VersionMenuItem({
   onRestore,
 }) {
   const trailingInteractive = Boolean(time && !current);
+  const restoreMenuRef = useFigMenuChange((value) => {
+    if (value === "restore") onRestore?.();
+  });
 
   return (
     <div className="shader-version-item">
@@ -67,7 +73,11 @@ function VersionMenuItem({
           <span className="shader-version-item-time">{time}</span>
           {!current && (
             <div className="shader-version-item-actions">
-              <fig-menu class="shader-version-item-menu" position="bottom right">
+              <fig-menu
+                ref={restoreMenuRef}
+                class="shader-version-item-menu"
+                position="bottom right"
+              >
                 <fig-button
                   fig-menu-trigger=""
                   variant="ghost"
@@ -78,13 +88,7 @@ function VersionMenuItem({
                 >
                   <fig-icon name="more" />
                 </fig-button>
-                <fig-menu-item
-                  value="restore"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onRestore?.();
-                  }}
-                >
+                <fig-menu-item value="restore">
                   Restore this version
                 </fig-menu-item>
               </fig-menu>
@@ -192,14 +196,6 @@ export default function ShaderVersionSelect({
   }, [getSelectTrigger, open]);
 
   useEffect(() => {
-    const popup = popupRef.current;
-    if (!popup) return;
-    const root =
-      document.body.querySelector("[data-figui-overlay-root]") ?? document.body;
-    if (popup.parentElement !== root) root.append(popup);
-  }, []);
-
-  useEffect(() => {
     if (disabled) closePopup();
   }, [closePopup, disabled]);
 
@@ -284,16 +280,17 @@ export default function ShaderVersionSelect({
         />
       </fig-tooltip>
 
-      <dialog
-        is="fig-popup"
-        ref={popupRef}
-        class="shader-version-popup"
-        position="bottom right"
-        closedby="any"
-        anchor="#shader-version-select"
-        onClose={closePopup}
-        onCancel={closePopup}
-      >
+      {createPortal(
+        <dialog
+          is="fig-popup"
+          ref={popupRef}
+          class="shader-version-popup"
+          position="bottom right"
+          closedby="any"
+          anchor="#shader-version-select"
+          onClose={closePopup}
+          onCancel={closePopup}
+        >
         <fig-header>
           <h3>Version history</h3>
         </fig-header>
@@ -357,7 +354,9 @@ export default function ShaderVersionSelect({
             </Fragment>
           ))}
         </fig-content>
-      </dialog>
+        </dialog>,
+        getFigOverlayRoot()
+      )}
     </>
   );
 }

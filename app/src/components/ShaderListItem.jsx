@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import FigmaIcon from "./FigmaIcon.jsx";
 import "./ShaderListItem.css";
 
@@ -14,6 +15,14 @@ function ShaderListItem({
   onPublish,
   onDelete,
 }) {
+  const menuRef = useFigMenuChange((value, menu) => {
+    if (value === "publish") {
+      onPublish?.(menu.closest("fig-choice"));
+      return;
+    }
+    if (value === "delete") onDelete?.();
+  });
+
   return (
     <div className="shader-list-item">
       {showPreview && (
@@ -41,7 +50,11 @@ function ShaderListItem({
         <div className="shader-list-item-actions">
           {actions}
           {onDelete && (
-            <fig-menu class="shader-list-item-menu" position="bottom right">
+            <fig-menu
+              ref={menuRef}
+              class="shader-list-item-menu"
+              position="bottom right"
+            >
               <fig-button
                 fig-menu-trigger=""
                 variant="ghost"
@@ -50,18 +63,11 @@ function ShaderListItem({
               >
                 <fig-icon name="more" />
               </fig-button>
-              <fig-menu-item
-                value="publish"
-                onClick={(event) =>
-                  onPublish?.(event.currentTarget.closest("fig-choice"))
-                }
-              >
+              <fig-menu-item value="publish">
                 Publish
               </fig-menu-item>
               <fig-separator />
-              <fig-menu-item value="delete" onClick={onDelete}>
-                Delete
-              </fig-menu-item>
+              <fig-menu-item value="delete">Delete</fig-menu-item>
             </fig-menu>
           )}
         </div>

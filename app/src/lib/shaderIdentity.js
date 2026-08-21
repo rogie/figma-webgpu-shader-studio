@@ -3,12 +3,14 @@ export function shaderContentFingerprint({
   source,
   parameterValues,
   features,
+  composition,
 }) {
   return JSON.stringify({
     name: name || "",
     source: source || "",
     parameterValues: parameterValues || {},
     features: features || {},
+    composition: composition || {},
   });
 }
 

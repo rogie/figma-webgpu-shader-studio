@@ -85,6 +85,27 @@ test("writeDrafts persists data thumbnails but discards blob URLs", () => {
   );
 });
 
+test("readDrafts round-trips composition drafts", () => {
+  const storage = memoryStorage({
+    [DRAFTS_STORAGE_KEY]: JSON.stringify([
+      {
+        id: "draft:comp",
+        name: "Stack",
+        kind: "composition",
+        source: "",
+        composition: {
+          fill: { type: "video" },
+          effects: [{ shaderId: "cloud:grain", values: { amount: 1 } }],
+        },
+      },
+    ]),
+  });
+  const [draft] = readDrafts(storage);
+  assert.equal(draft.kind, "composition");
+  assert.equal(draft.composition.fill.type, "video");
+  assert.equal(draft.composition.effects[0].shaderId, "cloud:grain");
+});
+
 test("serializeDraft retains only supported cloud-link metadata", () => {
   const serialized = serializeDraft({
     id: "draft:one",

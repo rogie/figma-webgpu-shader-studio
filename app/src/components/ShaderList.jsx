@@ -1,4 +1,4 @@
-import { forwardRef, memo } from "react";
+import { forwardRef, memo, useEffect, useRef } from "react";
 import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
 
@@ -8,25 +8,49 @@ const ShaderList = forwardRef(function ShaderList(
     value,
     onPublish,
     onDelete,
+    onChoice,
     className,
     showPreview = true,
     renderActions,
+    drag = true,
   },
   ref
 ) {
+  const innerRef = useRef(null);
+
+  useEffect(() => {
+    const node = innerRef.current;
+    if (!node || !onChoice) return;
+    const handleChange = (event) => {
+      if (typeof event.detail === "string") onChoice(event.detail);
+    };
+    node.addEventListener("change", handleChange);
+    return () => node.removeEventListener("change", handleChange);
+  }, [onChoice]);
+
   return (
     <fig-chooser
-      ref={ref}
+      ref={(node) => {
+        innerRef.current = node;
+        if (typeof ref === "function") ref(node);
+        else if (ref) ref.current = node;
+      }}
       class={className ? `shader-list ${className}` : "shader-list"}
       value={value}
       layout="vertical"
       overflow="scrollbar"
-      drag="true"
+      drag={drag ? "true" : undefined}
       loop=""
     >
       {cards.map((card) => {
         if (card.separatorLabel) {
-          return <fig-separator key={card.key} label={card.separatorLabel} />;
+          return (
+            <fig-separator
+              key={card.key}
+              label={card.separatorLabel}
+              sticky=""
+            />
+          );
         }
 
         const item = (

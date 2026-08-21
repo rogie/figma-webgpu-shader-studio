@@ -81,7 +81,12 @@ export function buildShaderLibraryCards({
       key,
       origin: privateDraft ? "draft" : "public",
       name: liveNames[key] || shader.name,
-      kind: shader.kind === "fill" ? "fill" : "effect",
+      kind:
+        shader.kind === "fill"
+          ? "fill"
+          : shader.kind === "composition"
+            ? "composition"
+            : "effect",
       thumbnailUrl:
         thumbnails[key] ||
         cloudThumbnails[shader.id] ||

@@ -7,11 +7,14 @@ import {
   useRef,
   useState,
 } from "react";
+import CompositionEditor from "./components/CompositionEditor.jsx";
+import { SHADER_EFFECT_PICKER_ANCHOR_ID } from "./components/ShaderEffectPicker.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import EmbedDialog from "./components/EmbedDialog.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
+import HomeView from "./components/HomeView.jsx";
 import "./components/HomeNav.css";
 import Preview from "./components/Preview.jsx";
 import PreviewFps from "./components/PreviewFps.jsx";
@@ -109,6 +112,21 @@ import {
   THEME_STORAGE_KEY,
 } from "./lib/layoutStorage.js";
 import {
+  collectCompositionFeatures,
+  compositionStructureKey,
+  COMPOSITION_FILL_ID,
+  COMPOSITION_KIND,
+  COMPOSITIONS_UI_ENABLED,
+  emptyComposition,
+  MAX_COMPOSITION_EFFECTS,
+  isCompositionPlayable,
+  mediaFillType,
+  normalizeComposition,
+  parseCompositionShaderId,
+  referencedShaderKeys,
+  unpublishedCompositionRefs,
+} from "./lib/composition.js";
+import {
   cloudChoiceId,
   cloudIdForDraft,
   figmaShaderLink,
@@ -120,6 +138,7 @@ import {
   getFigmaShader,
   listAllFigmaShaders,
 } from "./services/figmaShaders.js";
+import { useFigMenuChange } from "./hooks/useFigMenuChange.js";
 import { usePanelLayout } from "./hooks/usePanelLayout.js";
 import { useShaderPersistence } from "./hooks/useShaderPersistence.js";
 import { useShaderRuntime } from "./hooks/useShaderRuntime.js";
@@ -132,6 +151,7 @@ import {
   getAssetUrls,
   getShader,
   getShaderMaybe,
+  getShadersByIds,
   getShaderVersion,
   getShaderRouteId,
   listAllShaderVersions,
@@ -151,7 +171,6 @@ import {
 
 const CodePane = lazy(() => import("./components/CodePane.jsx"));
 const Controls = lazy(() => import("./components/Controls.jsx"));
-const HomeView = lazy(() => import("./components/HomeView.jsx"));
 const ShaderChatSection = lazy(
   () => import("./components/ShaderChatSection.jsx"),
 );
@@ -189,10 +208,22 @@ const FIGMA_SHADER_CATEGORIES = [
   { kind: "fill", label: "Shader fill" },
 ];
 
-function groupByKind(cards, effectLabel, fillLabel, keyPrefix) {
+function groupByKind(cards, effectLabel, fillLabel, compositionLabel, keyPrefix) {
   const effects = cards.filter((card) => card.kind === "effect");
   const fills = cards.filter((card) => card.kind === "fill");
+  const compositions = COMPOSITIONS_UI_ENABLED
+    ? cards.filter((card) => card.kind === COMPOSITION_KIND)
+    : [];
   return [
+    ...(compositions.length
+      ? [
+          {
+            key: `separator:${keyPrefix}:composition`,
+            separatorLabel: compositionLabel,
+          },
+          ...compositions,
+        ]
+      : []),
     ...(effects.length
       ? [
           { key: `separator:${keyPrefix}:effect`, separatorLabel: effectLabel },
@@ -209,7 +240,34 @@ function groupByKind(cards, effectLabel, fillLabel, keyPrefix) {
 }
 
 function groupLibraryCards(cards) {
-  return groupByKind(cards, "Shader effect", "Shader fill", "studio");
+  return groupByKind(
+    cards,
+    "Shader effect",
+    "Shader fill",
+    "Composition",
+    "studio"
+  );
+}
+
+function visibleLibraryKind(kind) {
+  if (!COMPOSITIONS_UI_ENABLED && kind === COMPOSITION_KIND) return "all";
+  return kind;
+}
+
+function compositionWithLayerValues(graph, layerId, values) {
+  const normalized = normalizeComposition(graph);
+  if (layerId === COMPOSITION_FILL_ID) {
+    return {
+      ...normalized,
+      fill: { ...normalized.fill, values: values || {} },
+    };
+  }
+  return {
+    ...normalized,
+    effects: normalized.effects.map((effect) =>
+      effect.id === layerId ? { ...effect, values: values || {} } : effect
+    ),
+  };
 }
 
 function mergeValues(definitions, candidate = {}) {
@@ -274,6 +332,10 @@ export default function App() {
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
   const [source, setSource] = useState(INITIAL.source);
+  const [sessionKind, setSessionKind] = useState(INITIAL.kind);
+  const [composition, setComposition] = useState(null);
+  const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
+  const [resolvedShaders, setResolvedShaders] = useState({});
   const [props, setProps] = useState(INITIAL_MODULE.props);
   const [values, setValues] = useState(INITIAL_VALUES);
   const [error, setError] = useState(null);
@@ -438,11 +500,6 @@ export default function App() {
   const sidebarRef = useRef(null);
   const chatPaneRef = useRef(null);
   const [canClearChat, setCanClearChat] = useState(false);
-  const homeChooserRef = useRef(null);
-  const editorChooserRef = useRef(null);
-  const homeKindRef = useRef(null);
-  const homeOriginRef = useRef(null);
-  const homeAuthorRef = useRef(null);
   const editorKindRef = useRef(null);
   const editorAuthorRef = useRef(null);
   const nameInputRef = useRef(null);
@@ -474,6 +531,10 @@ export default function App() {
   });
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
+  const compositionRef = useRef(composition);
+  const sessionKindRef = useRef(sessionKind);
+  const selectedLayerIdRef = useRef(selectedLayerId);
+  selectedLayerIdRef.current = selectedLayerId;
   const propsRef = useRef(props);
   const valuesRef = useRef(values);
   const playPreferenceRef = useRef(running);
@@ -483,9 +544,6 @@ export default function App() {
   const versionPreviewAppliedRef = useRef(false);
   const versionPreviewSnapshotRef = useRef(null);
   const versionPreviewRequestRef = useRef(0);
-  useEffect(() => {
-    if (presetId) persistInputSource(presetId, inputSource);
-  }, [presetId, inputSource]);
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
@@ -504,10 +562,14 @@ export default function App() {
     values,
     isPublic,
     pendingMedia,
+    kind: sessionKind,
+    composition,
     ...activeFigmaLink,
   });
 
   sourceRef.current = source;
+  compositionRef.current = composition;
+  sessionKindRef.current = sessionKind;
   propsRef.current = props;
   valuesRef.current = values;
   draftSessionRef.current = {
@@ -517,10 +579,39 @@ export default function App() {
     values,
     isPublic,
     pendingMedia,
+    kind: sessionKind,
+    composition,
     ...activeFigmaLink,
   };
-  const kind = useMemo(() => detectKind(source), [source]);
-  const shaderFeatures = useMemo(() => inferFeatures(source), [source]);
+  const kind = useMemo(
+    () =>
+      sessionKind === COMPOSITION_KIND
+        ? COMPOSITION_KIND
+        : detectKind(source),
+    [sessionKind, source]
+  );
+  useEffect(() => {
+    if (presetId && kind !== COMPOSITION_KIND) {
+      persistInputSource(presetId, inputSource);
+    }
+  }, [kind, presetId, inputSource]);
+  const resolvedByKey = useMemo(
+    () => new Map(Object.entries(resolvedShaders)),
+    [resolvedShaders]
+  );
+  const compositionPlayable = useMemo(
+    () =>
+      kind === COMPOSITION_KIND &&
+      isCompositionPlayable(composition, resolvedByKey),
+    [composition, kind, resolvedByKey]
+  );
+  const shaderFeatures = useMemo(
+    () =>
+      kind === COMPOSITION_KIND
+        ? collectCompositionFeatures(composition, resolvedByKey)
+        : inferFeatures(source),
+    [composition, kind, resolvedByKey, source]
+  );
   const shaderFeaturesRef = useRef(shaderFeatures);
   shaderFeaturesRef.current = shaderFeatures;
   const chatShaderKey = currentShader?.id
@@ -675,8 +766,11 @@ export default function App() {
         if (
           existing.name === shaderName &&
           existing.source === source &&
+          existing.kind === sessionKind &&
           existing.isPublic === isPublic &&
-          JSON.stringify(existing.values || {}) === JSON.stringify(values)
+          JSON.stringify(existing.values || {}) === JSON.stringify(values) &&
+          JSON.stringify(existing.composition || null) ===
+            JSON.stringify(composition)
         ) {
           return current;
         }
@@ -686,7 +780,9 @@ export default function App() {
                 ...draft,
                 name: shaderName,
                 source,
+                kind: sessionKind,
                 values,
+                composition,
                 isPublic,
                 pendingMedia,
               }
@@ -695,7 +791,17 @@ export default function App() {
       });
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [isPublic, pendingMedia, presetId, shaderName, source, user, values]);
+  }, [
+    composition,
+    isPublic,
+    pendingMedia,
+    presetId,
+    sessionKind,
+    shaderName,
+    source,
+    user,
+    values,
+  ]);
 
   useEffect(() => {
     const flush = () => {
@@ -709,7 +815,9 @@ export default function App() {
                   ...draft,
                   name: session.shaderName,
                   source: session.source,
+                  kind: session.kind,
                   values: session.values,
+                  composition: session.composition,
                   isPublic: session.isPublic,
                   pendingMedia: null,
                 }
@@ -719,9 +827,10 @@ export default function App() {
             {
               id: session.presetId,
               name: session.shaderName,
-              kind: detectKind(session.source),
+              kind: session.kind || detectKind(session.source),
               source: session.source,
               values: session.values,
+              composition: session.composition,
               isPublic: session.isPublic,
               pendingMedia: null,
               thumbnail: null,
@@ -879,6 +988,7 @@ export default function App() {
     setNotice({
       message,
       error: options.error === true,
+      danger: options.danger === true,
       brand: options.brand === true,
     });
   }, []);
@@ -891,11 +1001,216 @@ export default function App() {
   const setRuntimeValues = useCallback((next) => {
     valuesRef.current = next;
     setValues(next);
+    if (sessionKindRef.current === COMPOSITION_KIND) {
+      hostRef.current?.setCompositionLayerParams?.(
+        selectedLayerIdRef.current,
+        next
+      );
+      return;
+    }
     hostRef.current?.setParams(next);
   }, []);
 
+  const rememberResolved = useCallback((rows) => {
+    if (!rows?.length) return;
+    setResolvedShaders((current) => {
+      const next = { ...current };
+      for (const row of rows) {
+        if (row?.key) next[row.key] = row;
+      }
+      return next;
+    });
+  }, []);
+
+  const hydrateCompositionRefs = useCallback(
+    async (graph) => {
+      const keys = referencedShaderKeys(graph);
+      const latest = { ...resolvedShaders };
+      const found = [];
+      const cloudIds = [];
+      for (const key of keys) {
+        if (latest[key]?.source || latest[key]?.broken) continue;
+        const parsed = parseCompositionShaderId(key);
+        if (!parsed) continue;
+        if (parsed.origin === "draft") {
+          const draft = drafts.find((item) => item.id === parsed.id);
+          const row = draft
+            ? {
+                key,
+                id: draft.id,
+                name: draft.name,
+                kind: draft.kind,
+                source: draft.source,
+                is_public: false,
+                features: inferFeatures(draft.source || ""),
+                broken:
+                  draft.kind === COMPOSITION_KIND || !draft.source,
+              }
+            : {
+                key,
+                name: "Missing shader",
+                kind: "effect",
+                broken: true,
+              };
+          found.push(row);
+          latest[key] = row;
+        } else if (parsed.origin === "cloud") {
+          cloudIds.push(parsed.id);
+        }
+      }
+      if (cloudIds.length) {
+        try {
+          const rows = await getShadersByIds(cloudIds);
+          const byId = new Map(rows.map((row) => [row.id, row]));
+          for (const id of cloudIds) {
+            const key = `cloud:${id}`;
+            const row = byId.get(id);
+            const next = !row || row.kind === COMPOSITION_KIND || !row.source
+              ? {
+                  key,
+                  id,
+                  name: row?.name || "Missing shader",
+                  kind: row?.kind || "effect",
+                  is_public: row?.is_public,
+                  broken: true,
+                }
+              : {
+                  key,
+                  id,
+                  name: row.name,
+                  kind: row.kind,
+                  source: row.source,
+                  is_public: row.is_public,
+                  features: row.features || inferFeatures(row.source),
+                  broken: false,
+                };
+            found.push(next);
+            latest[key] = next;
+          }
+        } catch {
+          for (const id of cloudIds) {
+            const key = `cloud:${id}`;
+            const next = {
+              key,
+              id,
+              name: "Missing shader",
+              kind: "effect",
+              broken: true,
+            };
+            found.push(next);
+            latest[key] = next;
+          }
+        }
+      }
+      rememberResolved(found);
+      return latest;
+    },
+    [drafts, rememberResolved, resolvedShaders]
+  );
+
+  const compileComposition = useCallback(
+    async (graphOverride) => {
+      const host = hostRef.current;
+      if (!host?.ready) return;
+      const graph = normalizeComposition(
+        graphOverride || compositionRef.current || emptyComposition()
+      );
+      const compileGeneration = ++compileGenerationRef.current;
+      host.stop();
+      const resolved = await hydrateCompositionRefs(graph);
+      if (compileGeneration !== compileGenerationRef.current) return;
+      const map = new Map(Object.entries(resolved));
+      const layers = [];
+      const loadLayer = (id, role, shaderId, values, enabled = true) => {
+        const row = resolved[shaderId];
+        if (!row?.source || row.broken) return;
+        try {
+          const loaded = loadModule(row.source);
+          layers.push({
+            id,
+            role,
+            enabled,
+            setup: loaded.setup,
+            render: loaded.render,
+            props: loaded.props,
+            params: mergeValues(loaded.props, values),
+          });
+        } catch (loadError) {
+          rememberResolved([
+            {
+              ...row,
+              broken: true,
+              name: row.name || loadError.message,
+            },
+          ]);
+        }
+      };
+      if (graph.fill.type === "shader" && graph.fill.shaderId) {
+        loadLayer(
+          COMPOSITION_FILL_ID,
+          "fill",
+          graph.fill.shaderId,
+          graph.fill.values
+        );
+      }
+      for (const effect of graph.effects) {
+        loadLayer(
+          effect.id,
+          "effect",
+          effect.shaderId,
+          effect.values,
+          effect.enabled
+        );
+      }
+      const features = collectCompositionFeatures(graph, map);
+      const ok = await host.setComposition(layers, {
+        isFill: graph.fill.type === "shader",
+        isAnimated: features.isAnimated,
+        usesMouse: features.usesMouse,
+        supportsRenderScale: false,
+      });
+      if (
+        compileGeneration !== compileGenerationRef.current ||
+        hostRef.current !== host
+      ) {
+        return;
+      }
+      if (!ok) {
+        setRunning(false);
+        return;
+      }
+      const selected =
+        layers.find((layer) => layer.id === selectedLayerIdRef.current) ||
+        layers[0] ||
+        null;
+      if (selected) {
+        setSelectedLayerId(selected.id);
+        setProps(selected.props);
+        setRuntimeValues(selected.params);
+      } else {
+        setProps({});
+        setRuntimeValues({});
+      }
+      setError(null);
+      setThumbnailRefreshRevision((revision) => revision + 1);
+      if (playPreferenceRef.current && features.isAnimated) {
+        host.setActive(true);
+        host.start();
+        setRunning(true);
+      } else {
+        host.stop();
+        setRunning(false);
+      }
+    },
+    [hydrateCompositionRefs, rememberResolved, setRuntimeValues]
+  );
+
   const compile = useCallback(
     (nextSource) => {
+      if (sessionKindRef.current === COMPOSITION_KIND) {
+        compileComposition();
+        return;
+      }
       const host = hostRef.current;
       if (!host?.ready) return;
       const compileGeneration = ++compileGenerationRef.current;
@@ -975,7 +1290,7 @@ export default function App() {
           /* Destroyed hosts / GPU teardown can reject; ignore stale work. */
         });
     },
-    [setRuntimeValues]
+    [compileComposition, setRuntimeValues]
   );
 
   const applyMediaBlob = useCallback(
@@ -1358,6 +1673,14 @@ export default function App() {
       hostRef.current.clearInput();
       return;
     }
+    if (kind === COMPOSITION_KIND) {
+      const fillType = compositionRef.current?.fill?.type;
+      if (fillType === "shader") {
+        clearObjectUrl();
+        hostRef.current.clearInput();
+        return;
+      }
+    }
     reapplyPreferredInput().catch((inputError) =>
       setError(inputError.message || String(inputError))
     );
@@ -1436,7 +1759,15 @@ export default function App() {
     }
     compileTimer.current = setTimeout(() => compile(source), 350);
     return () => clearTimeout(compileTimer.current);
-  }, [source, presetId, compile, runtimeReady]);
+  }, [
+    source,
+    composition && sessionKind === COMPOSITION_KIND
+      ? compositionStructureKey(composition)
+      : "",
+    presetId,
+    compile,
+    runtimeReady,
+  ]);
 
   useEffect(
     () => () => {
@@ -1448,7 +1779,7 @@ export default function App() {
 
   const loadMediaForShader = useCallback(
     async (shader) => {
-      if (shader.kind !== "effect") {
+      if (shader.kind !== "effect" && shader.kind !== COMPOSITION_KIND) {
         clearObjectUrl();
         hostRef.current?.clearInput();
         return;
@@ -1488,7 +1819,9 @@ export default function App() {
               ...draft,
               name: session.shaderName,
               source: session.source,
+              kind: session.kind,
               values: session.values,
+              composition: session.composition,
               isPublic: session.isPublic,
               pendingMedia: session.pendingMedia,
             }
@@ -1510,6 +1843,8 @@ export default function App() {
     setShaderRoute,
     setShaderName,
     setSource,
+    setSessionKind,
+    setComposition,
     setIsPublic,
     setPendingMedia,
     setDirty,
@@ -1529,6 +1864,7 @@ export default function App() {
         name: draft.name,
         source: draft.source,
         kind: draft.kind,
+        composition: draft.composition,
         values: draft.values || {},
         public: draft.isPublic,
         media: draft.pendingMedia || null,
@@ -1591,6 +1927,81 @@ export default function App() {
     [activateShaderSession, persistActiveDraft, user],
   );
 
+  const createCompositionDraft = useCallback(async () => {
+    persistActiveDraft();
+    const graph = emptyComposition();
+    const id = `draft:${crypto.randomUUID()}`;
+    const draft = {
+      id,
+      name: "New Composition",
+      kind: COMPOSITION_KIND,
+      source: "",
+      values: {},
+      composition: graph,
+      isPublic: false,
+      pendingMedia: null,
+    };
+    const openLocal = async () => {
+      setDrafts((current) => [draft, ...current.filter((item) => item.id !== id)]);
+      await activateShaderSession({
+        sessionId: id,
+        name: draft.name,
+        source: "",
+        kind: COMPOSITION_KIND,
+        composition: graph,
+        dirty: true,
+      });
+    };
+    try {
+      if (user) {
+        try {
+          const saved = await createShader({
+            id: cloudIdForDraft(id),
+            owner_id: user.id,
+            name: draft.name,
+            source: "",
+            kind: COMPOSITION_KIND,
+            parameter_values: {},
+            features: { isAnimated: false, usesMouse: false },
+            composition: graph,
+            is_public: false,
+          });
+          setCloudShaders((current) => [
+            saved,
+            ...current.filter((item) => item.id !== saved.id),
+          ]);
+          await activateShaderSession({
+            sessionId: cloudChoiceId(saved.id),
+            routeId: saved.id,
+            name: saved.name,
+            source: "",
+            kind: COMPOSITION_KIND,
+            composition: saved.composition || graph,
+            values: {},
+            dirty: true,
+            cloudShader: saved,
+          });
+          return;
+        } catch (cloudError) {
+          await openLocal();
+          showNotice(
+            formatSupabaseError(
+              cloudError,
+              "Created a local composition. Apply the compositions database migration to save it to the cloud."
+            ),
+            { error: true }
+          );
+          return;
+        }
+      }
+      await openLocal();
+    } catch (error) {
+      const message = error.message || "Could not create composition";
+      setError(message);
+      showNotice(message, { error: true });
+    }
+  }, [activateShaderSession, persistActiveDraft, showNotice, user]);
+
   const openFigmaShader = useCallback(
     async (kind, id) => {
       const detail = await getFigmaShader(kind, id);
@@ -1613,6 +2024,8 @@ export default function App() {
       setDirty(true);
       setShaderName(name);
       setSource(sourceText);
+      setSessionKind(shaderKind);
+      setComposition(null);
 
       if (user) {
         const existing = cloudShaders.find(
@@ -1716,15 +2129,17 @@ export default function App() {
         name: fullShader.name,
         source: fullShader.source,
         parameterValues: fullShader.parameter_values,
-        features: fullShader.features || inferFeatures(fullShader.source),
+        features: fullShader.features || inferFeatures(fullShader.source || ""),
+        composition: fullShader.composition,
       });
       try {
         await activateShaderSession({
           sessionId: cloudChoiceId(fullShader.id),
           routeId: fullShader.id,
           name: fullShader.name,
-          source: fullShader.source,
+          source: fullShader.source || "",
           kind: fullShader.kind,
+          composition: fullShader.composition,
           values: fullShader.parameter_values || {},
           public: fullShader.is_public,
           cloudShader: fullShader,
@@ -2089,6 +2504,19 @@ export default function App() {
     ]
   );
 
+  const openHomeChoice = useCallback(
+    (id) => {
+      if (typeof id !== "string") return;
+      const nextRouteId = id.startsWith("cloud:")
+        ? id.slice("cloud:".length)
+        : id;
+      pushShaderUrl(nextRouteId);
+      setRouteId(nextRouteId);
+      chooseItem(id);
+    },
+    [chooseItem]
+  );
+
   const openPublishForCard = useCallback(
     async (card, anchor) => {
       if (!user) {
@@ -2111,54 +2539,6 @@ export default function App() {
     },
     [openCloudShader, openDraft, user]
   );
-
-  useEffect(() => {
-    const chooser =
-      viewMode === "home"
-        ? homeChooserRef.current
-        : editorChooserRef.current;
-    if (!chooser) return;
-    const handleChange = (event) => {
-      if (typeof event.detail !== "string") return;
-      if (viewMode === "home") {
-        const id = event.detail.startsWith("cloud:")
-          ? event.detail.slice("cloud:".length)
-          : event.detail;
-        pushShaderUrl(id);
-        setRouteId(id);
-      }
-      chooseItem(event.detail);
-    };
-    chooser.addEventListener("change", handleChange);
-    return () => chooser.removeEventListener("change", handleChange);
-  }, [chooseItem, setRouteId, viewMode]);
-
-  useEffect(() => {
-    if (viewMode !== "home") return;
-    const kindControl = homeKindRef.current;
-    const originControl = homeOriginRef.current;
-    const authorControl = homeAuthorRef.current;
-    const onKind = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "all");
-      setHomeKind(value || "all");
-    };
-    const onOrigin = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "all");
-      setHomeOrigin(value || "all");
-    };
-    const onAuthor = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "all");
-      setHomeAuthor(value || "all");
-    };
-    kindControl?.addEventListener("change", onKind);
-    originControl?.addEventListener("change", onOrigin);
-    authorControl?.addEventListener("change", onAuthor);
-    return () => {
-      kindControl?.removeEventListener("change", onKind);
-      originControl?.removeEventListener("change", onOrigin);
-      authorControl?.removeEventListener("change", onAuthor);
-    };
-  }, [viewMode]);
 
   useEffect(() => {
     if (viewMode !== "editor") return;
@@ -2191,7 +2571,17 @@ export default function App() {
         thumbnailPreviewTimerRef.current = 0;
       }
       hostRef.current?.setActive(true);
-      setRuntimeValues({ ...valuesRef.current, [name]: value });
+      const nextValues = { ...valuesRef.current, [name]: value };
+      setRuntimeValues(nextValues);
+      if (sessionKindRef.current === COMPOSITION_KIND) {
+        const next = compositionWithLayerValues(
+          compositionRef.current,
+          selectedLayerIdRef.current,
+          nextValues
+        );
+        compositionRef.current = next;
+        setComposition(next);
+      }
       setError(null);
       if (!protectedPreview) setDirty(true);
     },
@@ -2208,7 +2598,14 @@ export default function App() {
     previewParamsRafRef.current = requestAnimationFrame(() => {
       previewParamsRafRef.current = 0;
       const next = valuesRef.current;
-      hostRef.current?.setParams(next);
+      if (sessionKindRef.current === COMPOSITION_KIND) {
+        hostRef.current?.setCompositionLayerParams?.(
+          selectedLayerIdRef.current,
+          next
+        );
+      } else {
+        hostRef.current?.setParams(next);
+      }
       // Canvas handles read React `values`; keep them live while scrubbing
       // spatial props from the panel (sliders stay ref-only to avoid hitch).
       const def = propsRef.current?.[name];
@@ -2219,7 +2616,17 @@ export default function App() {
   }, []);
 
   const resetProperties = useCallback(() => {
-    setRuntimeValues(buildDefaults(props));
+    const next = buildDefaults(props);
+    setRuntimeValues(next);
+    if (sessionKindRef.current === COMPOSITION_KIND) {
+      const graph = compositionWithLayerValues(
+        compositionRef.current,
+        selectedLayerIdRef.current,
+        next
+      );
+      compositionRef.current = graph;
+      setComposition(graph);
+    }
     setError(null);
     if (!protectedPreview) setDirty(true);
   }, [props, protectedPreview, setRuntimeValues]);
@@ -2504,13 +2911,38 @@ export default function App() {
         const draftLink = isDraftId(presetId)
           ? drafts.find((item) => item.id === presetId)
           : null;
+        const isComposition = sessionKindRef.current === COMPOSITION_KIND;
+        const graph = isComposition
+          ? compositionWithLayerValues(
+              compositionRef.current,
+              selectedLayerIdRef.current,
+              valuesRef.current
+            )
+          : {};
+        if (makePublic && isComposition) {
+          const unpublished = unpublishedCompositionRefs(
+            graph,
+            new Map(Object.entries(resolvedShaders))
+          );
+          if (unpublished.length) {
+            throw new Error(
+              "Publish every referenced fill and effect before publishing this composition."
+            );
+          }
+        }
         const payload = {
           owner_id: user.id,
           name: shaderName.trim() || "Untitled Shader",
-          source: saveSource,
-          kind: detectKind(saveSource),
-          parameter_values: saveValues,
-          features: inferFeatures(saveSource),
+          source: isComposition ? "" : saveSource,
+          kind: isComposition ? COMPOSITION_KIND : detectKind(saveSource),
+          parameter_values: isComposition ? {} : saveValues,
+          features: isComposition
+            ? collectCompositionFeatures(
+                graph,
+                new Map(Object.entries(resolvedShaders))
+              )
+            : inferFeatures(saveSource),
+          composition: isComposition ? graph : {},
           is_public: publicFlag,
           ...figmaShaderLink(currentShader || draftLink),
         };
@@ -2526,6 +2958,7 @@ export default function App() {
           source: payload.source,
           parameterValues: payload.parameter_values,
           features: payload.features,
+          composition: payload.composition,
         });
         // Skip no-op background autosaves (same content as last successful
         // write, including when setCurrentShader restarts the debounce timer).
@@ -2563,6 +2996,7 @@ export default function App() {
             kind: payload.kind,
             parameterValues: payload.parameter_values,
             features: payload.features,
+            composition: payload.composition,
             checkpointKind,
             summary: checkpointSummary,
           });
@@ -2743,6 +3177,7 @@ export default function App() {
       pendingMedia,
       presetId,
       protectedPreview,
+      resolvedShaders,
       refreshShaderVersions,
       setShaderRoute,
       shaderName,
@@ -2885,6 +3320,23 @@ export default function App() {
         const host = hostRef.current;
         if (!host?.ready) return;
 
+        if (target.kind === COMPOSITION_KIND) {
+          if (!versionPreviewSnapshotRef.current) {
+            versionPreviewSnapshotRef.current = {
+              source: sourceRef.current,
+              props: structuredClone(propsRef.current),
+              values: structuredClone(valuesRef.current),
+              composition: compositionRef.current,
+            };
+          }
+          compileGenerationRef.current += 1;
+          versionPreviewStateRef.current = { versionId };
+          versionPreviewAppliedRef.current = true;
+          setComposition(normalizeComposition(target.composition));
+          await compileComposition(target.composition);
+          return;
+        }
+
         let loaded;
         try {
           loaded = loadModule(target.source);
@@ -2990,13 +3442,20 @@ export default function App() {
         if (draftSessionRef.current.presetId === restorePresetId) {
           pendingValuesRef.current = restored.parameter_values || {};
           setCurrentShader(restored);
-          setSource(restored.source);
+          setSource(restored.source || "");
+          setSessionKind(restored.kind);
+          setComposition(
+            restored.kind === COMPOSITION_KIND
+              ? normalizeComposition(restored.composition)
+              : null
+          );
           setDirty(false);
           lastSavedFingerprintRef.current = shaderContentFingerprint({
             name: restored.name,
             source: restored.source,
             parameterValues: restored.parameter_values,
-            features: restored.features || inferFeatures(restored.source),
+            features: restored.features || inferFeatures(restored.source || ""),
+            composition: restored.composition,
           });
           const versions = await listAllShaderVersions(restored.id);
           if (draftSessionRef.current.presetId === restorePresetId) {
@@ -3093,12 +3552,23 @@ export default function App() {
       }
       const id = `draft:${crypto.randomUUID()}`;
       const name = `${shaderName} Copy`;
+      const isComposition = sessionKindRef.current === COMPOSITION_KIND;
+      const graph = isComposition
+        ? compositionWithLayerValues(
+            compositionRef.current,
+            selectedLayerIdRef.current,
+            valuesRef.current
+          )
+        : undefined;
       const draft = {
         id,
         name,
-        kind: detectKind(sourceRef.current),
-        source: sourceRef.current,
-        values: { ...valuesRef.current },
+        kind: isComposition
+          ? COMPOSITION_KIND
+          : detectKind(sourceRef.current),
+        source: isComposition ? "" : sourceRef.current,
+        values: isComposition ? {} : { ...valuesRef.current },
+        composition: graph,
         isPublic: false,
         pendingMedia: mediaFile,
         // A duplicate is a new local shader, not a second writer for the same
@@ -3113,7 +3583,13 @@ export default function App() {
           source: draft.source,
           kind: draft.kind,
           parameter_values: draft.values,
-          features: inferFeatures(draft.source),
+          features: isComposition
+            ? collectCompositionFeatures(
+                graph,
+                new Map(Object.entries(resolvedShaders))
+              )
+            : inferFeatures(draft.source),
+          composition: graph || {},
           is_public: false,
           ...figmaShaderLink(null),
         });
@@ -3172,7 +3648,7 @@ export default function App() {
         if (currentShader?.id === shader.id) {
           await choosePreset("dither", { syncUrl: Boolean(routeId) });
         }
-        showNotice("Shader deleted");
+        showNotice("Shader deleted", { danger: true });
         return true;
       } catch (deleteError) {
         setError(deleteError.message || String(deleteError));
@@ -3201,7 +3677,7 @@ export default function App() {
     setDeleting(true);
     if (deleteTarget.draft) {
       removeDraft(deleteTarget.draft);
-      showNotice("Shader deleted");
+      showNotice("Shader deleted", { danger: true });
       setDeleteTarget(null);
       setDeleting(false);
       return;
@@ -3532,7 +4008,9 @@ export default function App() {
   const libraryCards = useMemo(
     () =>
       buildShaderLibraryCards({
-        drafts: user ? [] : drafts,
+        drafts: user
+          ? drafts.filter((draft) => draft.kind === COMPOSITION_KIND)
+          : drafts,
         cloudShaders,
         thumbnails,
         cloudThumbnails,
@@ -3570,7 +4048,7 @@ export default function App() {
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: homeQuery,
-          kind: homeKind,
+          kind: visibleLibraryKind(homeKind),
           origin: homeOrigin,
           author: homeAuthor,
         })
@@ -3582,13 +4060,70 @@ export default function App() {
       groupLibraryCards(
         filterShaderLibraryCards(libraryCards, {
           query: editorQuery,
-          kind: editorKind,
+          kind: visibleLibraryKind(editorKind),
           origin: editorOrigin,
           author: editorAuthor,
         })
       ),
     [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
+  const compositionFillCards = useMemo(
+    () => libraryCards.filter((card) => card.kind === "fill"),
+    [libraryCards]
+  );
+  const compositionEffectCards = useMemo(
+    () => libraryCards.filter((card) => card.kind === "effect"),
+    [libraryCards]
+  );
+
+  const onCompositionChange = useCallback(
+    (next) => {
+      if (protectedPreview) return;
+      const graph = normalizeComposition(next);
+      compositionRef.current = graph;
+      setComposition(graph);
+      const fillType = mediaFillType(graph.fill.type);
+      if (fillType && fillType !== inputSource) {
+        applyInputSource(fillType).catch((sourceError) =>
+          setError(sourceError.message || String(sourceError))
+        );
+      }
+      if (graph.fill.type === "shader") {
+        clearObjectUrl();
+        hostRef.current?.clearInput();
+      }
+      setDirty(true);
+    },
+    [applyInputSource, clearObjectUrl, inputSource, protectedPreview]
+  );
+
+  const onCompositionSelectLayer = useCallback((layerId) => {
+    setSelectedLayerId(layerId);
+    const graph = normalizeComposition(compositionRef.current);
+    const resolved =
+      layerId === COMPOSITION_FILL_ID
+        ? resolvedShaders[graph.fill.shaderId]
+        : resolvedShaders[
+            graph.effects.find((effect) => effect.id === layerId)?.shaderId
+          ];
+    if (!resolved?.source) {
+      setProps({});
+      setRuntimeValues({});
+      return;
+    }
+    try {
+      const loaded = loadModule(resolved.source);
+      const values =
+        layerId === COMPOSITION_FILL_ID
+          ? graph.fill.values
+          : graph.effects.find((effect) => effect.id === layerId)?.values;
+      setProps(loaded.props);
+      setRuntimeValues(mergeValues(loaded.props, values));
+    } catch {
+      setProps({});
+      setRuntimeValues({});
+    }
+  }, [resolvedShaders, setRuntimeValues]);
 
   const figmaImportedKeys = useMemo(() => {
     const keys = new Set();
@@ -3735,7 +4270,31 @@ export default function App() {
       aria-label="Shader properties"
     >
       <fig-header borderless>
-        <h3>Properties</h3>
+        <h3>
+          {kind === COMPOSITION_KIND ? "Shader effects" : "Properties"}
+        </h3>
+        {kind === COMPOSITION_KIND && !protectedPreview && (
+          <hstack>
+            <fig-tooltip text="Add shader effect">
+              <fig-button
+                id={SHADER_EFFECT_PICKER_ANCHOR_ID}
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label="Add shader effect"
+                aria-haspopup="dialog"
+                aria-expanded="false"
+                disabled={
+                  (composition?.effects?.length || 0) >= MAX_COMPOSITION_EFFECTS
+                    ? ""
+                    : undefined
+                }
+              >
+                <fig-icon name="add" />
+              </fig-button>
+            </fig-tooltip>
+          </hstack>
+        )}
       </fig-header>
 
       <fig-content class="shader-properties-panel-content">
@@ -3838,44 +4397,87 @@ export default function App() {
       );
     });
 
+  const newShaderMenuRef = useFigMenuChange((value) => {
+    if (value === "effect") createDraft("blank-effect");
+    else if (value === "fill") createDraft("blank-fill");
+    else if (value === "composition") createCompositionDraft();
+    else if (value === "from-figma") setFigmaImportOpen(true);
+  });
+  const moreMenuRef = useFigMenuChange((value) => {
+    if (value === "rename") startRename();
+    else if (value === "save") {
+      if (saving || restoringVersion) return;
+      if (currentShader && !dirty && !hasUncheckpointedChanges) return;
+      saveShader().catch(() => {});
+    } else if (value === "publish") {
+      if (!user || saving) return;
+      publishAnchorRef.current = moreMenuAnchorRef.current;
+      setPublishOpen(true);
+    } else if (value === "duplicate") duplicateShader();
+    else if (value === "share") copyShareLink();
+    else if (value === "delete") {
+      if (!isOwner) return;
+      removeCurrentShader();
+    } else if (value === "export") {
+      if (kind === COMPOSITION_KIND) return;
+      exportFiles();
+    }
+  });
+  const zoomMenuRef = useFigMenuChange((value) => {
+    const percent = Number(value);
+    if (!Number.isFinite(percent)) return;
+    requestPreviewZoom(percent / 100);
+  });
+  const exportMenuRef = useFigMenuChange((value) => {
+    if (value === "image") {
+      downloadPreviewImage().catch((downloadError) => {
+        setError(downloadError.message || String(downloadError));
+      });
+    } else if (value === "video") {
+      if (kind === COMPOSITION_KIND) return;
+      setVideoExportOpen(true);
+    } else if (value === "embed") {
+      if (kind === COMPOSITION_KIND) return;
+      openEmbedDialog();
+    }
+  });
+
   return (
     <>
       {viewMode === "home" && (
-        <Suspense fallback={null}>
-          <HomeView
-            chooserRef={homeChooserRef}
-            kindRef={homeKindRef}
-            originRef={homeOriginRef}
-            authorRef={homeAuthorRef}
-            query={homeQuery}
-            onQueryChange={setHomeQuery}
-            kind={homeKind}
-            origin={homeOrigin}
-            author={homeAuthor}
-            publishedAuthors={publishedAuthors}
-            choices={renderLibraryChoices(groupedHomeCards, {
-              cardSize: "large",
-            })}
-            authOpen={authOpen}
-            onAuthOpenChange={setAuthOpen}
-            theme={theme}
-            onThemeChange={setTheme}
-            canvasTheme={canvasTheme}
-            onCanvasThemeChange={setCanvasTheme}
-            settingsOpen={settingsOpen}
-            onSettingsOpenChange={setSettingsOpen}
-            onProfileChange={(displayName) => {
-              if (!user) return;
-              setCloudShaders((current) =>
-                current.map((shader) =>
-                  shader.owner_id === user.id
-                    ? { ...shader, author_name: displayName }
-                    : shader,
-                ),
-              );
-            }}
-          />
-        </Suspense>
+        <HomeView
+          query={homeQuery}
+          onQueryChange={setHomeQuery}
+          kind={visibleLibraryKind(homeKind)}
+          onKindChange={setHomeKind}
+          origin={homeOrigin}
+          onOriginChange={setHomeOrigin}
+          author={homeAuthor}
+          onAuthorChange={setHomeAuthor}
+          publishedAuthors={publishedAuthors}
+          choices={renderLibraryChoices(groupedHomeCards, {
+            cardSize: "large",
+          })}
+          onChoice={openHomeChoice}
+          authOpen={authOpen}
+          onAuthOpenChange={setAuthOpen}
+          theme={theme}
+          onThemeChange={setTheme}
+          canvasTheme={canvasTheme}
+          onCanvasThemeChange={setCanvasTheme}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
+          onProfileChange={(displayName) => {
+            if (!user) return;
+            setCloudShaders((current) =>
+              current.map((shader) =>
+                shader.owner_id === user.id
+                  ? { ...shader, author_name: displayName }
+                  : shader,
+              ),
+            );
+          }}
+        />
       )}
 
       {viewMode === "editor" && (
@@ -3900,7 +4502,11 @@ export default function App() {
               </fig-tooltip>
               <h2 className="app-title">Studio</h2>
               <div className="app-nav-header-actions">
-                <fig-menu class="new-shader-menu" position="bottom right">
+                <fig-menu
+                  ref={newShaderMenuRef}
+                  class="new-shader-menu"
+                  position="bottom right"
+                >
                   <fig-tooltip text="New Figma shader">
                     <fig-button
                       fig-menu-trigger=""
@@ -3912,25 +4518,21 @@ export default function App() {
                       <fig-icon name="add" />
                     </fig-button>
                   </fig-tooltip>
-                  <fig-menu-item
-                    value="effect"
-                    onClick={() => createDraft("blank-effect")}
-                  >
+                  <fig-menu-item value="effect">
                     Shader effect
                   </fig-menu-item>
-                  <fig-menu-item
-                    value="fill"
-                    onClick={() => createDraft("blank-fill")}
-                  >
+                  <fig-menu-item value="fill">
                     Shader fill
                   </fig-menu-item>
+                  {COMPOSITIONS_UI_ENABLED && (
+                    <fig-menu-item value="composition">
+                      Composition
+                    </fig-menu-item>
+                  )}
                   {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
                     <>
                       <fig-separator />
-                      <fig-menu-item
-                        value="from-figma"
-                        onClick={() => setFigmaImportOpen(true)}
-                      >
+                      <fig-menu-item value="from-figma">
                         From Figma…
                       </fig-menu-item>
                     </>
@@ -3998,11 +4600,14 @@ export default function App() {
                   ref={editorKindRef}
                   class="app-nav-filter"
                   aria-label="Filter by kind"
-                  value={editorKind}
+                  value={visibleLibraryKind(editorKind)}
                   options={JSON.stringify([
-                    { value: "all", label: "Types" },
+                    { value: "all", label: "All types" },
                     { value: "effect", label: "Effects" },
                     { value: "fill", label: "Fills" },
+                    ...(COMPOSITIONS_UI_ENABLED
+                      ? [{ value: "composition", label: "Compositions" }]
+                      : []),
                   ])}
                   dangerouslySetInnerHTML={opaqueContent}
                 />
@@ -4012,7 +4617,7 @@ export default function App() {
                   aria-label="Filter by author"
                   value={editorAuthor}
                   options={JSON.stringify([
-                    { value: "all", label: "Author" },
+                    { value: "all", label: "All authors" },
                     ...publishedAuthors,
                   ])}
                   disabled={publishedAuthors.length ? undefined : ""}
@@ -4022,9 +4627,9 @@ export default function App() {
             </div>
           </div>
           <ShaderList
-            ref={editorChooserRef}
             value={presetId}
             cards={groupedEditorCards}
+            onChoice={chooseItem}
             onPublish={openPublishForCard}
             onDelete={onDeleteLibraryCard}
           />
@@ -4168,6 +4773,7 @@ export default function App() {
                   </fig-button>
                 ) : (
                   <fig-menu
+                    ref={moreMenuRef}
                     key={user ? "signed-in" : "signed-out"}
                     position="bottom right"
                   >
@@ -4182,7 +4788,7 @@ export default function App() {
                         <fig-icon name="more" />
                       </fig-button>
                     </fig-tooltip>
-                    <fig-menu-item value="rename" onClick={startRename}>
+                    <fig-menu-item value="rename">
                       Rename
                     </fig-menu-item>
                     <fig-menu-item
@@ -4194,9 +4800,6 @@ export default function App() {
                           currentShader && !dirty && !hasUncheckpointedChanges
                         )
                       }
-                      onClick={() => {
-                        saveShader().catch(() => {});
-                      }}
                     >
                       {saving
                         ? "Saving…"
@@ -4208,31 +4811,29 @@ export default function App() {
                       <fig-menu-item
                         value="publish"
                         disabled={saving}
-                        onClick={() => {
-                          publishAnchorRef.current = moreMenuAnchorRef.current;
-                          setPublishOpen(true);
-                        }}
                       >
                         Publish…
                       </fig-menu-item>
                     )}
                     <fig-separator />
-                    <fig-menu-item value="duplicate" onClick={duplicateShader}>
+                    <fig-menu-item value="duplicate">
                       Duplicate
                     </fig-menu-item>
-                    <fig-menu-item value="share" onClick={copyShareLink}>
+                    <fig-menu-item value="share">
                       Copy link
                     </fig-menu-item>
                     <fig-menu-item
                       value="delete"
                       hidden={!isOwner}
                       disabled={!isOwner}
-                      onClick={removeCurrentShader}
                     >
                       Delete
                     </fig-menu-item>
                     <fig-separator />
-                    <fig-menu-item value="export" onClick={exportFiles}>
+                    <fig-menu-item
+                      value="export"
+                      hidden={kind === COMPOSITION_KIND ? "" : undefined}
+                    >
                       Download
                     </fig-menu-item>
                     {FIGMA_LIBRARY_UI_ENABLED && (
@@ -4252,11 +4853,20 @@ export default function App() {
 
           <section
             className="shader-viewer-code"
-            data-collapsed={effectiveCodeCollapsed ? "true" : "false"}
+            data-collapsed={
+              kind === COMPOSITION_KIND
+                ? "false"
+                : effectiveCodeCollapsed
+                  ? "true"
+                  : "false"
+            }
           >
-            <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
-              <h3>Code</h3>
+            <fig-header borderless aria-expanded={
+              kind === COMPOSITION_KIND ? true : !effectiveCodeCollapsed
+            }>
+              <h3>{kind === COMPOSITION_KIND ? "Composition" : "Code"}</h3>
               <hstack>
+                {kind !== COMPOSITION_KIND && (
                 <fig-tooltip text="Copy code">
                   <fig-button
                     type="button"
@@ -4268,7 +4878,8 @@ export default function App() {
                     <fig-icon name="copy" />
                   </fig-button>
                 </fig-tooltip>
-                {!protectedPreview && (
+                )}
+                {kind !== COMPOSITION_KIND && !protectedPreview && (
                   <fig-tooltip
                     text={
                       effectiveCodeCollapsed ? "Expand code" : "Collapse code"
@@ -4300,8 +4911,21 @@ export default function App() {
                 )}
               </hstack>
             </fig-header>
-            <div className="code-editor" hidden={effectiveCodeCollapsed}>
-              {!effectiveCodeCollapsed && (
+            <div className="code-editor" hidden={kind !== COMPOSITION_KIND && effectiveCodeCollapsed}>
+              {kind === COMPOSITION_KIND ? (
+                <CompositionEditor
+                  graph={composition}
+                  resolvedByKey={resolvedByKey}
+                  fillCards={compositionFillCards}
+                  effectCards={compositionEffectCards}
+                  selectedLayerId={selectedLayerId}
+                  readOnly={protectedPreview}
+                  onChange={onCompositionChange}
+                  onSelectLayer={onCompositionSelectLayer}
+                  onOpenShader={(shaderId) => chooseItem(shaderId)}
+                />
+              ) : (
+                !effectiveCodeCollapsed && (
                 <Suspense fallback={null}>
                   <CodePane
                     source={source}
@@ -4311,11 +4935,12 @@ export default function App() {
                     onSourceChange={onSourceChange}
                   />
                 </Suspense>
+                )
               )}
             </div>
           </section>
 
-          {!protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
+          {kind !== COMPOSITION_KIND && !protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
             <div
               className="pane-resizer pane-resizer-row"
               role="separator"
@@ -4339,7 +4964,7 @@ export default function App() {
             />
           )}
 
-          {!protectedPreview && (
+          {kind !== COMPOSITION_KIND && !protectedPreview && (
             <Suspense fallback={null}>
               <ShaderChatSection
                 collapsed={chatCollapsed}
@@ -4429,7 +5054,13 @@ export default function App() {
               onControlChange={updateControl}
               onZoomChange={onPreviewZoomChange}
               zoomRequest={previewZoomRequest}
-              inputSource={kind === "effect" ? inputSource : "image"}
+              inputSource={
+                kind === "effect" ||
+                (kind === COMPOSITION_KIND &&
+                  mediaFillType(composition?.fill?.type))
+                  ? inputSource
+                  : "image"
+              }
               htmlInputRef={htmlInputRef}
               onStageSize={onStageSize}
               onPointerSurface={onPointerSurface}
@@ -4448,6 +5079,7 @@ export default function App() {
           <div
             className="tools background--light"
           >
+            {(kind !== COMPOSITION_KIND || compositionPlayable) && (
             <fig-button
               type="toggle"
               variant="ghost"
@@ -4458,7 +5090,8 @@ export default function App() {
             >
               <fig-icon name={running ? "pause" : "play"} />
             </fig-button>
-            <fig-menu position="top center">
+            )}
+            <fig-menu ref={zoomMenuRef} position="top center">
               <fig-tooltip text="Zoom">
                 <fig-button
                   fig-menu-trigger=""
@@ -4469,17 +5102,19 @@ export default function App() {
                   {Math.round(previewZoom * 100)}%
                 </fig-button>
               </fig-tooltip>
-              <fig-menu-item value="50" onClick={() => requestPreviewZoom(0.5)}>
+              <fig-menu-item value="50">
                 50%
               </fig-menu-item>
-              <fig-menu-item value="100" onClick={() => requestPreviewZoom(1)}>
+              <fig-menu-item value="100">
                 100%
               </fig-menu-item>
-              <fig-menu-item value="200" onClick={() => requestPreviewZoom(2)}>
+              <fig-menu-item value="200">
                 200%
               </fig-menu-item>
             </fig-menu>
-            {kind === "effect" && (
+            {(kind === "effect" ||
+              (kind === COMPOSITION_KIND &&
+                mediaFillType(composition?.fill?.type))) && (
               <>
                 <fig-select
                   ref={inputSelectRef}
@@ -4507,7 +5142,7 @@ export default function App() {
                 </fig-tooltip>
               </>
             )}
-            <fig-menu position="top right">
+            <fig-menu ref={exportMenuRef} position="top right">
               <fig-tooltip text="Export">
                 <fig-button
                   fig-menu-trigger=""
@@ -4520,23 +5155,19 @@ export default function App() {
                   <ExportIcon />
                 </fig-button>
               </fig-tooltip>
-              <fig-menu-item
-                value="image"
-                onClick={() => {
-                  downloadPreviewImage().catch((downloadError) => {
-                    setError(downloadError.message || String(downloadError));
-                  });
-                }}
-              >
+              <fig-menu-item value="image">
                 Image
               </fig-menu-item>
               <fig-menu-item
                 value="video"
-                onClick={() => setVideoExportOpen(true)}
+                disabled={kind === COMPOSITION_KIND ? "" : undefined}
               >
                 Video…
               </fig-menu-item>
-              <fig-menu-item value="embed" onClick={openEmbedDialog}>
+              <fig-menu-item
+                value="embed"
+                disabled={kind === COMPOSITION_KIND ? "" : undefined}
+              >
                 Embed…
               </fig-menu-item>
             </fig-menu>

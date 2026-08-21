@@ -171,6 +171,31 @@ test("marks studio cards linked to a Figma shader", () => {
   assert.equal(cards[2].figmaLinked, false);
 });
 
+test("preserves composition kind on library cards", () => {
+  const cards = buildShaderLibraryCards({
+    drafts: [
+      {
+        id: "draft:comp",
+        name: "Stack",
+        kind: "composition",
+      },
+    ],
+    cloudShaders: [
+      {
+        id: "cloud-comp",
+        owner_id: "user-1",
+        name: "Cloud stack",
+        kind: "composition",
+        is_public: false,
+      },
+    ],
+    user: { id: "user-1", email: "owner@example.com" },
+  });
+  assert.equal(cards[0].kind, "composition");
+  assert.equal(cards[1].kind, "composition");
+  assert.deepEqual(filterShaderLibraryCards(cards, { kind: "composition" }), cards);
+});
+
 test("filters published shaders by author", () => {
   const cards = [
     {
