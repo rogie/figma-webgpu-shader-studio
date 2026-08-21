@@ -7,6 +7,7 @@ import {
   readCanvasTheme,
   readChatHeight,
   readCodeWidth,
+  readLibraryView,
   readPlayState,
   readPreviewHeight,
   readSidebarSections,
@@ -64,5 +65,14 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
   assert.equal(
     readPlayState(storage({ "figma-shader-studio:play": "false" })),
     false,
+  );
+  assert.equal(readLibraryView(storage()), "list");
+  assert.equal(
+    readLibraryView(storage({ "figma-shader-studio:library-view": "grid" })),
+    "grid",
+  );
+  assert.equal(
+    readLibraryView(storage({ "figma-shader-studio:library-view": "cards" })),
+    "list",
   );
 });

@@ -188,12 +188,37 @@ test("preserves composition kind on library cards", () => {
         kind: "composition",
         is_public: false,
       },
+      {
+        id: "mis-tagged",
+        owner_id: "user-1",
+        name: "New Composition",
+        kind: "fill",
+        is_public: false,
+        composition: {
+          fill: { type: "image", shaderId: null, values: {} },
+          effects: [],
+        },
+      },
+      {
+        id: "real-fill",
+        owner_id: "user-1",
+        name: "Mesh gradient",
+        kind: "fill",
+        is_public: false,
+      },
     ],
     user: { id: "user-1", email: "owner@example.com" },
   });
   assert.equal(cards[0].kind, "composition");
   assert.equal(cards[1].kind, "composition");
-  assert.deepEqual(filterShaderLibraryCards(cards, { kind: "composition" }), cards);
+  assert.equal(cards[2].kind, "composition");
+  assert.equal(cards[3].kind, "fill");
+  assert.deepEqual(filterShaderLibraryCards(cards, { kind: "fill" }), [cards[3]]);
+  assert.deepEqual(filterShaderLibraryCards(cards, { kind: "composition" }), [
+    cards[0],
+    cards[1],
+    cards[2],
+  ]);
 });
 
 test("filters published shaders by author", () => {

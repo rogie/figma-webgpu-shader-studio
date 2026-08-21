@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   COMPOSITION_FILL_ID,
+  emptyComposition,
   MAX_COMPOSITION_EFFECTS,
   normalizeComposition,
+  reorderCompositionEffects,
 } from "../lib/composition.js";
-import { getFigOverlayRoot } from "../lib/figOverlay.js";
+import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
-import ShaderEffectPicker, {
-  SHADER_EFFECT_PICKER_ANCHOR_ID,
-} from "./ShaderEffectPicker.jsx";
-import ShaderList from "./ShaderList.jsx";
+import ShaderPicker, {
+  SHADER_PICKER_ANCHOR_IDS,
+  SHADER_PICKER_TRIGGER_IDS,
+} from "./ShaderPicker.jsx";
 import "./CompositionEditor.css";
 
 const opaqueContent = { __html: "" };
+const EMPTY_IMAGE_FILL_VALUE = JSON.stringify({ type: "image" });
 
 const FILL_TYPE_OPTIONS = [
   { value: "shader", label: "Shader fill" },
@@ -31,52 +33,57 @@ function layerPropsAnchorId(layerId) {
   return `composition-layer-props-${layerId}`;
 }
 
-function PropertiesEffectRow({
+function PropertiesLayerRow({
   id,
   name,
-  selected = false,
   expanded = false,
   enabled = true,
   readOnly = false,
+  noun = "effect",
+  control = null,
   onOpen,
   onToggleVisible,
   onRemove,
 }) {
+  const hideLabel = enabled ? `Hide ${noun}` : `Show ${noun}`;
+  const removeLabel = `Remove ${noun}`;
   return (
-    <div id={id} className="properties-effect-row">
-      <div className="properties-effect-row-name">
+    <div id={id} className="properties-layer-row" aria-label={name}>
+      <div className="properties-layer-row-name">
+        {control || (
+          <fig-button
+            type="button"
+            variant="secondary"
+            full=""
+            aria-haspopup="dialog"
+            aria-expanded={expanded ? "true" : "false"}
+            selected={expanded ? "" : undefined}
+            disabled={enabled ? undefined : ""}
+            onClick={onOpen}
+          >
+            <fig-truncate>{name}</fig-truncate>
+          </fig-button>
+        )}
+      </div>
+      <fig-tooltip text={hideLabel}>
         <fig-button
           type="button"
-          variant="secondary"
-          full=""
-          aria-haspopup="dialog"
-          aria-expanded={expanded ? "true" : "false"}
-          selected={selected ? "" : undefined}
-          onClick={onOpen}
-        >
-          <fig-truncate>{name}</fig-truncate>
-        </fig-button>
-      </div>
-      <fig-tooltip text={enabled ? "Hide effect" : "Show effect"}>
-        <fig-button
-          type="toggle"
           variant="ghost"
           icon="true"
-          selected={enabled}
           disabled={readOnly ? "" : undefined}
-          aria-label={enabled ? "Hide effect" : "Show effect"}
+          aria-label={hideLabel}
           onClick={onToggleVisible}
         >
           <fig-icon name={enabled ? "visible" : "hidden"} />
         </fig-button>
       </fig-tooltip>
-      <fig-tooltip text="Remove effect">
+      <fig-tooltip text={removeLabel}>
         <fig-button
           type="button"
           variant="ghost"
           icon="true"
           disabled={readOnly ? "" : undefined}
-          aria-label="Remove effect"
+          aria-label={removeLabel}
           onClick={onRemove}
         >
           <fig-icon name="minus" />
@@ -86,25 +93,59 @@ function PropertiesEffectRow({
   );
 }
 
+function ImageFillInput({ disabled = false, value, onChange }) {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node || !onChange) return undefined;
+    const handleValue = (event) => {
+      const detail = event.detail;
+      if (!detail || typeof detail !== "object") return;
+      onChange(detail);
+    };
+    node.addEventListener("input", handleValue);
+    node.addEventListener("change", handleValue);
+    return () => {
+      node.removeEventListener("input", handleValue);
+      node.removeEventListener("change", handleValue);
+    };
+  }, [onChange]);
+
+  return (
+    <fig-input-fill
+      ref={ref}
+      mode="image"
+      alpha="false"
+      value={value}
+      disabled={disabled ? "" : undefined}
+      aria-label="Image fill"
+      dangerouslySetInnerHTML={opaqueContent}
+    />
+  );
+}
+
 export default function CompositionEditor({
   graph,
   resolvedByKey,
   fillCards = [],
   effectCards = [],
-  selectedLayerId,
   readOnly = false,
   layerControls = null,
   onChange,
   onSelectLayer,
-  onOpenShader,
   onResetLayer,
   onMediaFill,
+  onImageFill,
 }) {
-  const fillPickerRef = useRef(null);
   const propertiesPopupRef = useRef(null);
+  const effectsReorderRef = useRef(null);
   const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
+  const [imageFillValue, setImageFillValue] = useState(EMPTY_IMAGE_FILL_VALUE);
+  const [imageFillKey, setImageFillKey] = useState(0);
+  const lastImageFillUrlRef = useRef(null);
   const normalized = useMemo(() => normalizeComposition(graph), [graph]);
 
   const update = useCallback(
@@ -117,24 +158,32 @@ export default function CompositionEditor({
 
   const setFillType = useCallback(
     (type) => {
+      if (type === "shader") {
+        setEffectPickerOpen(false);
+        setFillPickerOpen(true);
+        return;
+      }
       update({
         ...normalized,
         fill: {
           type,
-          shaderId: type === "shader" ? normalized.fill.shaderId : null,
+          shaderId: null,
+          enabled: true,
         },
       });
-      if (type === "shader") {
-        onSelectLayer?.(COMPOSITION_FILL_ID);
-        if (!normalized.fill.shaderId) {
-          setEffectPickerOpen(false);
-          setFillPickerOpen(true);
-        }
-        return;
-      }
       onMediaFill?.(type);
+      if (type === "image") {
+        setImageFillValue(EMPTY_IMAGE_FILL_VALUE);
+        setImageFillKey((key) => key + 1);
+        lastImageFillUrlRef.current = null;
+      }
     },
-    [normalized, onMediaFill, onSelectLayer, update]
+    [normalized, onMediaFill, update]
+  );
+
+  const shaderFillCards = useMemo(
+    () => fillCards.filter((card) => card.kind === "fill"),
+    [fillCards]
   );
 
   const fillTypeMenuRef = useFigMenuChange((value) => {
@@ -143,39 +192,48 @@ export default function CompositionEditor({
     }
   });
 
+  const propertiesLayerEnabled =
+    propertiesLayerId === COMPOSITION_FILL_ID
+      ? normalized.fill.enabled
+      : normalized.effects.find((effect) => effect.id === propertiesLayerId)
+          ?.enabled !== false;
+
   useEffect(() => {
-    const fill = fillPickerRef.current;
-    if (!fill) return;
-    if (fillPickerOpen) {
-      if (!fill.open) fill.showModal();
-      return;
+    if (propertiesLayerId && !propertiesLayerEnabled) {
+      setPropertiesLayerId(null);
     }
-    if (fill.open) fill.close();
-  }, [fillPickerOpen]);
+  }, [propertiesLayerEnabled, propertiesLayerId]);
+
+  useEffect(() => {
+    const list = effectsReorderRef.current;
+    if (!list) return undefined;
+    const onReorder = (event) => {
+      const { oldIndex, newIndex } = event.detail ?? {};
+      update(reorderCompositionEffects(normalized, oldIndex, newIndex));
+    };
+    list.addEventListener("reorder", onReorder);
+    return () => list.removeEventListener("reorder", onReorder);
+  }, [normalized, update]);
 
   useEffect(() => {
     const popup = propertiesPopupRef.current;
     if (!popup) return undefined;
-    if (propertiesLayerId) {
+    if (propertiesLayerId && propertiesLayerEnabled) {
       popup.setAttribute("anchor", `#${layerPropsAnchorId(propertiesLayerId)}`);
       popup.open = true;
       return undefined;
     }
     popup.open = false;
     return undefined;
-  }, [propertiesLayerId]);
-
-  useEffect(() => {
-    if (
-      propertiesLayerId === COMPOSITION_FILL_ID &&
-      normalized.fill.type !== "shader"
-    ) {
-      setPropertiesLayerId(null);
-    }
-  }, [normalized.fill.type, propertiesLayerId]);
+  }, [propertiesLayerEnabled, propertiesLayerId]);
 
   const effectPickerDisabled =
     readOnly || normalized.effects.length >= MAX_COMPOSITION_EFFECTS;
+
+  const onFillPickerOpenChange = useCallback((next) => {
+    if (next) setEffectPickerOpen(false);
+    setFillPickerOpen(next);
+  }, []);
 
   const onEffectPickerOpenChange = useCallback((next) => {
     if (next) setFillPickerOpen(false);
@@ -184,14 +242,14 @@ export default function CompositionEditor({
 
   const selectFillShader = useCallback(
     (key) => {
+      if (!shaderFillCards.some((card) => card.key === key)) return;
       update({
         ...normalized,
-        fill: { type: "shader", shaderId: key },
+        fill: { type: "shader", shaderId: key, enabled: true },
       });
       onSelectLayer?.(COMPOSITION_FILL_ID);
-      setFillPickerOpen(false);
     },
-    [normalized, onSelectLayer, update]
+    [normalized, onSelectLayer, shaderFillCards, update]
   );
 
   const addEffect = useCallback(
@@ -209,6 +267,45 @@ export default function CompositionEditor({
     },
     [normalized, onSelectLayer, update]
   );
+
+  const removeFill = useCallback(() => {
+    if (propertiesLayerId === COMPOSITION_FILL_ID) {
+      setPropertiesLayerId(null);
+    }
+    update({
+      ...normalized,
+      fill: emptyComposition().fill,
+    });
+    onMediaFill?.("image");
+    setImageFillValue(EMPTY_IMAGE_FILL_VALUE);
+    setImageFillKey((key) => key + 1);
+    lastImageFillUrlRef.current = null;
+  }, [normalized, onMediaFill, propertiesLayerId, update]);
+
+  const applyImageFill = useCallback(
+    (detail) => {
+      if (detail?.type !== "image") return;
+      const url =
+        typeof detail.image?.url === "string" && detail.image.url
+          ? detail.image.url
+          : null;
+      if (url === lastImageFillUrlRef.current) return;
+      lastImageFillUrlRef.current = url;
+      if (!url) {
+        onMediaFill?.("image");
+        return;
+      }
+      onImageFill?.(url);
+    },
+    [onImageFill, onMediaFill]
+  );
+
+  const toggleFillVisible = useCallback(() => {
+    update({
+      ...normalized,
+      fill: { ...normalized.fill, enabled: !normalized.fill.enabled },
+    });
+  }, [normalized, update]);
 
   const removeEffect = useCallback(
     (effectId) => {
@@ -237,10 +334,16 @@ export default function CompositionEditor({
 
   const openLayerProperties = useCallback(
     (layerId) => {
+      const enabled =
+        layerId === COMPOSITION_FILL_ID
+          ? normalized.fill.enabled
+          : normalized.effects.find((effect) => effect.id === layerId)
+              ?.enabled !== false;
+      if (!enabled) return;
       onSelectLayer?.(layerId);
       setPropertiesLayerId(layerId);
     },
-    [onSelectLayer]
+    [normalized, onSelectLayer]
   );
 
   const fillResolved = normalized.fill.shaderId
@@ -264,7 +367,7 @@ export default function CompositionEditor({
 
   return (
     <div className="composition-editor">
-      <fig-header borderless>
+      <fig-header id={SHADER_PICKER_ANCHOR_IDS.fill} borderless>
         <h3>Fill</h3>
         {!readOnly && (
           <hstack>
@@ -273,13 +376,13 @@ export default function CompositionEditor({
               class="composition-fill-type-menu"
               position="bottom right"
             >
-              <fig-tooltip text="Fill type">
+              <fig-tooltip text="Add fill">
                 <fig-button
                   fig-menu-trigger=""
                   type="button"
                   variant="ghost"
                   icon="true"
-                  aria-label="Fill type"
+                  aria-label="Add fill"
                 >
                   <fig-icon name="add" />
                 </fig-button>
@@ -299,68 +402,43 @@ export default function CompositionEditor({
           </hstack>
         )}
       </fig-header>
-      {normalized.fill.type === "shader" ? (
-        <div
-          className={
-            selectedLayerId === COMPOSITION_FILL_ID
-              ? "composition-fill-row is-selected"
-              : "composition-fill-row"
-          }
-        >
-          <fig-button
-            id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
-            class="composition-layer-props-trigger"
-            type="button"
-            variant="ghost"
-            aria-haspopup="dialog"
-            aria-expanded={propertiesLayerId === COMPOSITION_FILL_ID ? "true" : "false"}
-            onClick={() => openLayerProperties(COMPOSITION_FILL_ID)}
-          >
-            {layerName(fillResolved, "Choose a shader fill")}
-          </fig-button>
-          {!readOnly && (
-            <div className="composition-layer-actions">
-              <fig-button
-                type="button"
-                variant="ghost"
-                onClick={() => {
-                  setEffectPickerOpen(false);
-                  setFillPickerOpen(true);
-                }}
-              >
-                Choose
-              </fig-button>
-              {normalized.fill.shaderId && (
-                <fig-button
-                  type="button"
-                  variant="ghost"
-                  aria-label="Open shader fill"
-                  onClick={() => onOpenShader?.(normalized.fill.shaderId)}
-                >
-                  Open
-                </fig-button>
-              )}
-            </div>
-          )}
-        </div>
-      ) : (
-        <fig-field direction="horizontal">
-          <fig-button type="button" variant="secondary">
-            {FILL_TYPE_OPTIONS.find((option) => option.value === normalized.fill.type)
-              ?.label ?? "Image"}
-          </fig-button>
-        </fig-field>
-      )}
+      <PropertiesLayerRow
+        id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
+        name={
+          normalized.fill.type === "shader"
+            ? layerName(fillResolved, "Choose a shader fill")
+            : FILL_TYPE_OPTIONS.find(
+                (option) => option.value === normalized.fill.type
+              )?.label ?? "Image"
+        }
+        expanded={propertiesLayerId === COMPOSITION_FILL_ID}
+        enabled={normalized.fill.enabled}
+        readOnly={readOnly}
+        noun="fill"
+        control={
+          normalized.fill.type === "image" ? (
+            <ImageFillInput
+              key={imageFillKey}
+              disabled={readOnly}
+              value={imageFillValue}
+              onChange={applyImageFill}
+            />
+          ) : null
+        }
+        onOpen={() => openLayerProperties(COMPOSITION_FILL_ID)}
+        onToggleVisible={toggleFillVisible}
+        onRemove={removeFill}
+      />
 
       <fig-separator />
 
-      <fig-header borderless>
+      <fig-header id={SHADER_PICKER_ANCHOR_IDS.effect} borderless>
         <h3>Effects</h3>
         {!readOnly && (
           <hstack>
             <fig-tooltip text="Add shader effect">
               <fig-button
-                id={SHADER_EFFECT_PICKER_ANCHOR_ID}
+                id={SHADER_PICKER_TRIGGER_IDS.effect}
                 type="button"
                 variant="ghost"
                 icon="true"
@@ -383,15 +461,20 @@ export default function CompositionEditor({
       {normalized.effects.length === 0 ? (
         <p className="composition-empty">No effects yet.</p>
       ) : (
-        <div className="composition-effect-list">
+        <fig-reorder
+          ref={effectsReorderRef}
+          class="composition-effect-list"
+          axis="vertical"
+          disabled={readOnly ? "" : undefined}
+          aria-label="Effects"
+        >
           {normalized.effects.map((effect) => {
             const resolved = resolvedByKey?.get(effect.shaderId);
             return (
-              <PropertiesEffectRow
+              <PropertiesLayerRow
                 key={effect.id}
                 id={layerPropsAnchorId(effect.id)}
                 name={layerName(resolved, "Shader effect")}
-                selected={selectedLayerId === effect.id}
                 expanded={propertiesLayerId === effect.id}
                 enabled={effect.enabled}
                 readOnly={readOnly}
@@ -401,37 +484,19 @@ export default function CompositionEditor({
               />
             );
           })}
-        </div>
+        </fig-reorder>
       )}
 
-      <dialog
-        is="fig-dialog"
-        ref={fillPickerRef}
-        class="composition-picker-dialog"
-        title="Shader fills"
-        modal=""
-        closedby="closerequest"
-        position="center center"
-        autoresize=""
-        onClose={() => setFillPickerOpen(false)}
-      >
-        <fig-content>
-          {fillCards.length ? (
-            <ShaderList
-              className="composition-picker-list"
-              cards={fillCards}
-              showPreview
-              drag={false}
-              onChoice={selectFillShader}
-            />
-          ) : (
-            <p className="composition-empty">No shader fills in the library.</p>
-          )}
-        </fig-content>
-      </dialog>
-
-      <ShaderEffectPicker
-        title="Shader effects"
+      <ShaderPicker
+        kind="fill"
+        cards={shaderFillCards}
+        open={fillPickerOpen}
+        disabled={readOnly}
+        onOpenChange={onFillPickerOpenChange}
+        onChoice={selectFillShader}
+      />
+      <ShaderPicker
+        kind="effect"
         cards={effectCards}
         open={effectPickerOpen}
         disabled={effectPickerDisabled}
@@ -439,12 +504,13 @@ export default function CompositionEditor({
         onChoice={addEffect}
       />
 
-      {createPortal(
+      {portalToFigOverlay(
         <dialog
           is="fig-popup"
           ref={propertiesPopupRef}
           class="composition-layer-props"
           position="left"
+          popover="manual"
           closedby="any"
           anchor={
             propertiesLayerId
@@ -456,8 +522,8 @@ export default function CompositionEditor({
         >
           <fig-header>
             <h3>{propertiesTitle}</h3>
-            {!readOnly && (
-              <hstack>
+            <hstack>
+              {!readOnly && (
                 <fig-tooltip text="Reset properties">
                   <fig-button
                     type="button"
@@ -469,14 +535,24 @@ export default function CompositionEditor({
                     <fig-icon name="reset" />
                   </fig-button>
                 </fig-tooltip>
-              </hstack>
-            )}
+              )}
+              <fig-tooltip text="Close">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Close"
+                  onClick={() => setPropertiesLayerId(null)}
+                >
+                  <fig-icon name="close" />
+                </fig-button>
+              </fig-tooltip>
+            </hstack>
           </fig-header>
           <fig-content class="composition-layer-props-content">
             {layerControls}
           </fig-content>
-        </dialog>,
-        getFigOverlayRoot()
+        </dialog>
       )}
     </div>
   );

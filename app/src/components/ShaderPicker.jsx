@@ -1,31 +1,62 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { getFigOverlayRoot } from "../lib/figOverlay.js";
+import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { filterShaderLibraryCards } from "../lib/shaderLibrary.js";
-import "./ShaderEffectPicker.css";
+import "./ShaderPicker.css";
 
 const opaqueContent = { __html: "" };
-export const SHADER_EFFECT_PICKER_ANCHOR_ID = "composition-add-effect";
 
-function getAnchor() {
-  return document.getElementById(SHADER_EFFECT_PICKER_ANCHOR_ID);
+export const SHADER_PICKER_ANCHOR_IDS = {
+  fill: "composition-fill-header",
+  effect: "composition-effects-header",
+};
+
+export const SHADER_PICKER_TRIGGER_IDS = {
+  effect: "composition-add-effect",
+};
+
+const KIND_COPY = {
+  fill: {
+    title: "Shader fills",
+    searchLabel: "Search shader fills",
+    empty: "No shader fills in the library.",
+    emptyMatch: "No matching shader fills.",
+  },
+  effect: {
+    title: "Shader effects",
+    searchLabel: "Search shader effects",
+    empty: "No shader effects in the library.",
+    emptyMatch: "No matching shader effects.",
+  },
+};
+
+function pickerKind(kind) {
+  return kind === "fill" ? "fill" : "effect";
 }
 
-export default function ShaderEffectPicker({
-  title = "Shader effects",
+export default function ShaderPicker({
+  kind = "effect",
   cards = [],
   open = false,
   disabled = false,
+  captureTrigger,
+  position,
+  title,
   onOpenChange,
   onChoice,
 }) {
+  const type = pickerKind(kind);
+  const copy = KIND_COPY[type];
+  const anchorId = SHADER_PICKER_ANCHOR_IDS[type];
+  const triggerId = SHADER_PICKER_TRIGGER_IDS[type];
+  const interceptTrigger = captureTrigger ?? Boolean(triggerId);
+  const popupPosition = position ?? "left";
   const popupRef = useRef(null);
   const chooserRef = useRef(null);
   const searchRef = useRef(null);
   const [query, setQuery] = useState("");
   const filteredCards = useMemo(
-    () => filterShaderLibraryCards(cards, { query }),
-    [cards, query]
+    () => filterShaderLibraryCards(cards, { query, kind: type }),
+    [cards, query, type]
   );
 
   const close = useCallback(() => {
@@ -39,7 +70,7 @@ export default function ShaderEffectPicker({
 
   useEffect(() => {
     const popup = popupRef.current;
-    const trigger = getAnchor();
+    const trigger = triggerId ? document.getElementById(triggerId) : null;
     if (!popup) return;
     if (open && !disabled) {
       popup.open = true;
@@ -49,11 +80,12 @@ export default function ShaderEffectPicker({
     }
     popup.open = false;
     trigger?.setAttribute("aria-expanded", "false");
-  }, [disabled, open]);
+  }, [disabled, open, triggerId]);
 
   useEffect(() => {
-    const trigger = getAnchor();
-    if (!trigger) return;
+    if (!interceptTrigger || !triggerId) return undefined;
+    const trigger = document.getElementById(triggerId);
+    if (!trigger) return undefined;
     const onTriggerClick = (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -62,7 +94,7 @@ export default function ShaderEffectPicker({
     };
     trigger.addEventListener("click", onTriggerClick, true);
     return () => trigger.removeEventListener("click", onTriggerClick, true);
-  }, [toggle]);
+  }, [interceptTrigger, toggle, triggerId]);
 
   useEffect(() => {
     if (disabled) close();
@@ -98,28 +130,29 @@ export default function ShaderEffectPicker({
     return () => chooser.removeEventListener("change", handleChange);
   }, [close, filteredCards.length, onChoice]);
 
-  return createPortal(
+  return portalToFigOverlay(
     <dialog
       is="fig-popup"
       ref={popupRef}
-      class="shader-effect-picker"
-      title={title}
+      class="shader-picker"
+      title={title || copy.title}
       drag=""
       handle="fig-header"
-      position="bottom right"
+      position={popupPosition}
+      popover="manual"
       closedby="any"
-      anchor={`#${SHADER_EFFECT_PICKER_ANCHOR_ID}`}
+      anchor={`#${anchorId}`}
       onClose={close}
       onCancel={close}
     >
-      <fig-header class="shader-effect-picker-search">
+      <fig-header class="shader-picker-search">
         <fig-input-text
           ref={searchRef}
           type="search"
           placeholder="Search"
           value={query}
           full=""
-          aria-label="Search shader effects"
+          aria-label={copy.searchLabel}
           dangerouslySetInnerHTML={opaqueContent}
         />
       </fig-header>
@@ -127,7 +160,7 @@ export default function ShaderEffectPicker({
         {filteredCards.length ? (
           <fig-chooser
             ref={chooserRef}
-            class="shader-effect-picker-list"
+            class="shader-picker-list"
             value=""
             layout="grid"
             overflow="scrollbar"
@@ -140,7 +173,6 @@ export default function ShaderEffectPicker({
                 aria-label={card.name}
               >
                 <fig-card
-                  class="shader-effect-picker-card"
                   src={card.thumbnailUrl || undefined}
                   label={card.name}
                   dangerouslySetInnerHTML={opaqueContent}
@@ -149,14 +181,11 @@ export default function ShaderEffectPicker({
             ))}
           </fig-chooser>
         ) : (
-          <p className="shader-effect-picker-empty">
-            {cards.length
-              ? "No matching shader effects."
-              : "No shader effects in the library."}
+          <p className="shader-picker-empty">
+            {cards.length ? copy.emptyMatch : copy.empty}
           </p>
         )}
       </fig-content>
-    </dialog>,
-    getFigOverlayRoot()
+    </dialog>
   );
 }

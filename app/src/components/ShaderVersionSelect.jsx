@@ -1,10 +1,9 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   groupVersionsByDay,
   versionRowParts,
 } from "../lib/shaderVersions.js";
-import { getFigOverlayRoot } from "../lib/figOverlay.js";
+import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import "./ShaderVersionSelect.css";
 
@@ -280,12 +279,13 @@ export default function ShaderVersionSelect({
         />
       </fig-tooltip>
 
-      {createPortal(
+      {portalToFigOverlay(
         <dialog
           is="fig-popup"
           ref={popupRef}
           class="shader-version-popup"
           position="bottom right"
+          popover="manual"
           closedby="any"
           anchor="#shader-version-select"
           onClose={closePopup}
@@ -354,8 +354,7 @@ export default function ShaderVersionSelect({
             </Fragment>
           ))}
         </fig-content>
-        </dialog>,
-        getFigOverlayRoot()
+        </dialog>
       )}
     </>
   );

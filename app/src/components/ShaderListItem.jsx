@@ -9,6 +9,7 @@ function ShaderListItem({
   src,
   label,
   sublabel,
+  layout = "list",
   showPreview = true,
   figmaLinked = false,
   actions,
@@ -22,6 +23,44 @@ function ShaderListItem({
     }
     if (value === "delete") onDelete?.();
   });
+
+  const menu = (actions || onDelete) && (
+    <div className="shader-list-item-actions">
+      {actions}
+      {onDelete && (
+        <fig-menu
+          ref={menuRef}
+          class="shader-list-item-menu"
+          position="bottom right"
+        >
+          <fig-button
+            fig-menu-trigger=""
+            variant="ghost"
+            icon="true"
+            aria-label={`More actions for ${label}`}
+          >
+            <fig-icon name="more" />
+          </fig-button>
+          <fig-menu-item value="publish">
+            Publish
+          </fig-menu-item>
+          <fig-separator />
+          <fig-menu-item value="delete">Delete</fig-menu-item>
+        </fig-menu>
+      )}
+    </div>
+  );
+
+  if (layout === "grid") {
+    return (
+      <fig-card
+        src={showPreview ? src || undefined : undefined}
+        label={label}
+        alt={label}
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    );
+  }
 
   return (
     <div className="shader-list-item">
@@ -46,32 +85,7 @@ function ShaderListItem({
           <FigmaIcon class="shader-list-item-figma" />
         </fig-tooltip>
       )}
-      {(actions || onDelete) && (
-        <div className="shader-list-item-actions">
-          {actions}
-          {onDelete && (
-            <fig-menu
-              ref={menuRef}
-              class="shader-list-item-menu"
-              position="bottom right"
-            >
-              <fig-button
-                fig-menu-trigger=""
-                variant="ghost"
-                icon="true"
-                aria-label={`More actions for ${label}`}
-              >
-                <fig-icon name="more" />
-              </fig-button>
-              <fig-menu-item value="publish">
-                Publish
-              </fig-menu-item>
-              <fig-separator />
-              <fig-menu-item value="delete">Delete</fig-menu-item>
-            </fig-menu>
-          )}
-        </div>
-      )}
+      {menu}
     </div>
   );
 }

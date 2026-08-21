@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
 import {
   getProviderKeys,
@@ -379,6 +380,8 @@ export default function AccountMenu({
         )}
       </fig-menu>
 
+      {portalToFigOverlay(
+        <>
       <dialog
         is="fig-popup"
         ref={authPopupRef}
@@ -387,6 +390,7 @@ export default function AccountMenu({
         offset="8 0"
         variant="popover"
         theme="menu"
+        popover="manual"
         closedby="any"
         onClose={() => onOpenChange(false)}
         onCancel={close}
@@ -686,6 +690,8 @@ export default function AccountMenu({
           </fig-button>
         </fig-footer>
       </dialog>
+        </>
+      )}
     </>
   );
 }

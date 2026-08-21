@@ -10,6 +10,7 @@ const ShaderList = forwardRef(function ShaderList(
     onDelete,
     onChoice,
     className,
+    layout = "list",
     showPreview = true,
     renderActions,
     drag = true,
@@ -37,7 +38,8 @@ const ShaderList = forwardRef(function ShaderList(
       }}
       class={className ? `shader-list ${className}` : "shader-list"}
       value={value}
-      layout="vertical"
+      layout={layout === "grid" ? "grid" : "vertical"}
+      columns={layout === "grid" ? "2" : undefined}
       overflow="scrollbar"
       drag={drag ? "true" : undefined}
       loop=""
@@ -58,6 +60,7 @@ const ShaderList = forwardRef(function ShaderList(
             src={card.thumbnailUrl}
             label={card.name}
             sublabel={card.description}
+            layout={layout}
             showPreview={showPreview}
             figmaLinked={Boolean(card.figmaLinked)}
             actions={renderActions?.(card)}

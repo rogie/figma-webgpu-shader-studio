@@ -1301,7 +1301,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     const swapchain = this.context.getCurrentTexture();
     this.frame.output = swapchain;
     const layers = this.compositionLayers || [];
-    const fillLayer = layers.find((layer) => layer.role === "fill");
+    const fillLayer = layers.find(
+      (layer) => layer.role === "fill" && layer.enabled
+    );
     const effects = this.effectVisible
       ? layers.filter((layer) => layer.role === "effect" && layer.enabled)
       : [];

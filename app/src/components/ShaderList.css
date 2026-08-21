@@ -39,4 +39,50 @@ fig-chooser.shader-list {
       }
     }
   }
+
+  &[layout="grid"] {
+    --fig-chooser-inline-margin: var(--spacer-2-5);
+    align-content: start;
+    gap: var(--spacer-1);
+    grid-auto-rows: max-content;
+    margin-inline: 0;
+    padding-inline: var(--fig-chooser-inline-margin);
+    overflow-x: clip;
+    overflow-y: auto;
+
+    > fig-separator:not(.fig-overflow) {
+      --fig-separator-padding: 0;
+      grid-column: 1 / -1;
+      width: auto;
+      max-width: none;
+      margin: var(--spacer-2) 0 0;
+      margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
+
+      &[label]:not([label=""]) {
+        &::before {
+          margin-inline: 0;
+        }
+
+        &::after {
+          padding-inline: calc(
+            var(--fig-chooser-inline-margin) + var(--spacer-1)
+          );
+        }
+
+        &[sticky]:not([sticky="false"])[stuck] {
+          --fig-separator-padding: var(--spacer-2) 0;
+        }
+      }
+    }
+
+    fig-choice {
+      margin: 0;
+      width: auto;
+      --fig-choice-border-radius: var(--radius-medium);
+
+      &[selected] {
+        background-color: transparent;
+      }
+    }
+  }
 }

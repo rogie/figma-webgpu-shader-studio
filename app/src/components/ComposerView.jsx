@@ -1,18 +1,24 @@
 import "./Composer.css";
 
-export default function Composer({ header, properties, visualizerRef, children }) {
+export default function ComposerView({
+  viewerRef,
+  visualizerRef,
+  header,
+  preview,
+  properties,
+}) {
   return (
-    <div className="composer">
+    <main ref={viewerRef} className="composer-viewer">
       <div className="composer-stage">
         {header}
         <section
           ref={visualizerRef}
           className="composer-preview shader-viewer-visualizer background--light"
         >
-          {children}
+          {preview}
         </section>
       </div>
       {properties}
-    </div>
+    </main>
   );
 }

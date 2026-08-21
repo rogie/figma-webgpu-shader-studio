@@ -4,6 +4,7 @@ import {
   SupabaseRequestTimeoutError,
   createSupabaseFetch,
   formatSupabaseError,
+  isTransientCloudWriteError,
 } from "./supabaseFetch.js";
 
 function abortAwareFetch() {
@@ -61,4 +62,20 @@ test("createSupabaseFetch forwards successful responses", async () => {
 test("formatSupabaseError preserves timeout context", () => {
   const error = new SupabaseRequestTimeoutError("while saving your shader");
   assert.match(formatSupabaseError(error), /while saving your shader/);
+});
+
+test("isTransientCloudWriteError matches lock and timeout failures", () => {
+  assert.equal(
+    isTransientCloudWriteError(
+      new SupabaseRequestTimeoutError("while saving your shader")
+    ),
+    true
+  );
+  assert.equal(
+    isTransientCloudWriteError(
+      new Error("canceling statement due to lock timeout")
+    ),
+    true
+  );
+  assert.equal(isTransientCloudWriteError(new Error("shader_state_conflict")), false);
 });

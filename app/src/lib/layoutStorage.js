@@ -22,6 +22,7 @@ export const SIDEBAR_SECTIONS_STORAGE_KEY =
 export const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 export const CANVAS_THEME_STORAGE_KEY = "figma-shader-studio:canvas-theme";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
+export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
 
 export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
   return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
@@ -98,4 +99,10 @@ export function readPlayState(storage = globalThis.localStorage) {
   if (stored === "true") return true;
   if (stored === "false") return false;
   return true;
+}
+
+export function readLibraryView(storage = globalThis.localStorage) {
+  return storage?.getItem(LIBRARY_VIEW_STORAGE_KEY) === "grid"
+    ? "grid"
+    : "list";
 }

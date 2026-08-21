@@ -154,6 +154,21 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 
 - Patch-only: vertical `fig-separator[direction="vertical"]` now clamps `max-width: 1px` and `padding: 0` so the rule cannot stretch in flex/grid rows. This app does not use vertical separators; no app wiring required.
 
+## 8.9.15 notes
+
+- `propskit-color` now composes a solid `fig-fill-picker` swatch instead of
+  `fig-input-color`. There is no inline hex/opacity field; click the swatch to
+  open the picker. Events are `{ color, alpha, opacity }` (reset still emits the
+  host hex string). `Controls.jsx` reads that detail instead of querying
+  `fig-input-color.rgba`.
+- `propskit-gradient` default `edit` is now `"picker"` (this app already set
+  `edit="picker"`). Color and gradient swatches share the same 33% width in
+  large horizontal fields.
+- `propskit-color-point` still omits `alpha` on its inner `propskit-color`; keep
+  the post-mount enable workaround in `Controls.jsx`.
+- `fig-field` treats `fig-fill-picker` as a popup host so clicking the color
+  swatch does not collapse a collapsible field.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

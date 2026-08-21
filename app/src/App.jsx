@@ -8,14 +8,18 @@ import {
   useState,
 } from "react";
 import CompositionEditor from "./components/CompositionEditor.jsx";
-import Composer from "./components/Composer.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import EmbedDialog from "./components/EmbedDialog.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
+import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
 import "./components/HomeNav.css";
+import ComposerView from "./components/ComposerView.jsx";
+import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
+import ListViewIcon from "./components/ListViewIcon.jsx";
+import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
 import PreviewFps from "./components/PreviewFps.jsx";
 import ShaderList from "./components/ShaderList.jsx";
@@ -52,6 +56,11 @@ import {
   rasterizeSvgBlob,
 } from "./runtime/sample.js";
 import { CANVAS_PROP_TYPES } from "./lib/canvasControls.js";
+import { portalToFigOverlay } from "./lib/figOverlay.js";
+import {
+  applyDefaultValuesToProps,
+  applyDefaultValuesToSource,
+} from "./lib/definePropertiesDefaults.js";
 import {
   isPlanDocument,
   loadLocalPlan,
@@ -71,7 +80,10 @@ import {
   figmaLibraryKey,
   filterShaderLibraryCards,
 } from "./lib/shaderLibrary.js";
-import { formatSupabaseError } from "./lib/supabaseFetch.js";
+import {
+  formatSupabaseError,
+  isTransientCloudWriteError,
+} from "./lib/supabaseFetch.js";
 import {
   getFigmaAccessToken,
   subscribeFigmaAccessToken,
@@ -96,6 +108,7 @@ import {
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   defaultCodeWidth,
+  LIBRARY_VIEW_STORAGE_KEY,
   MAX_APP_NAV_WIDTH,
   MIN_APP_NAV_WIDTH,
   MIN_CHAT_HEIGHT,
@@ -106,6 +119,7 @@ import {
   MIN_STACKED_SIDEBAR,
   PLAY_STORAGE_KEY,
   readCanvasTheme as savedCanvasTheme,
+  readLibraryView as savedLibraryView,
   readPlayState as savedPlayState,
   readSidebarSections as savedSidebarSections,
   readTheme as savedTheme,
@@ -119,6 +133,7 @@ import {
   COMPOSITION_KIND,
   emptyComposition,
   readComposerUiEnabled,
+  resolvedLibraryKind,
   subscribeComposerUiEnabled,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
@@ -155,6 +170,7 @@ import {
   getShaderMaybe,
   getShadersByIds,
   getShaderVersion,
+  getAppRoute,
   getShaderRouteId,
   listAllShaderVersions,
   listShaderVersions,
@@ -187,6 +203,7 @@ const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
 const THUMBNAIL_SIZE = 512;
 const THUMBNAIL_IDLE_MS = 4000;
 const BACKGROUND_AUTOSAVE_MS = 4000;
+const CLOUD_WRITE_BACKOFF_MS = 20_000;
 
 const INITIAL_DRAFTS = savedDrafts();
 
@@ -253,7 +270,7 @@ function groupLibraryCards(cards, composerUiEnabled) {
     cards,
     "Shader effect",
     "Shader fill",
-    "Composer",
+    "Compositions",
     "studio",
     composerUiEnabled,
   );
@@ -342,7 +359,9 @@ export default function App() {
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
   const [source, setSource] = useState(INITIAL.source);
-  const [sessionKind, setSessionKind] = useState(INITIAL.kind);
+  const [sessionKind, setSessionKind] = useState(
+    () => getAppRoute().kind || INITIAL.kind,
+  );
   const [composition, setComposition] = useState(null);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [resolvedShaders, setResolvedShaders] = useState({});
@@ -450,6 +469,7 @@ export default function App() {
     readComposerUiEnabled,
   );
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
+  const [routeKind, setRouteKind] = useState(() => getAppRoute().kind);
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
@@ -458,6 +478,7 @@ export default function App() {
   const [editorKind, setEditorKind] = useState("all");
   const [editorOrigin, setEditorOrigin] = useState("all");
   const [editorAuthor, setEditorAuthor] = useState("all");
+  const [libraryView, setLibraryView] = useState(savedLibraryView);
   const [figmaTokenConfigured, setFigmaTokenConfigured] = useState(
     () =>
       FIGMA_LIBRARY_UI_ENABLED ? Boolean(getFigmaAccessToken()) : false
@@ -480,6 +501,7 @@ export default function App() {
   const setShaderRoute = useCallback((id, kind) => {
     replaceShaderUrl(id, kind);
     setRouteId(id || null);
+    setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
     const initial = {};
@@ -513,8 +535,6 @@ export default function App() {
   const sidebarRef = useRef(null);
   const chatPaneRef = useRef(null);
   const [canClearChat, setCanClearChat] = useState(false);
-  const editorKindRef = useRef(null);
-  const editorAuthorRef = useRef(null);
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
@@ -563,6 +583,7 @@ export default function App() {
   const previewParamsRafRef = useRef(0);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
+  const cloudWriteBackoffUntilRef = useRef(0);
   const activeFigmaLink = figmaShaderLink(
     isDraftId(presetId)
       ? drafts.find((draft) => draft.id === presetId)
@@ -603,6 +624,7 @@ export default function App() {
         : detectKind(source),
     [sessionKind, source]
   );
+  const isComposerView = routeKind === COMPOSITION_KIND;
   useEffect(() => {
     if (presetId && kind !== COMPOSITION_KIND) {
       persistInputSource(presetId, inputSource);
@@ -666,6 +688,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
   }, [canvasTheme]);
+
+  useEffect(() => {
+    localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, libraryView);
+  }, [libraryView]);
 
   useEffect(() => subscribeComposerUiEnabled(setComposerUiEnabled), []);
 
@@ -1165,7 +1191,8 @@ export default function App() {
           COMPOSITION_FILL_ID,
           "fill",
           graph.fill.shaderId,
-          graph.fill.values
+          graph.fill.values,
+          graph.fill.enabled
         );
       }
       for (const effect of graph.effects) {
@@ -1764,7 +1791,7 @@ export default function App() {
       setRuntimeReady(false);
       clearObjectUrl();
     };
-  }, [clearObjectUrl, restoreSample, viewMode]);
+  }, [clearObjectUrl, restoreSample, viewMode, isComposerView]);
 
   useEffect(() => {
     if (!runtimeReady || !hostRef.current?.ready) return;
@@ -2259,14 +2286,30 @@ export default function App() {
         const session = editorActive ? draftSessionRef.current : draft;
         try {
           const cloudId = cloudIdForDraft(draft.id);
+          const isComposition =
+            resolvedLibraryKind({
+              kind: session.kind || draft.kind,
+              composition: session.composition || draft.composition,
+            }) === COMPOSITION_KIND;
+          const source = isComposition
+            ? ""
+            : session.source || draft.source || "";
+          const graph = isComposition
+            ? normalizeComposition(session.composition || draft.composition)
+            : {};
           const payload = {
             id: cloudId,
             owner_id: user.id,
             name: session.shaderName || draft.name || "Untitled Shader",
-            source: session.source || draft.source,
-            kind: detectKind(session.source || draft.source),
-            parameter_values: session.values || draft.values || {},
-            features: inferFeatures(session.source || draft.source),
+            source,
+            kind: isComposition ? COMPOSITION_KIND : detectKind(source),
+            parameter_values: isComposition
+              ? {}
+              : session.values || draft.values || {},
+            features: isComposition
+              ? { isAnimated: false, usesMouse: false }
+              : inferFeatures(source),
+            composition: graph,
             is_public: false,
             ...figmaShaderLink(editorActive ? session : draft),
           };
@@ -2281,6 +2324,7 @@ export default function App() {
                 kind: payload.kind,
                 parameterValues: payload.parameter_values,
                 features: payload.features,
+                composition: payload.composition,
                 checkpointKind: "manual",
                 summary: "Migrated local draft",
               });
@@ -2481,15 +2525,17 @@ export default function App() {
   useEffect(() => {
     if (!runtimeReady || authLoading || sharedLoadedRef.current) return;
     sharedLoadedRef.current = true;
-    const id = getShaderRouteId();
+    const { id, kind: nextKind } = getAppRoute();
     setRouteId(id);
+    setRouteKind(nextKind);
     if (id) openRouteId(id);
   }, [authLoading, openRouteId, runtimeReady]);
 
   useEffect(() => {
     const onPopState = () => {
-      const id = getShaderRouteId();
+      const { id, kind: nextKind } = getAppRoute();
       setRouteId(id);
+      setRouteKind(nextKind);
       if (id) openRouteId(id);
     };
     window.addEventListener("popstate", onPopState);
@@ -2536,6 +2582,7 @@ export default function App() {
       }
       pushShaderUrl(nextRouteId, kind);
       setRouteId(nextRouteId);
+      setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
       chooseItem(id);
     },
     [chooseItem, cloudShaders, drafts]
@@ -2563,26 +2610,6 @@ export default function App() {
     },
     [openCloudShader, openDraft, user]
   );
-
-  useEffect(() => {
-    if (viewMode !== "editor") return;
-    const kindControl = editorKindRef.current;
-    const authorControl = editorAuthorRef.current;
-    const onKind = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "all");
-      setEditorKind(value || "all");
-    };
-    const onAuthor = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "all");
-      setEditorAuthor(value || "all");
-    };
-    kindControl?.addEventListener("change", onKind);
-    authorControl?.addEventListener("change", onAuthor);
-    return () => {
-      kindControl?.removeEventListener("change", onKind);
-      authorControl?.removeEventListener("change", onAuthor);
-    };
-  }, [viewMode]);
 
   const updateControl = useCallback(
     (name, value) => {
@@ -2654,6 +2681,29 @@ export default function App() {
     setError(null);
     if (!protectedPreview) setDirty(true);
   }, [props, protectedPreview, setRuntimeValues]);
+
+  const savePropertiesAsDefault = useCallback(() => {
+    if (protectedPreview) return;
+    const currentValues = valuesRef.current;
+    try {
+      const nextSource = applyDefaultValuesToSource(
+        sourceRef.current,
+        currentValues
+      );
+      if (nextSource === sourceRef.current) return;
+      setSource(nextSource);
+      setDirty(true);
+      setProps((current) => applyDefaultValuesToProps(current, currentValues));
+      setError(null);
+    } catch (saveError) {
+      setError(saveError.message || String(saveError));
+    }
+  }, [protectedPreview]);
+
+  const propertiesMoreMenuRef = useFigMenuChange((value) => {
+    if (value === "reset") resetProperties();
+    else if (value === "save-defaults") savePropertiesAsDefault();
+  });
 
   const startRename = useCallback(() => {
     if (protectedPreview) return;
@@ -3167,8 +3217,12 @@ export default function App() {
           setCloudThumbnails((current) => ({ ...current, [saved.id]: url }));
         }
         if (noticeMessage) showNotice(noticeMessage);
+        cloudWriteBackoffUntilRef.current = 0;
         return saved;
       } catch (saveError) {
+        if (isTransientCloudWriteError(saveError)) {
+          cloudWriteBackoffUntilRef.current = Date.now() + CLOUD_WRITE_BACKOFF_MS;
+        }
         const saveStillActive =
           draftSessionRef.current.presetId === saveTargetId;
         if (isShaderStateConflict(saveError) && currentShader?.id) {
@@ -3533,11 +3587,15 @@ export default function App() {
   useEffect(() => {
     if (!user || !currentShader || !isOwner || !dirty || saving) return;
     if (Boolean(isPublic) !== Boolean(currentShader.is_public)) return;
+    const delay = Math.max(
+      BACKGROUND_AUTOSAVE_MS,
+      cloudWriteBackoffUntilRef.current - Date.now()
+    );
     const timer = window.setTimeout(() => {
       saveShader({ background: true, notice: null }).catch(() => {
         // The editor remains dirty so a later edit or explicit Save can retry.
       });
-    }, BACKGROUND_AUTOSAVE_MS);
+    }, delay);
     return () => window.clearTimeout(timer);
   }, [currentShader, dirty, isOwner, isPublic, saveShader, saving, user]);
 
@@ -4107,11 +4165,11 @@ export default function App() {
     [composerUiEnabled, editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
   const compositionFillCards = useMemo(
-    () => libraryCards.filter((card) => card.kind === "fill"),
+    () => filterShaderLibraryCards(libraryCards, { kind: "fill" }),
     [libraryCards]
   );
   const compositionEffectCards = useMemo(
-    () => libraryCards.filter((card) => card.kind === "effect"),
+    () => filterShaderLibraryCards(libraryCards, { kind: "effect" }),
     [libraryCards]
   );
 
@@ -4131,6 +4189,7 @@ export default function App() {
   );
 
   const onCompositionSelectLayer = useCallback((layerId) => {
+    selectedLayerIdRef.current = layerId;
     setSelectedLayerId(layerId);
     const graph = normalizeComposition(compositionRef.current);
     const resolved =
@@ -4141,7 +4200,8 @@ export default function App() {
           ];
     if (!resolved?.source) {
       setProps({});
-      setRuntimeValues({});
+      valuesRef.current = {};
+      setValues({});
       return;
     }
     try {
@@ -4150,13 +4210,16 @@ export default function App() {
         layerId === COMPOSITION_FILL_ID
           ? graph.fill.values
           : graph.effects.find((effect) => effect.id === layerId)?.values;
+      const next = mergeValues(loaded.props, values);
+      valuesRef.current = next;
       setProps(loaded.props);
-      setRuntimeValues(mergeValues(loaded.props, values));
+      setValues(next);
     } catch {
       setProps({});
-      setRuntimeValues({});
+      valuesRef.current = {};
+      setValues({});
     }
-  }, [resolvedShaders, setRuntimeValues]);
+  }, [resolvedShaders]);
 
   const figmaImportedKeys = useMemo(() => {
     const keys = new Set();
@@ -4307,14 +4370,13 @@ export default function App() {
       </fig-header>
 
       <fig-content class="shader-properties-panel-content" padding="none">
-          {kind === COMPOSITION_KIND ? (
+          {isComposerView ? (
             <>
               <CompositionEditor
                 graph={composition}
                 resolvedByKey={resolvedByKey}
                 fillCards={compositionFillCards}
                 effectCards={compositionEffectCards}
-                selectedLayerId={selectedLayerId}
                 readOnly={protectedPreview}
                 layerControls={
                   <Suspense fallback={null}>
@@ -4331,12 +4393,41 @@ export default function App() {
                 onOpenShader={(shaderId) => chooseItem(shaderId)}
                 onResetLayer={resetProperties}
                 onMediaFill={(type) => {
-                  applyInputSource(type).catch((sourceError) =>
-                    setError(sourceError.message || String(sourceError))
-                  );
+                  applyInputSource(type)
+                    .then(() => {
+                      if (sessionKindRef.current === COMPOSITION_KIND) {
+                        compileComposition();
+                      }
+                    })
+                    .catch((sourceError) =>
+                      setError(sourceError.message || String(sourceError))
+                    );
+                }}
+                onImageFill={(url) => {
+                  fetch(url)
+                    .then((response) => {
+                      if (!response.ok) {
+                        throw new Error("Could not load image fill.");
+                      }
+                      return response.blob();
+                    })
+                    .then((blob) => {
+                      const type = blob.type || "image/png";
+                      if (!type.startsWith("image/")) {
+                        throw new Error("Choose an image fill.");
+                      }
+                      return pickFile(
+                        new File([blob], "image-fill", { type })
+                      );
+                    })
+                    .catch((sourceError) =>
+                      setError(sourceError.message || String(sourceError))
+                    );
                 }}
               />
               {user && !protectedPreview && (
+                <>
+                <fig-separator />
                 <div className="sharing-controls">
                   <fig-field label="Public" direction="horizontal">
                     <fig-switch
@@ -4354,6 +4445,7 @@ export default function App() {
                     />
                   </fig-field>
                 </div>
+                </>
               )}
             </>
           ) : (
@@ -4361,17 +4453,28 @@ export default function App() {
             <fig-header borderless>
               <h3>{shaderName}</h3>
               <hstack>
-                <fig-tooltip text="Reset properties">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Reset properties"
-                    onClick={resetProperties}
+                <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
+                  <fig-tooltip text="More">
+                    <fig-button
+                      fig-menu-trigger=""
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="More property actions"
+                    >
+                      <fig-icon name="more" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item value="reset">
+                    Reset to default
+                  </fig-menu-item>
+                  <fig-menu-item
+                    value="save-defaults"
+                    disabled={protectedPreview ? "" : undefined}
                   >
-                    <fig-icon name="reset" />
-                  </fig-button>
-                </fig-tooltip>
+                    Save as default
+                  </fig-menu-item>
+                </fig-menu>
                 <fig-tooltip
                   text={effectVisible ? "Hide effect" : "Show effect"}
                 >
@@ -4408,6 +4511,8 @@ export default function App() {
               />
             </Suspense>
             {user && !protectedPreview && (
+              <>
+              <fig-separator />
               <div className="sharing-controls">
                 <fig-field label="Public" direction="horizontal">
                   <fig-switch
@@ -4425,6 +4530,7 @@ export default function App() {
                   />
                 </fig-field>
               </div>
+              </>
             )}
           </fig-group>
           )}
@@ -4655,7 +4761,7 @@ export default function App() {
                     <fig-separator />
                     <fig-menu-item
                       value="export"
-                      hidden={kind === COMPOSITION_KIND ? "" : undefined}
+                      hidden={isComposerView ? "" : undefined}
                     >
                       Download
                     </fig-menu-item>
@@ -4690,7 +4796,7 @@ export default function App() {
           zoomRequest={previewZoomRequest}
           inputSource={
             kind === "effect" ||
-            (kind === COMPOSITION_KIND &&
+            (isComposerView &&
               mediaFillType(composition?.fill?.type))
               ? inputSource
               : "image"
@@ -4700,7 +4806,7 @@ export default function App() {
           onPointerSurface={onPointerSurface}
           onPickFile={onPreviewFile}
           onDropError={setError}
-          dropTarget={kind === COMPOSITION_KIND ? "fill" : "input"}
+          dropTarget={isComposerView ? "fill" : "input"}
           canvasTheme={canvasTheme}
         />
       )}
@@ -4718,7 +4824,7 @@ export default function App() {
           <div
             className="tools background--light"
           >
-            {(kind !== COMPOSITION_KIND || compositionPlayable) && (
+            {(!isComposerView || compositionPlayable) && (
             <fig-button
               type="toggle"
               variant="ghost"
@@ -4779,7 +4885,7 @@ export default function App() {
                 </fig-tooltip>
               </>
             )}
-            {kind === COMPOSITION_KIND &&
+            {isComposerView &&
               mediaFillType(composition?.fill?.type) && (
                 <fig-tooltip text="Upload input">
                   <fig-button
@@ -4810,13 +4916,13 @@ export default function App() {
               </fig-menu-item>
               <fig-menu-item
                 value="video"
-                disabled={kind === COMPOSITION_KIND ? "" : undefined}
+                disabled={isComposerView ? "" : undefined}
               >
                 Video…
               </fig-menu-item>
               <fig-menu-item
                 value="embed"
-                disabled={kind === COMPOSITION_KIND ? "" : undefined}
+                disabled={isComposerView ? "" : undefined}
               >
                 Embed…
               </fig-menu-item>
@@ -4943,75 +5049,63 @@ export default function App() {
                 />
               </div>
             </fig-header>
-            <div className="app-nav-library-filters">
-              <hstack>
-                <fig-input-text
-                  class="app-nav-search"
-                  type="search"
-                  placeholder="Search"
-                  value={editorQuery}
-                  full=""
-                  onInput={(event) => setEditorQuery(event.target.value)}
-                  dangerouslySetInnerHTML={opaqueContent}
+            <fig-header class="app-nav-library-filters">
+              <fig-input-text
+                class="app-nav-search"
+                type="search"
+                placeholder="Search"
+                value={editorQuery}
+                full=""
+                onInput={(event) => setEditorQuery(event.target.value)}
+                dangerouslySetInnerHTML={opaqueContent}
+              />
+              <hstack class="app-nav-library-toggles">
+                <LibraryFilterMenu
+                  kind={visibleLibraryKind(editorKind, composerUiEnabled)}
+                  onKindChange={setEditorKind}
+                  author={editorAuthor}
+                  onAuthorChange={setEditorAuthor}
+                  origin={editorOrigin}
+                  onOriginChange={setEditorOrigin}
+                  authors={publishedAuthors}
+                  composerUiEnabled={composerUiEnabled}
                 />
                 <fig-tooltip
                   text={
-                    editorOrigin === "public"
-                      ? "Show all shaders"
-                      : "Show published only"
+                    libraryView === "grid"
+                      ? "Toggle to list view"
+                      : "Toggle to grid view"
                   }
                 >
                   <fig-button
-                    class="app-nav-published-toggle"
-                    type="toggle"
+                    type="button"
                     variant="ghost"
                     icon="true"
-                    selected={editorOrigin === "public"}
-                    aria-label="Show published shaders only"
+                    aria-label={
+                      libraryView === "grid"
+                        ? "Toggle to list view"
+                        : "Toggle to grid view"
+                    }
                     onClick={() =>
-                      setEditorOrigin((current) =>
-                        current === "public" ? "all" : "public"
+                      setLibraryView((current) =>
+                        current === "grid" ? "list" : "grid"
                       )
                     }
                   >
-                    <fig-icon name="globe" />
+                    {libraryView === "grid" ? (
+                      <GridViewIcon />
+                    ) : (
+                      <ListViewIcon />
+                    )}
                   </fig-button>
                 </fig-tooltip>
               </hstack>
-              <div className="app-nav-filter-row">
-                <fig-select
-                  ref={editorKindRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by kind"
-                  value={visibleLibraryKind(editorKind, composerUiEnabled)}
-                  options={JSON.stringify([
-                    { value: "all", label: "All types" },
-                    { value: "effect", label: "Effects" },
-                    { value: "fill", label: "Fills" },
-                    ...(composerUiEnabled
-                      ? [{ value: "composition", label: "Composers" }]
-                      : []),
-                  ])}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-select
-                  ref={editorAuthorRef}
-                  class="app-nav-filter"
-                  aria-label="Filter by author"
-                  value={editorAuthor}
-                  options={JSON.stringify([
-                    { value: "all", label: "All authors" },
-                    ...publishedAuthors,
-                  ])}
-                  disabled={publishedAuthors.length ? undefined : ""}
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-              </div>
-            </div>
+            </fig-header>
           </div>
           <ShaderList
             value={presetId}
             cards={groupedEditorCards}
+            layout={libraryView}
             onChoice={chooseItem}
             onPublish={openPublishForCard}
             onDelete={onDeleteLibraryCard}
@@ -5044,166 +5138,181 @@ export default function App() {
           }}
         />
 
-      <main
-        ref={viewerRef}
-        className="shader-viewer"
-        data-composer={kind === COMPOSITION_KIND ? "true" : undefined}
-        style={{
-          "--code-width": `${codeWidth}px`,
-          "--chat-height": `${chatHeight}px`,
-          ...(previewHeight != null
-            ? { "--preview-height": `${previewHeight}px` }
-            : {}),
-        }}
-      >
-        {kind === COMPOSITION_KIND ? (
-          <Composer
-            header={shaderEditorHeader}
-            properties={propertiesPanel}
-            visualizerRef={visualizerRef}
-          >
-            {previewCanvas}
-            {previewTools}
-          </Composer>
-        ) : (
-          <>
-        <div
-          ref={sidebarRef}
-          className="shader-viewer-sidebar"
-          data-code-collapsed={effectiveCodeCollapsed ? "true" : "false"}
-          data-chat-collapsed={
-            protectedPreview ? "false" : chatCollapsed ? "true" : "false"
+      {isComposerView ? (
+        <ComposerView
+          viewerRef={viewerRef}
+          visualizerRef={visualizerRef}
+          header={shaderEditorHeader}
+          preview={
+            <>
+              {previewCanvas}
+              {previewTools}
+            </>
           }
-        >
-          {shaderEditorHeader}
+          properties={propertiesPanel}
+        />
+      ) : (
+        <ShaderView
+          viewerRef={viewerRef}
+          sidebarRef={sidebarRef}
+          visualizerRef={visualizerRef}
+          style={{
+            "--code-width": `${codeWidth}px`,
+            "--chat-height": `${chatHeight}px`,
+            ...(previewHeight != null
+              ? { "--preview-height": `${previewHeight}px` }
+              : {}),
+          }}
+          codeCollapsed={effectiveCodeCollapsed}
+          chatCollapsed={protectedPreview ? false : chatCollapsed}
+          stacked={stacked}
+          codeWidth={codeWidth}
+          previewHeight={previewHeight}
+          minCodeWidth={MIN_CODE_WIDTH}
+          minPreviewHeight={MIN_PREVIEW_HEIGHT}
+          sidebar={
+            <>
+              {shaderEditorHeader}
 
-          <section
-            className="shader-viewer-code"
-            data-collapsed={effectiveCodeCollapsed ? "true" : "false"}
-          >
-            <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
-              <h3>Code</h3>
-              <hstack>
-                <fig-tooltip text="Copy code">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Copy code"
-                    onClick={() => copyShaderCode()}
-                  >
-                    <fig-icon name="copy" />
-                  </fig-button>
-                </fig-tooltip>
-                {!protectedPreview && (
-                  <fig-tooltip
-                    text={
-                      effectiveCodeCollapsed ? "Expand code" : "Collapse code"
-                    }
-                  >
-                    <fig-button
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label={
-                        effectiveCodeCollapsed ? "Expand code" : "Collapse code"
-                      }
-                      onClick={() => {
-                        if (renaming) finishRename();
-                        setCodeCollapsed((collapsed) => !collapsed);
-                      }}
-                    >
-                      <fig-icon
-                        class={
+              <section
+                className="shader-viewer-code"
+                data-collapsed={effectiveCodeCollapsed ? "true" : "false"}
+              >
+                <fig-header borderless aria-expanded={!effectiveCodeCollapsed}>
+                  <h3>Code</h3>
+                  <hstack>
+                    <fig-tooltip text="Copy code">
+                      <fig-button
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        aria-label="Copy code"
+                        onClick={() => copyShaderCode()}
+                      >
+                        <fig-icon name="copy" />
+                      </fig-button>
+                    </fig-tooltip>
+                    {!protectedPreview && (
+                      <fig-tooltip
+                        text={
                           effectiveCodeCollapsed
-                            ? "section-chevron is-collapsed"
-                            : "section-chevron"
+                            ? "Expand code"
+                            : "Collapse code"
                         }
-                        name="chevron"
-                        size="medium"
+                      >
+                        <fig-button
+                          type="button"
+                          variant="ghost"
+                          icon="true"
+                          aria-label={
+                            effectiveCodeCollapsed
+                              ? "Expand code"
+                              : "Collapse code"
+                          }
+                          onClick={() => {
+                            if (renaming) finishRename();
+                            setCodeCollapsed((collapsed) => !collapsed);
+                          }}
+                        >
+                          <fig-icon
+                            class={
+                              effectiveCodeCollapsed
+                                ? "section-chevron is-collapsed"
+                                : "section-chevron"
+                            }
+                            name="chevron"
+                            size="medium"
+                          />
+                        </fig-button>
+                      </fig-tooltip>
+                    )}
+                  </hstack>
+                </fig-header>
+                <div className="code-editor" hidden={effectiveCodeCollapsed}>
+                  {!effectiveCodeCollapsed && (
+                    <Suspense fallback={null}>
+                      <CodePane
+                        source={source}
+                        theme={theme}
+                        error={error}
+                        readOnly={protectedPreview}
+                        onSourceChange={onSourceChange}
                       />
-                    </fig-button>
-                  </fig-tooltip>
+                    </Suspense>
+                  )}
+                </div>
+              </section>
+
+              {!protectedPreview &&
+                !effectiveCodeCollapsed &&
+                !chatCollapsed && (
+                  <div
+                    className="pane-resizer pane-resizer-row"
+                    role="separator"
+                    aria-label="Resize code and chat panes"
+                    aria-orientation="horizontal"
+                    aria-valuemin={MIN_CHAT_HEIGHT}
+                    aria-valuenow={chatHeight}
+                    tabIndex={0}
+                    onPointerDown={resizeChatPane}
+                    onDoubleClick={() => saveChatHeight(DEFAULT_CHAT_HEIGHT)}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key !== "ArrowUp" &&
+                        event.key !== "ArrowDown"
+                      ) {
+                        return;
+                      }
+                      event.preventDefault();
+                      saveChatHeight(
+                        Math.max(
+                          MIN_CHAT_HEIGHT,
+                          chatHeight + (event.key === "ArrowUp" ? 16 : -16)
+                        )
+                      );
+                    }}
+                  />
                 )}
-              </hstack>
-            </fig-header>
-            <div className="code-editor" hidden={effectiveCodeCollapsed}>
-              {!effectiveCodeCollapsed && (
+
+              {!protectedPreview && (
                 <Suspense fallback={null}>
-                  <CodePane
-                    source={source}
-                    theme={theme}
-                    error={error}
-                    readOnly={protectedPreview}
-                    onSourceChange={onSourceChange}
+                  <ShaderChatSection
+                    collapsed={chatCollapsed}
+                    onCollapsedChange={setChatCollapsed}
+                    canClear={canClearChat}
+                    chatPaneRef={chatPaneRef}
+                    sourceRef={sourceRef}
+                    kind={kind}
+                    fileName={shaderModuleFileName(presetId, shaderName)}
+                    shaderKey={chatShaderKey}
+                    planOwnerId={isOwner ? user.id : null}
+                    planShaderId={isOwner ? currentShader.id : null}
+                    featuresRef={shaderFeaturesRef}
+                    user={user}
+                    onApplySource={onSourceChange}
+                    onAppliedCheckpoint={checkpointAgentVersion}
+                    onOpenSettings={openSettings}
+                    onNotice={showNotice}
+                    onCanClearChange={setCanClearChat}
                   />
                 </Suspense>
               )}
-            </div>
-          </section>
-
-          {!protectedPreview && !effectiveCodeCollapsed && !chatCollapsed && (
-            <div
-              className="pane-resizer pane-resizer-row"
-              role="separator"
-              aria-label="Resize code and chat panes"
-              aria-orientation="horizontal"
-              aria-valuemin={MIN_CHAT_HEIGHT}
-              aria-valuenow={chatHeight}
-              tabIndex={0}
-              onPointerDown={resizeChatPane}
-              onDoubleClick={() => saveChatHeight(DEFAULT_CHAT_HEIGHT)}
-              onKeyDown={(event) => {
-                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-                event.preventDefault();
-                saveChatHeight(
-                  Math.max(
-                    MIN_CHAT_HEIGHT,
-                    chatHeight + (event.key === "ArrowUp" ? 16 : -16)
-                  )
-                );
-              }}
-            />
-          )}
-
-          {!protectedPreview && (
-            <Suspense fallback={null}>
-              <ShaderChatSection
-                collapsed={chatCollapsed}
-                onCollapsedChange={setChatCollapsed}
-                canClear={canClearChat}
-                chatPaneRef={chatPaneRef}
-                sourceRef={sourceRef}
-                kind={kind}
-                fileName={shaderModuleFileName(presetId, shaderName)}
-                shaderKey={chatShaderKey}
-                planOwnerId={isOwner ? user.id : null}
-                planShaderId={isOwner ? currentShader.id : null}
-                featuresRef={shaderFeaturesRef}
-                user={user}
-                onApplySource={onSourceChange}
-                onAppliedCheckpoint={checkpointAgentVersion}
-                onOpenSettings={openSettings}
-                onNotice={showNotice}
-                onCanClearChange={setCanClearChat}
-              />
-            </Suspense>
-          )}
-        </div>
-
-        <div
-          className="pane-resizer"
-          role="separator"
-          aria-label="Resize code and preview panes"
-          aria-orientation={stacked ? "horizontal" : "vertical"}
-          aria-valuemin={stacked ? MIN_PREVIEW_HEIGHT : MIN_CODE_WIDTH}
-          aria-valuenow={stacked ? previewHeight ?? undefined : codeWidth}
-          tabIndex={0}
-          onPointerDown={resizeCodePane}
-          onDoubleClick={() =>
-            stacked ? savePreviewHeight(null) : saveCodeWidth(defaultCodeWidth())
+            </>
           }
-          onKeyDown={(event) => {
+          preview={
+            <>
+              {previewCanvas}
+              {previewTools}
+            </>
+          }
+          properties={propertiesPanel}
+          onResizeCode={resizeCodePane}
+          onResetCodeSize={() =>
+            stacked
+              ? savePreviewHeight(null)
+              : saveCodeWidth(defaultCodeWidth())
+          }
+          onKeyResizeCode={(event) => {
             if (stacked) {
               if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
               event.preventDefault();
@@ -5240,19 +5349,7 @@ export default function App() {
             );
           }}
         />
-
-        <section
-          ref={visualizerRef}
-          className="shader-viewer-visualizer background--light"
-        >
-          {previewCanvas}
-          {previewTools}
-        </section>
-
-        {propertiesPanel}
-          </>
-        )}
-      </main>
+      )}
       </div>
       )}
 
@@ -5526,6 +5623,7 @@ export default function App() {
         )}
       </dialog>
 
+      {portalToFigOverlay(
       <dialog
         is="fig-popup"
         ref={publishDialogRef}
@@ -5534,6 +5632,7 @@ export default function App() {
         offset="8 0"
         variant="popover"
         theme="menu"
+        popover="manual"
         closedby="any"
         onClose={() => setPublishOpen(false)}
         onCancel={() => setPublishOpen(false)}
@@ -5567,6 +5666,7 @@ export default function App() {
           </fig-button>
         </fig-footer>
       </dialog>
+      )}
       <AppToasts
         videoExportToastRef={videoExportToastRef}
         videoExportedToastRef={videoExportedToastRef}

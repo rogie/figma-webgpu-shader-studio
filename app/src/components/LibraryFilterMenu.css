@@ -1,0 +1,18 @@
+fig-menu.library-filter-menu > fig-menu-item {
+  --fig-menu-item-padding: var(--spacer-1) var(--spacer-2);
+  padding-right: var(--spacer-3);
+  gap: 0;
+}
+
+fig-menu.library-filter-menu > fig-menu-item > fig-icon {
+  flex: 0 0 1rem;
+  width: 1rem;
+  height: 1rem;
+  margin-left: var(--spacer-1);
+  margin-right: var(--spacer-1);
+}
+
+
+fig-menu.library-filter-menu > fig-separator:first-of-type::before {
+  display: none;
+}

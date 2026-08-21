@@ -57,13 +57,23 @@ export function createSupabaseFetch(timeoutMs = SUPABASE_REQUEST_TIMEOUT_MS) {
   };
 }
 
+const LOCK_TIMEOUT_RE =
+  /lock_not_available|canceling statement due to lock timeout/i;
+
+export function isTransientCloudWriteError(error) {
+  if (error instanceof SupabaseRequestTimeoutError) return true;
+  if (error?.name === "AbortError") return true;
+  const message = error?.message || String(error || "");
+  return LOCK_TIMEOUT_RE.test(message) || /took too long to respond/i.test(message);
+}
+
 export function formatSupabaseError(error, fallback = "Cloud request failed.") {
   if (error instanceof SupabaseRequestTimeoutError) return error.message;
   if (error?.name === "AbortError") {
     return new SupabaseRequestTimeoutError().message;
   }
   const message = error?.message || String(error || "");
-  if (/lock_not_available|canceling statement due to lock timeout/i.test(message)) {
+  if (LOCK_TIMEOUT_RE.test(message)) {
     return "Could not save right now because another save is still finishing. Wait a moment and try again.";
   }
   if (/fetch failed|networkerror|failed to fetch/i.test(message)) {

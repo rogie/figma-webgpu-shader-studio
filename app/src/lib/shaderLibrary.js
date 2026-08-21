@@ -3,6 +3,8 @@
  * Bundled file presets are intentionally not part of the user library.
  */
 
+import { resolvedLibraryKind } from "./composition.js";
+
 export const ANON_YOU_LABEL = "Anon (You)";
 
 export function figmaLibraryKey(kind, id) {
@@ -55,7 +57,7 @@ export function buildShaderLibraryCards({
       key: draft.id,
       origin: "draft",
       name,
-      kind: draft.kind,
+      kind: resolvedLibraryKind(draft),
       thumbnailUrl: thumbnails[draft.id] || null,
       authorId: user?.id ?? null,
       authorLabel: "Draft",
@@ -81,12 +83,7 @@ export function buildShaderLibraryCards({
       key,
       origin: privateDraft ? "draft" : "public",
       name: liveNames[key] || shader.name,
-      kind:
-        shader.kind === "fill"
-          ? "fill"
-          : shader.kind === "composition"
-            ? "composition"
-            : "effect",
+      kind: resolvedLibraryKind(shader),
       thumbnailUrl:
         thumbnails[key] ||
         cloudThumbnails[shader.id] ||

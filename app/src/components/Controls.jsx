@@ -290,6 +290,34 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
   );
 }
 
+function readPropskitColorEvent(event, host) {
+  const detail = event.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return hexToColor(detail);
+  }
+  if (detail && typeof detail === "object") {
+    const hex =
+      typeof detail.color === "string"
+        ? detail.color
+        : typeof detail.value === "string"
+          ? detail.value
+          : typeof detail.hex === "string"
+            ? detail.hex
+            : "";
+    if (hex) {
+      const color = hexToColor(hex);
+      if (Number.isFinite(Number(detail.alpha))) {
+        color.a = Math.max(0, Math.min(1, Number(detail.alpha)));
+      } else if (Number.isFinite(Number(detail.opacity))) {
+        color.a = Math.max(0, Math.min(100, Number(detail.opacity))) / 100;
+      }
+      return color;
+    }
+  }
+  const raw = host?.getAttribute?.("value");
+  return raw ? hexToColor(raw) : null;
+}
+
 function PropskitColorControl({ name, def, value, onChange }) {
   const colorRef = useRef(null);
   const current =
@@ -298,16 +326,10 @@ function PropskitColorControl({ name, def, value, onChange }) {
   useEffect(() => {
     const control = colorRef.current;
     if (!control) return;
-    const handleValue = () => {
-      const input = control.querySelector("fig-input-color");
-      const rgba = input?.rgba;
-      if (!rgba) return;
-      onChange(name, {
-        r: rgba.r / 255,
-        g: rgba.g / 255,
-        b: rgba.b / 255,
-        a: rgba.a,
-      });
+    const handleValue = (event) => {
+      const next = readPropskitColorEvent(event, control);
+      if (!next) return;
+      onChange(name, next);
     };
     control.addEventListener("input", handleValue);
     control.addEventListener("change", handleValue);

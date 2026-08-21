@@ -1,12 +1,6 @@
-.composer {
-  display: flex;
-  flex: 1 1 auto;
+#root .composer-viewer {
   flex-direction: row;
   align-items: stretch;
-  width: 100%;
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
 }
 
 .composer-stage {
@@ -21,7 +15,7 @@
   flex: 0 0 auto;
 }
 
-.shader-viewer[data-composer="true"] .composer-preview.shader-viewer-visualizer {
+#root .composer-viewer .composer-preview.shader-viewer-visualizer {
   flex: 1 1 auto;
   width: auto;
   min-width: 0;
@@ -29,24 +23,19 @@
   height: auto;
 }
 
-.composer .shader-properties-panel {
+#root .composer-viewer > .shader-properties-panel {
   flex: 0 0 var(--sidebar-width);
 }
 
 @media (max-width: 900px) {
-  #root .shader-viewer[data-composer="true"] {
+  #root .composer-viewer {
     display: flex;
     flex-direction: row;
     align-items: stretch;
-    grid-template-columns: none;
-    grid-template-rows: none;
   }
 
-  #root .shader-viewer[data-composer="true"] .composer-preview.shader-viewer-visualizer {
-    grid-column: auto;
-    grid-row: auto;
+  #root .composer-viewer .composer-preview.shader-viewer-visualizer {
     height: auto;
     aspect-ratio: auto;
   }
 }
-

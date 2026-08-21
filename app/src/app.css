@@ -79,12 +79,8 @@ body,
       margin-right: calc(-1 * var(--spacer-1));
     }
 
-    .app-nav-library-filters {
-      display: flex;
-      flex-direction: column;
-      gap: var(--spacer-2);
-      padding: var(--spacer-2-5);
-
+    fig-header.app-nav-library-filters {
+      padding-inline: var(--spacer-2);
       .app-nav-search {
         flex: 1 1 auto;
         width: 100%;
@@ -92,16 +88,9 @@ body,
         max-width: none;
       }
 
-      .app-nav-filter-row {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
-        gap: var(--spacer-1);
-        min-width: 0;
-      }
-
-      .app-nav-filter {
-        width: 100%;
-        min-width: 0;
+      .app-nav-library-toggles {
+        flex: 0 0 auto;
+        --hstack-gap: 0;
       }
     }
   }
@@ -132,7 +121,7 @@ body,
     }
   }
 
-  .shader-viewer {
+  :is(.shader-viewer, .composer-viewer) {
     display: flex;
     width: 100%;
     height: calc(100% - 2rem);
@@ -142,23 +131,6 @@ body,
     gap: 0;
     margin: 1rem;
     margin-left: 0;
-
-    &[data-composer="true"] {
-      display: flex;
-      flex-direction: row;
-      align-items: stretch;
-    }
-
-    .shader-viewer-sidebar {
-      width: var(--code-width);
-      min-width: 320px;
-      height: 100%;
-      margin: 0;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-    }
 
     .shader-editor-header {
       margin-bottom: var(--spacer-2);
@@ -253,225 +225,6 @@ body,
       }
     }
 
-    .shader-viewer-sidebar:is(
-        [data-code-collapsed="true"],
-        [data-chat-collapsed="true"]
-      )
-      .shader-viewer-code {
-      margin-bottom: var(--spacer-3);
-    }
-
-    .shader-viewer-code,
-    .shader-viewer-chat {
-      margin: 0;
-      padding: 0;
-      border-radius: var(--viewer-radius);
-      overflow: hidden;
-      position: relative;
-      display: flex;
-      flex-direction: column;
-      min-height: 0;
-
-      &[data-collapsed="true"] {
-        flex: 0 0 40px;
-        min-height: 40px;
-      }
-
-      &::after {
-        content: "";
-        position: absolute;
-        inset: 0;
-        pointer-events: none;
-        border-radius: var(--viewer-radius);
-        box-shadow: inset 0 0 0 1px var(--figma-color-border);
-        z-index: 4;
-      }
-
-      > fig-header {
-        flex: 0 0 auto;
-        align-items: center;
-        justify-content: space-between;
-        gap: var(--spacer-2);
-        padding-right: var(--spacer-2);
-
-        > hstack:last-child {
-          flex: 0 0 auto;
-          --hstack-gap: var(--spacer-1);
-
-          fig-button[icon][variant="ghost"] {
-            margin-right: 0;
-          }
-        }
-
-        .section-chevron {
-          transition: transform 120ms ease;
-
-          &.is-collapsed {
-            transform: rotate(-90deg);
-          }
-        }
-      }
-    }
-
-    .shader-viewer-code {
-      flex: 1 1 auto;
-      min-height: 140px;
-
-      .code-editor {
-        flex: 1 1 auto;
-        min-height: 0;
-        overflow: hidden;
-
-        > div,
-        .cm-editor {
-          height: 100%;
-        }
-
-        .code-pane {
-          display: flex;
-          flex-direction: column;
-          min-height: 0;
-        }
-
-        .code-pane-editor {
-          flex: 1 1 auto;
-          min-height: 0;
-          overflow: hidden;
-
-          > div,
-          .cm-editor {
-            height: 100%;
-          }
-        }
-
-        .cm-editor,
-        .cm-gutters {
-          background-color: transparent;
-        }
-
-        /* Column layout keeps the search panel from pushing the scroller past
-           the editor's fixed height. */
-        .cm-editor {
-          display: flex;
-          flex-direction: column;
-        }
-
-        .cm-scroller {
-          flex: 1 1 auto;
-          min-height: 0;
-          height: auto;
-          scrollbar-width: thin;
-        }
-
-        .cm-content {
-          padding-right: var(--spacer-2);
-        }
-
-        .code-error-panel {
-          flex: 0 0 auto;
-          max-height: min(10rem, 40%);
-          overflow: hidden;
-          color: var(--figma-color-text-danger);
-          background: var(--figma-color-bg-danger-tertiary);
-          border-top: 1px solid var(--figma-color-border-danger);
-        }
-
-        .code-error-header {
-          display: flex;
-          min-width: 0;
-          align-items: center;
-          gap: var(--spacer-2);
-          padding: var(--spacer-1) var(--spacer-2);
-
-          strong {
-            flex: 0 0 auto;
-          }
-
-          > fig-button.code-error-copy {
-            flex: 0 0 auto;
-            margin-left: auto;
-          }
-
-          > fig-button.code-error-toggle {
-            flex: 0 0 auto;
-          }
-        }
-
-        .code-error-chevron {
-          transition: transform 120ms ease;
-
-          &.is-collapsed {
-            transform: rotate(-90deg);
-          }
-        }
-
-        .code-error-summary {
-          min-width: 0;
-          overflow: hidden;
-          color: var(--figma-color-text-danger);
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .code-error-message {
-          max-height: 7rem;
-          margin: 0;
-          padding: var(--spacer-2) var(--spacer-3) var(--spacer-3);
-          overflow: auto;
-          color: inherit;
-          font-family: var(--font-family-monospace, ui-monospace, monospace);
-          font-size: var(--body-medium-fontSize);
-          line-height: 1.35;
-          white-space: pre-wrap;
-          overflow-wrap: anywhere;
-        }
-      }
-    }
-
-    .pane-resizer {
-      position: relative;
-      flex: 0 0 var(--spacer-3);
-      height: 100%;
-      cursor: col-resize;
-      touch-action: none;
-      outline: none;
-
-      &::after {
-        content: "";
-        position: absolute;
-        top: 0;
-        bottom: 0;
-        left: 50%;
-        width: 2px;
-        transform: translateX(-50%);
-        background: transparent;
-        transition: background-color 120ms ease;
-      }
-
-      &:hover::after,
-      &:focus-visible::after,
-      &:active::after {
-        background: var(--figma-color-border-brand-strong);
-      }
-
-      &.pane-resizer-row {
-        flex: 0 0 var(--spacer-3);
-        width: 100%;
-        height: auto;
-        cursor: row-resize;
-        z-index: 2;
-
-        &::after {
-          top: 50%;
-          bottom: auto;
-          left: 0;
-          right: 0;
-          width: auto;
-          height: 2px;
-          transform: translateY(-50%);
-        }
-      }
-    }
 
     .shader-viewer-visualizer {
       flex: 1;
@@ -876,12 +629,65 @@ body,
       }
     }
   }
+
+  .shader-viewer .shader-viewer-code,
+  .shader-viewer .shader-viewer-chat {
+    margin: 0;
+    padding: 0;
+    border-radius: var(--viewer-radius);
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+
+    &[data-collapsed="true"] {
+      flex: 0 0 40px;
+      min-height: 40px;
+    }
+
+    &::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      border-radius: var(--viewer-radius);
+      box-shadow: inset 0 0 0 1px var(--figma-color-border);
+      z-index: 4;
+    }
+
+    > fig-header {
+      flex: 0 0 auto;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--spacer-2);
+      padding-right: var(--spacer-2);
+
+      > hstack:last-child {
+        flex: 0 0 auto;
+        --hstack-gap: var(--spacer-1);
+
+        fig-button[icon][variant="ghost"] {
+          margin-right: 0;
+        }
+      }
+
+      .section-chevron {
+        transition: transform 120ms ease;
+
+        &.is-collapsed {
+          transform: rotate(-90deg);
+        }
+      }
+    }
+  }
 }
 
 
 dialog[is="fig-popup"].settings-popup {
   width: 340px;
   padding: 0;
+  pointer-events: auto;
 
   > fig-header {
     justify-content: flex-start;
@@ -891,6 +697,7 @@ dialog[is="fig-popup"].settings-popup {
 dialog[is="fig-popup"].auth-popup {
   width: 280px;
   padding: 0;
+  pointer-events: auto;
   animation: none !important;
   transition: none !important;
 
@@ -905,6 +712,8 @@ dialog[is="fig-popup"].auth-popup {
 }
 
 dialog[is="fig-popup"].publish-popup {
+  pointer-events: auto;
+
   fig-content p {
     margin: 0;
     color: var(--figma-color-text-secondary);
@@ -1141,6 +950,10 @@ dialog.delete-shader-dialog {
     flex: 0 0 auto;
   }
 
+  fig-header {
+    padding-right: var(--spacer-2);
+  }
+
   fig-content.shader-properties-panel-content {
     flex: 1;
     min-height: 0;
@@ -1176,75 +989,10 @@ dialog.delete-shader-dialog {
     color: var(--figma-color-text-secondary);
     font-size: var(--body-small-fontSize);
   }
-
-  .sharing-controls {
-    margin-top: var(--spacer-4);
-    padding-top: var(--spacer-3);
-    border-top: 1px solid var(--figma-color-border);
-  }
 }
 
 @media (max-width: 1180px) {
   :root {
     --code-width: 380px;
-  }
-}
-
-@media (max-width: 900px) {
-  #root .shader-viewer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto minmax(280px, 1fr);
-
-    .shader-viewer-visualizer {
-      grid-column: 1;
-      grid-row: 1;
-      flex: none;
-      width: 100%;
-      min-width: 0;
-      height: var(--preview-height, auto);
-      aspect-ratio: 16 / 9;
-    }
-
-    > .pane-resizer:not(.pane-resizer-row) {
-      grid-column: 1;
-      grid-row: 2;
-      width: 100%;
-      height: var(--spacer-3);
-      min-height: var(--spacer-3);
-      flex: 0 0 var(--spacer-3);
-      cursor: row-resize;
-
-      &::after {
-        top: 50%;
-        bottom: auto;
-        left: 0;
-        right: 0;
-        width: auto;
-        height: 2px;
-        transform: translateY(-50%);
-      }
-    }
-
-    .shader-viewer-sidebar {
-      grid-column: 1;
-      grid-row: 3;
-      position: relative;
-      inset: auto;
-      z-index: auto;
-      width: auto;
-      min-width: 0;
-      height: 100%;
-      min-height: 280px;
-      margin: 0;
-    }
-
-    .shader-properties-panel {
-      grid-column: 2;
-      grid-row: 1 / 4;
-      height: 100%;
-      margin-right: 0;
-      margin-left: var(--spacer-3);
-    }
   }
 }

@@ -7,12 +7,15 @@ import {
   emptyComposition,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
+  hasCompositionGraph,
   libraryKind,
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
   readComposerUiEnabled,
+  reorderCompositionEffects,
   referencedShaderKeys,
+  resolvedLibraryKind,
   unpublishedCompositionRefs,
   writeComposerUiEnabled,
 } from "./composition.js";
@@ -36,7 +39,7 @@ test("composer UI defaults off and persists only an explicit true", () => {
 
 test("empty composition defaults to an image fill", () => {
   assert.deepEqual(emptyComposition(), {
-    fill: { type: "image", shaderId: null, values: {} },
+    fill: { type: "image", shaderId: null, values: {}, enabled: true },
     effects: [],
   });
 });
@@ -54,10 +57,35 @@ test("normalizes fill types, shader keys, and effect cap", () => {
     ],
   });
   assert.equal(graph.fill.shaderId, "cloud:abc");
+  assert.equal(graph.fill.enabled, true);
   assert.equal(graph.effects[0].shaderId, "draft:one");
   assert.equal(graph.effects[0].enabled, false);
   assert.equal(graph.effects[1].id, "keep");
   assert.equal(graph.effects.length, 8);
+});
+
+test("reorders composition effects by index", () => {
+  const graph = normalizeComposition({
+    fill: { type: "image" },
+    effects: [
+      { id: "a", shaderId: "cloud:one" },
+      { id: "b", shaderId: "cloud:two" },
+      { id: "c", shaderId: "cloud:three" },
+    ],
+  });
+  const moved = reorderCompositionEffects(graph, 0, 2);
+  assert.deepEqual(
+    moved.effects.map((effect) => effect.id),
+    ["b", "c", "a"]
+  );
+  assert.deepEqual(
+    reorderCompositionEffects(graph, 1, 1).effects.map((effect) => effect.id),
+    ["a", "b", "c"]
+  );
+  assert.deepEqual(
+    reorderCompositionEffects(graph, -1, 1).effects.map((effect) => effect.id),
+    ["a", "b", "c"]
+  );
 });
 
 test("parses draft and cloud shader ids", () => {
@@ -133,6 +161,16 @@ test("playable when video fill, animated fill, or enabled animated effect", () =
   assert.equal(
     isCompositionPlayable(
       { fill: { type: "shader", shaderId: "cloud:still" }, effects: [] },
+      resolved
+    ),
+    false
+  );
+  assert.equal(
+    isCompositionPlayable(
+      {
+        fill: { type: "shader", shaderId: "cloud:sphere", enabled: false },
+        effects: [],
+      },
       resolved
     ),
     false
@@ -234,6 +272,19 @@ test("libraryKind preserves composition", () => {
   assert.equal(libraryKind("fill"), "fill");
   assert.equal(libraryKind("effect"), "effect");
   assert.equal(libraryKind("other"), "effect");
+});
+
+test("resolvedLibraryKind treats composition graphs as composers", () => {
+  assert.equal(hasCompositionGraph({}), false);
+  assert.equal(hasCompositionGraph(null), false);
+  assert.equal(hasCompositionGraph({ fill: { type: "image" } }), true);
+  assert.equal(hasCompositionGraph({ effects: [] }), true);
+  assert.equal(
+    resolvedLibraryKind({ kind: "fill", composition: emptyComposition() }),
+    "composition"
+  );
+  assert.equal(resolvedLibraryKind({ kind: "fill" }), "fill");
+  assert.equal(resolvedLibraryKind({ kind: "composition" }), "composition");
 });
 
 test("fillTypeForDroppedMedia maps image, svg, and video", () => {

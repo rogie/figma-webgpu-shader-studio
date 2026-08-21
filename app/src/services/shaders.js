@@ -58,7 +58,7 @@ export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
     await client
       .from("shaders")
       .select(
-        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
+        "id, owner_id, name, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, composition, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
       .limit(Math.max(1, Math.min(Number(limit) || LIBRARY_SHADER_LIMIT, 500)))

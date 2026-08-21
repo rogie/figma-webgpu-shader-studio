@@ -1,14 +1,15 @@
-dialog[is="fig-popup"].shader-effect-picker {
+dialog[is="fig-popup"].shader-picker {
   width: 240px;
   max-width: 240px;
   max-height: min(60vh, 32rem);
+  pointer-events: auto;
 }
 
-fig-header.shader-effect-picker-search {
+fig-header.shader-picker-search {
   padding-inline: var(--spacer-2);
 }
 
-fig-chooser.shader-effect-picker-list {
+fig-chooser.shader-picker-list {
   --fig-chooser-grid-columns: 2;
   --fig-chooser-inline-margin: var(--spacer-2);
   flex: 1 1 auto;
@@ -18,7 +19,7 @@ fig-chooser.shader-effect-picker-list {
   grid-auto-rows: max-content;
 }
 
-.shader-effect-picker-empty {
+.shader-picker-empty {
   color: var(--figma-color-text-secondary);
   font-size: var(--body-small-fontSize);
   margin: 0;
