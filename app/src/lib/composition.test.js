@@ -11,6 +11,7 @@ import {
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
+  readReferencedShader,
   reorderCompositionEffects,
   referencedShaderKeys,
   resolvedLibraryKind,
@@ -82,6 +83,44 @@ test("parses draft and cloud shader ids", () => {
     key: "cloud:abc",
   });
   assert.equal(parseCompositionShaderId(""), null);
+});
+
+test("readReferencedShader prefers the live session over a stale cache", () => {
+  const session = {
+    presetId: "cloud:fx",
+    kind: "effect",
+    source: "export const props = {}; export function setup() {}",
+    name: "Latest",
+  };
+  const liveByKey = new Map([
+    ["cloud:fx", { source: "export const props = {}; // stale" }],
+    ["draft:fx", { source: "export const props = {}; // stale draft" }],
+  ]);
+  const found = readReferencedShader("draft:fx", {
+    session,
+    drafts: [{ id: "draft:fx", source: "export const props = {}; // draft" }],
+    liveByKey,
+  });
+  assert.equal(found.source, session.source);
+});
+
+test("readReferencedShader prefers the live cache over a stale draft", () => {
+  const found = readReferencedShader("draft:fx", {
+    drafts: [{ id: "draft:fx", source: "export const props = {}; // stale draft" }],
+    liveByKey: new Map([
+      ["draft:fx", { source: "export const props = {}; // live" }],
+    ]),
+  });
+  assert.equal(found.source, "export const props = {}; // live");
+});
+
+test("readReferencedShader follows draft ids to the same cloud shader", () => {
+  const found = readReferencedShader("draft:abc", {
+    liveByKey: new Map([
+      ["cloud:abc", { source: "export function setup() {}", name: "Cloud" }],
+    ]),
+  });
+  assert.equal(found.name, "Cloud");
 });
 
 test("playable when video fill, animated fill, or enabled animated effect", () => {
@@ -214,6 +253,28 @@ test("publish requires every referenced shader to be public", () => {
         ["cloud:fill", { is_public: true }],
         ["cloud:fx", { is_public: true }],
       ])
+    ),
+    []
+  );
+});
+
+test("publish treats a shader as public if any live row is public", () => {
+  const graph = {
+    fill: { type: "shader", shaderId: "cloud:fill" },
+    effects: [{ shaderId: "draft:fx" }],
+  };
+  assert.deepEqual(
+    unpublishedCompositionRefs(
+      graph,
+      new Map([
+        ["cloud:fill", { is_public: false, name: "Fill" }],
+        ["draft:fx", { is_public: false, name: "Effect" }],
+      ]),
+      [
+        { id: "fill", is_public: false, name: "Fill" },
+        { id: "fill", is_public: true, name: "Fill" },
+        { id: "fx", is_public: true, name: "Effect" },
+      ]
     ),
     []
   );

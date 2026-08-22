@@ -63,6 +63,57 @@ export function parseCompositionShaderId(shaderId) {
   return { origin: "cloud", id: shaderId, key: `cloud:${shaderId}` };
 }
 
+export function compositionRefAliases(shaderId) {
+  const parsed = parseCompositionShaderId(shaderId);
+  if (!parsed) return [];
+  const bare = String(parsed.id || "").replace(/^(cloud:|draft:)/, "");
+  return [
+    ...new Set(
+      [
+        shaderId,
+        parsed.key,
+        parsed.id,
+        bare,
+        bare ? `cloud:${bare}` : null,
+        bare ? `draft:${bare}` : null,
+      ].filter(Boolean)
+    ),
+  ];
+}
+
+// Compositions store ids only. Resolve the live shader, never a copied snapshot.
+export function readReferencedShader(
+  shaderId,
+  { session = null, drafts = [], liveByKey = null } = {}
+) {
+  const aliases = compositionRefAliases(shaderId);
+  if (
+    session?.source &&
+    session.kind &&
+    session.kind !== COMPOSITION_KIND
+  ) {
+    const sessionIds = [
+      session.presetId,
+      session.id,
+      session.key,
+    ].filter(Boolean);
+    if (
+      sessionIds.some((id) =>
+        compositionRefAliases(id).some((alias) => aliases.includes(alias))
+      )
+    ) {
+      return session;
+    }
+  }
+  for (const alias of aliases) {
+    const live = storeGet(liveByKey, alias);
+    if (live?.source) return live;
+  }
+  const draft = (drafts || []).find((item) => aliases.includes(item.id));
+  if (draft?.source) return draft;
+  return null;
+}
+
 function normalizeFill(fill) {
   const type = FILL_TYPES.includes(fill?.type) ? fill.type : "image";
   const parsed = parseCompositionShaderId(fill?.shaderId);
@@ -312,7 +363,13 @@ function liveCloudId(shaderId) {
 function cloudShaderById(liveCloudShaders, id) {
   if (!id) return null;
   if (liveCloudShaders instanceof Map) return liveCloudShaders.get(id) || null;
-  return (liveCloudShaders || []).find((row) => row.id === id) || null;
+  let match = null;
+  for (const row of liveCloudShaders || []) {
+    if (row?.id !== id) continue;
+    if (row.is_public === true) return row;
+    match = row;
+  }
+  return match;
 }
 
 export function promoteCompositionRefs(graph, liveCloudShaders = []) {
@@ -345,12 +402,22 @@ export function unpublishedCompositionRefs(
   return referencedShaderKeys(graph).filter((key) => {
     const cloudId = liveCloudId(key);
     const live = cloudShaderById(liveCloudShaders, cloudId);
-    if (live) return live.is_public === false;
-    const resolved =
-      resolvedByKey.get(key) ||
-      (cloudId ? resolvedByKey.get(`cloud:${cloudId}`) : null);
-    if (!resolved) return true;
-    return resolved.is_public === false;
+    const resolved = resolvedCompositionEntry(resolvedByKey, key);
+    if (live?.is_public === true || resolved?.is_public === true) return false;
+    if (!live && !resolved) return true;
+    return live?.is_public === false || resolved?.is_public === false;
+  });
+}
+
+export function unpublishedCompositionLabels(
+  keys,
+  resolvedByKey = new Map(),
+  liveCloudShaders = [],
+) {
+  return (keys || []).map((key) => {
+    const resolved = resolvedCompositionEntry(resolvedByKey, key);
+    const live = cloudShaderById(liveCloudShaders, liveCloudId(key));
+    return resolved?.name || live?.name || key;
   });
 }
 

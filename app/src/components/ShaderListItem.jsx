@@ -10,6 +10,7 @@ function ShaderListItem({
   sublabel,
   layout = "list",
   showPreview = true,
+  published = false,
   figmaLinked = false,
   actions,
 }) {
@@ -51,10 +52,19 @@ function ShaderListItem({
           <span className="shader-list-item-sublabel">{sublabel}</span>
         )}
       </div>
-      {figmaLinked && (
-        <fig-tooltip text="Figma shader">
-          <FigmaIcon class="shader-list-item-figma" />
-        </fig-tooltip>
+      {(published || figmaLinked) && (
+        <div className="shader-list-item-status">
+          {figmaLinked && (
+            <fig-tooltip text="Figma shader">
+              <FigmaIcon size="small" color="tertiary" />
+            </fig-tooltip>
+          )}
+          {published && (
+            <fig-tooltip text="Published">
+              <fig-icon name="globe" size="small" color="tertiary" />
+            </fig-tooltip>
+          )}
+        </div>
       )}
       {actions ? (
         <div className="shader-list-item-actions">{actions}</div>

@@ -22,6 +22,7 @@ import ListViewIcon from "./components/ListViewIcon.jsx";
 import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
 import PreviewFps from "./components/PreviewFps.jsx";
+import ShaderActionsMenu from "./components/ShaderActionsMenu.jsx";
 import ShaderList from "./components/ShaderList.jsx";
 import ShaderNavCard from "./components/ShaderNavCard.jsx";
 import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
@@ -139,7 +140,9 @@ import {
   mediaFillType,
   normalizeComposition,
   parseCompositionShaderId,
+  readReferencedShader,
   referencedShaderKeys,
+  unpublishedCompositionLabels,
   unpublishedCompositionRefs,
   promoteCompositionRefs,
   serializeCompositionExport,
@@ -575,6 +578,7 @@ export default function App() {
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
   const liveShaderSourceRef = useRef(new Map());
+  const [liveShaderRevision, setLiveShaderRevision] = useState(0);
   const previewParamsRafRef = useRef(0);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
@@ -1086,13 +1090,19 @@ export default function App() {
         Boolean
       )
     );
+    const previous = entry.key
+      ? liveShaderSourceRef.current.get(entry.key)
+      : null;
     for (const key of keys) liveShaderSourceRef.current.set(key, entry);
+    if (previous?.source !== entry.source) {
+      setLiveShaderRevision((revision) => revision + 1);
+    }
   }, []);
 
   const hydrateCompositionRefs = useCallback(
     async (graph) => {
       const keys = referencedShaderKeys(graph);
-      const latest = { ...resolvedShaders };
+      const latest = {};
       const found = [];
       const cloudIds = [];
       const draftAliases = new Map();
@@ -1100,12 +1110,16 @@ export default function App() {
         if (!row?.key) return;
         found.push(row);
         latest[row.key] = row;
-        if (aliasKey && aliasKey !== row.key) latest[aliasKey] = row;
+        if (aliasKey && aliasKey !== row.key) {
+          const aliased = { ...row, key: aliasKey };
+          found.push(aliased);
+          latest[aliasKey] = aliased;
+        }
       };
       const rowFromLive = (key, live, id, isPublic) => ({
         key,
-        id: id || live.id || key,
-        name: live.name,
+        id: id || live.id || live.presetId || key,
+        name: live.name || live.shaderName,
         kind: live.kind || "effect",
         source: live.source,
         is_public: isPublic,
@@ -1126,10 +1140,11 @@ export default function App() {
         if (parsed.origin === "draft" && cloudKey) {
           draftAliases.set(cloudKey, key);
         }
-        const live =
-          liveShaderSourceRef.current.get(key) ||
-          (cloudKey && liveShaderSourceRef.current.get(cloudKey)) ||
-          (cloudId && liveShaderSourceRef.current.get(cloudId));
+        const live = readReferencedShader(key, {
+          session: draftSessionRef.current,
+          drafts,
+          liveByKey: liveShaderSourceRef.current,
+        });
         const liveCloud = cloudId
           ? cloudShaders.find((item) => item.id === cloudId)
           : null;
@@ -1138,22 +1153,12 @@ export default function App() {
             rowFromLive(
               cloudKey || key,
               live,
-              cloudId,
-              liveCloud?.is_public ?? live.is_public
+              cloudId || live.id,
+              liveCloud?.is_public ?? live.is_public ?? live.isPublic
             ),
             key
           );
           continue;
-        }
-        if (parsed.origin === "draft") {
-          const draft = drafts.find((item) => item.id === parsed.id);
-          if (draft && !liveCloud) {
-            store(
-              rowFromLive(key, draft, draft.id, false),
-              null
-            );
-            continue;
-          }
         }
         if (cloudId) cloudIds.push(cloudId);
       }
@@ -1164,9 +1169,11 @@ export default function App() {
           const byId = new Map(rows.map((row) => [row.id, row]));
           for (const id of cloudIds) {
             const key = `cloud:${id}`;
-            const live =
-              liveShaderSourceRef.current.get(key) ||
-              liveShaderSourceRef.current.get(id);
+            const live = readReferencedShader(key, {
+              session: draftSessionRef.current,
+              drafts,
+              liveByKey: liveShaderSourceRef.current,
+            });
             const row = byId.get(id);
             const source = live?.source || row?.source;
             const next =
@@ -1182,7 +1189,7 @@ export default function App() {
                 : {
                     key,
                     id,
-                    name: live?.name || row.name,
+                    name: live?.name || live?.shaderName || row.name,
                     kind: row.kind,
                     source,
                     is_public: row.is_public,
@@ -1210,7 +1217,7 @@ export default function App() {
       rememberResolved(found);
       return latest;
     },
-    [cloudShaders, drafts, rememberResolved, resolvedShaders]
+    [cloudShaders, drafts, rememberResolved]
   );
 
   const compileComposition = useCallback(
@@ -1315,7 +1322,7 @@ export default function App() {
   const compile = useCallback(
     (nextSource) => {
       if (sessionKindRef.current === COMPOSITION_KIND) {
-        compileCompositionRef.current?.(nextSource);
+        compileCompositionRef.current?.();
         return;
       }
       const host = hostRef.current;
@@ -1882,6 +1889,7 @@ export default function App() {
     composition && sessionKind === COMPOSITION_KIND
       ? compositionStructureKey(composition)
       : "",
+    sessionKind === COMPOSITION_KIND ? liveShaderRevision : 0,
     presetId,
     runtimeReady,
   ]);
@@ -3059,11 +3067,12 @@ export default function App() {
         return null;
       }
       const makePublic = options.makePublic === true;
+      const makePrivate = options.makePrivate === true;
       const background = options.background === true;
       const checkpointKind =
         options.checkpointKind ||
         (!background ? (makePublic ? "publish" : "manual") : null);
-      const publicFlag = makePublic || isPublic;
+      const publicFlag = makePrivate ? false : makePublic || isPublic;
       const saveTargetId = presetId;
       const saveSource =
         typeof options.sourceOverride === "string"
@@ -3139,8 +3148,13 @@ export default function App() {
             );
           }
           if (unpublished.length) {
+            const names = unpublishedCompositionLabels(
+              unpublished,
+              new Map(Object.entries(resolvedShaders)),
+              [...cloudShaders, ...fresh]
+            );
             throw new Error(
-              "Publish every referenced fill and effect before publishing this composition."
+              `Publish every referenced fill and effect before publishing this composition (${names.join(", ")}).`
             );
           }
         }
@@ -3304,6 +3318,7 @@ export default function App() {
         }
 
         if (makePublic) setIsPublic(true);
+        else if (makePrivate) setIsPublic(false);
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
         setShaderRoute(saved.id, saved.kind);
@@ -3754,6 +3769,25 @@ export default function App() {
       showNotice(message, { error: true });
     }
   }, [saveShader, saving, showNotice, user]);
+
+  const unpublishShader = useCallback(async () => {
+    if (!user) {
+      setAuthOpen(true);
+      return;
+    }
+    if (!isOwner || saving) return;
+    try {
+      const saved = await saveShader({
+        makePrivate: true,
+        notice: "Shader unpublished",
+      });
+      if (!saved) return;
+    } catch (unpublishError) {
+      const message = formatSupabaseError(unpublishError, "Unpublish failed.");
+      setError(message);
+      showNotice(message, { error: true });
+    }
+  }, [isOwner, saveShader, saving, showNotice, user]);
 
   const duplicateShader = useCallback(async () => {
     if (duplicating) return;
@@ -4524,7 +4558,7 @@ export default function App() {
                 onChange={onCompositionChange}
                 onSelectLayer={onCompositionSelectLayer}
                 onPropertiesLayerChange={setCompositionPropsLayerId}
-                onOpenShader={(shaderId) => chooseItem(shaderId)}
+                onOpenShader={openHomeChoice}
                 onResetLayer={resetProperties}
                 onMediaFill={(type) => {
                   applyInputSource(type)
@@ -4703,7 +4737,7 @@ export default function App() {
     else if (value === "composition") createCompositionDraft();
     else if (value === "from-figma") setFigmaImportOpen(true);
   });
-  const moreMenuRef = useFigMenuChange((value) => {
+  const onShaderAction = useCallback((value) => {
     if (value === "rename") startRename();
     else if (value === "save") {
       if (saving || restoringVersion) return;
@@ -4713,6 +4747,9 @@ export default function App() {
       if (!user || saving) return;
       publishAnchorRef.current = moreMenuAnchorRef.current;
       setPublishOpen(true);
+    } else if (value === "unpublish") {
+      if (!isOwner || saving) return;
+      unpublishShader().catch(() => {});
     } else if (value === "duplicate") duplicateShader();
     else if (value === "share") copyShareLink();
     else if (value === "delete") {
@@ -4722,7 +4759,23 @@ export default function App() {
       if (kind === COMPOSITION_KIND) return;
       exportFiles();
     }
-  });
+  }, [
+    copyShareLink,
+    currentShader,
+    dirty,
+    duplicateShader,
+    exportFiles,
+    hasUncheckpointedChanges,
+    isOwner,
+    kind,
+    removeCurrentShader,
+    restoringVersion,
+    saveShader,
+    saving,
+    startRename,
+    unpublishShader,
+    user,
+  ]);
   const zoomMenuRef = useFigMenuChange((value) => {
     const percent = Number(value);
     if (!Number.isFinite(percent)) return;
@@ -4833,78 +4886,30 @@ export default function App() {
                     {duplicating ? "Duplicating…" : "Duplicate"}
                   </fig-button>
                 ) : (
-                  <fig-menu
-                    ref={moreMenuRef}
-                    key={user ? "signed-in" : "signed-out"}
-                    position="bottom right"
-                  >
-                    <fig-tooltip text="More">
-                      <fig-button
-                        ref={moreMenuAnchorRef}
-                        fig-menu-trigger=""
-                        variant="ghost"
-                        icon="true"
-                        aria-label="More shader actions"
-                      >
-                        <fig-icon name="more" />
-                      </fig-button>
-                    </fig-tooltip>
-                    <fig-menu-item value="rename">
-                      Rename
-                    </fig-menu-item>
-                    <fig-menu-item
-                      value="save"
-                      disabled={
-                        saving ||
-                        restoringVersion ||
-                        Boolean(
-                          currentShader && !dirty && !hasUncheckpointedChanges
-                        )
-                      }
-                    >
-                      {saving
+                  <ShaderActionsMenu
+                    signedIn={Boolean(user)}
+                    owner={isOwner}
+                    published={Boolean(currentShader?.is_public)}
+                    saving={saving}
+                    saveDisabled={
+                      saving ||
+                      restoringVersion ||
+                      Boolean(
+                        currentShader && !dirty && !hasUncheckpointedChanges
+                      )
+                    }
+                    saveLabel={
+                      saving
                         ? "Saving…"
                         : currentShader && isOwner
                           ? "Save version"
-                          : "Save"}
-                    </fig-menu-item>
-                    {user && (
-                      <fig-menu-item
-                        value="publish"
-                        disabled={saving}
-                      >
-                        Publish…
-                      </fig-menu-item>
-                    )}
-                    {isOwner && (
-                      <fig-menu-item value="delete">
-                        Delete
-                      </fig-menu-item>
-                    )}
-                    <fig-separator />
-                    <fig-menu-item value="duplicate">
-                      Duplicate
-                    </fig-menu-item>
-                    <fig-menu-item value="share">
-                      Copy link
-                    </fig-menu-item>
-                    <fig-separator />
-                    <fig-menu-item
-                      value="export"
-                      hidden={isComposerView ? "" : undefined}
-                    >
-                      Download
-                    </fig-menu-item>
-                    {FIGMA_LIBRARY_UI_ENABLED && (
-                      <fig-menu-item
-                        value="push-figma"
-                        disabled=""
-                        title="Figma has not shipped create/update for the custom shader library yet."
-                      >
-                        Push to Figma (soon)
-                      </fig-menu-item>
-                    )}
-                  </fig-menu>
+                          : "Save"
+                    }
+                    showDownload={!isComposerView}
+                    showFigmaPush={FIGMA_LIBRARY_UI_ENABLED}
+                    triggerRef={moreMenuAnchorRef}
+                    onAction={onShaderAction}
+                  />
                 )}
               </hstack>
             )}
@@ -5763,12 +5768,17 @@ export default function App() {
         onCancel={() => setPublishOpen(false)}
       >
         <fig-header>
-          <h3>Publish to community</h3>
+          <h3>
+            {currentShader?.is_public
+              ? "Publish update"
+              : "Publish to community"}
+          </h3>
         </fig-header>
         <fig-content padding>
           <p>
-            Share this shader so others can open it, remix the source, and use
-            the same input. Anyone with the link will be able to view it.
+            {currentShader?.is_public
+              ? "Update the public copy with your latest source, properties, and input. Anyone with the link will see the new version."
+              : "Share this shader so others can open it, remix the source, and use the same input. Anyone with the link will be able to view it."}
           </p>
         </fig-content>
         <fig-footer>
@@ -5787,7 +5797,7 @@ export default function App() {
               publishShader().catch(() => {});
             }}
           >
-            Publish
+            {currentShader?.is_public ? "Publish update" : "Publish"}
           </fig-button>
         </fig-footer>
       </dialog>

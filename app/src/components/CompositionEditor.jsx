@@ -137,6 +137,7 @@ export default function CompositionEditor({
   onChange,
   onSelectLayer,
   onPropertiesLayerChange,
+  onOpenShader,
   onResetLayer,
   onMediaFill,
   onImageFill,
@@ -407,6 +408,15 @@ export default function CompositionEditor({
           : "Effect properties"
       )
     : "Properties";
+  const propertiesNoun =
+    propertiesLayerId === COMPOSITION_FILL_ID ? "fill" : "effect";
+  const propertiesShaderId =
+    propertiesLayerId === COMPOSITION_FILL_ID
+      ? normalized.fill.type === "shader"
+        ? normalized.fill.shaderId
+        : null
+      : normalized.effects.find((effect) => effect.id === propertiesLayerId)
+          ?.shaderId ?? null;
 
   return (
     <div className="composition-editor">
@@ -565,6 +575,36 @@ export default function CompositionEditor({
           <fig-header>
             <h3>{propertiesTitle}</h3>
             <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
+              {propertiesShaderId && (
+                <fig-tooltip text={`Open ${propertiesNoun}`}>
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label={`Open ${propertiesNoun}`}
+                    onClick={() => onOpenShader?.(propertiesShaderId)}
+                  >
+                    <fig-icon>
+                      <svg
+                        width="24"
+                        height="24"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        xmlns="http://www.w3.org/2000/svg"
+                        aria-hidden="true"
+                      >
+                        <path
+                          fillRule="evenodd"
+                          clipRule="evenodd"
+                          d="M13.5 6C13.2239 6 13 6.22386 13 6.5C13 6.77614 13.2239 7 13.5 7H16.2929L11.6465 11.6464C11.4512 11.8417 11.4512 12.1583 11.6465 12.3536C11.8418 12.5488 12.1583 12.5488 12.3536 12.3536L17 7.70711V10.5C17 10.7761 17.2239 11 17.5 11C17.7762 11 18 10.7761 18 10.5V7C18 6.44772 17.5523 6 17 6H13.5ZM10.8536 7.14645C11.0489 7.34171 11.0489 7.65829 10.8536 7.85355L6.70715 12L12 17.2929L16.1465 13.1464C16.3418 12.9512 16.6583 12.9512 16.8536 13.1464C17.0489 13.3417 17.0489 13.6583 16.8536 13.8536L12.7072 18C12.3166 18.3905 11.6835 18.3905 11.2929 18L6.00005 12.7071C5.60952 12.3166 5.60952 11.6834 6.00005 11.2929L10.1465 7.14645C10.3418 6.95118 10.6583 6.95118 10.8536 7.14645Z"
+                          fill="currentColor"
+                          fillOpacity="0.9"
+                        />
+                      </svg>
+                    </fig-icon>
+                  </fig-button>
+                </fig-tooltip>
+              )}
               {!readOnly && (
                 <fig-tooltip text="Reset properties">
                   <fig-button
