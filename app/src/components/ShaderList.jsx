@@ -66,6 +66,7 @@ const ShaderList = forwardRef(function ShaderList(
             sublabel={card.description}
             layout={layout}
             showPreview={showPreview}
+            selected={card.key === value}
             published={card.origin === "public"}
             figmaLinked={Boolean(card.figmaLinked)}
             actions={renderActions?.(card)}

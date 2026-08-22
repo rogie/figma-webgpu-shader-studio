@@ -20,6 +20,7 @@ fig-chooser.shader-list {
     align-self: start;
     align-items: stretch;
     --fig-choice-border-radius: var(--radius-large);
+    --fig-choice-selection-ring-width: 0;
     margin: 0 var(--spacer-2);
     width: calc(100% - var(--spacer-2) * 2);
 
@@ -68,8 +69,13 @@ fig-chooser.shader-list {
       width: auto;
       --fig-choice-border-radius: var(--radius-medium);
 
-      &[selected] {
-        background-color: transparent;
+      fig-card fig-preview {
+        --fig-preview-background: transparent;
+      }
+
+      fig-card[selected]:not([selected="false"])
+        > :is(fig-image, fig-media, fig-preview) {
+        outline: none;
       }
     }
   }
