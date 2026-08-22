@@ -31,12 +31,6 @@
       flex-direction: column;
       gap: var(--spacer-2);
       scrollbar-width: thin;
-      mask-image: linear-gradient(to bottom, transparent, black var(--spacer-5));
-      -webkit-mask-image: linear-gradient(
-        to bottom,
-        transparent,
-        black var(--spacer-5)
-      );
     }
 
     .chat-empty {

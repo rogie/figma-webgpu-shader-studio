@@ -5,6 +5,7 @@ import {
   buildShaderLibraryCards,
   filterShaderLibraryCards,
   figmaLibraryKey,
+  nextLibraryCardKey,
   parseFigmaLibraryKey,
 } from "./shaderLibrary.js";
 
@@ -219,6 +220,26 @@ test("preserves composition kind on library cards", () => {
     cards[1],
     cards[2],
   ]);
+});
+
+test("nextLibraryCardKey prefers the following selectable card", () => {
+  const cards = [
+    { key: "separator:effect", separatorLabel: "Shader effects" },
+    { key: "cloud:a" },
+    { key: "cloud:b" },
+    { key: "cloud:c" },
+  ];
+  assert.equal(nextLibraryCardKey(cards, "cloud:a"), "cloud:b");
+  assert.equal(nextLibraryCardKey(cards, "cloud:b"), "cloud:c");
+  assert.equal(nextLibraryCardKey(cards, "cloud:c"), "cloud:b");
+});
+
+test("nextLibraryCardKey falls back to the first card when the list is empty of the deleted key", () => {
+  assert.equal(
+    nextLibraryCardKey([{ key: "cloud:keep" }], "cloud:gone"),
+    "cloud:keep"
+  );
+  assert.equal(nextLibraryCardKey([], "cloud:gone"), null);
 });
 
 test("filters published shaders by author", () => {

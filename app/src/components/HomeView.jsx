@@ -1,11 +1,8 @@
 import { useEffect, useRef } from "react";
 import AccountMenu from "./AccountMenu.jsx";
+import LibraryFilterMenu from "./LibraryFilterMenu.jsx";
 
 const opaqueContent = { __html: "" };
-
-function filterValue(event) {
-  return String(event.detail ?? event.target.value ?? "all") || "all";
-}
 
 export default function HomeView({
   query,
@@ -30,9 +27,6 @@ export default function HomeView({
   onProfileChange,
 }) {
   const chooserRef = useRef(null);
-  const kindRef = useRef(null);
-  const originRef = useRef(null);
-  const authorRef = useRef(null);
 
   useEffect(() => {
     const node = chooserRef.current;
@@ -43,23 +37,6 @@ export default function HomeView({
     node.addEventListener("change", handleChange);
     return () => node.removeEventListener("change", handleChange);
   }, [onChoice]);
-
-  useEffect(() => {
-    const kindControl = kindRef.current;
-    const originControl = originRef.current;
-    const authorControl = authorRef.current;
-    const onKind = (event) => onKindChange?.(filterValue(event));
-    const onOrigin = (event) => onOriginChange?.(filterValue(event));
-    const onAuthor = (event) => onAuthorChange?.(filterValue(event));
-    kindControl?.addEventListener("change", onKind);
-    originControl?.addEventListener("change", onOrigin);
-    authorControl?.addEventListener("change", onAuthor);
-    return () => {
-      kindControl?.removeEventListener("change", onKind);
-      originControl?.removeEventListener("change", onOrigin);
-      authorControl?.removeEventListener("change", onAuthor);
-    };
-  }, [onAuthorChange, onKindChange, onOriginChange]);
 
   return (
     <nav className="home-nav">
@@ -76,42 +53,14 @@ export default function HomeView({
               onInput={(event) => onQueryChange(event.target.value)}
               dangerouslySetInnerHTML={opaqueContent}
             />
-            <fig-select
-              ref={kindRef}
-              class="app-nav-filter"
-              aria-label="Filter by kind"
-              value={kind}
-              options={JSON.stringify([
-                { value: "all", label: "All types" },
-                { value: "effect", label: "Shader effects" },
-                { value: "fill", label: "Shader fills" },
-                { value: "composition", label: "Compositions" },
-              ])}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-            <fig-select
-              ref={originRef}
-              class="app-nav-filter"
-              aria-label="Filter by source"
-              value={origin}
-              options={JSON.stringify([
-                { value: "all", label: "All sources" },
-                { value: "draft", label: "Drafts" },
-                { value: "public", label: "Published" },
-              ])}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-            <fig-select
-              ref={authorRef}
-              class="app-nav-filter"
-              aria-label="Filter by author"
-              value={author}
-              options={JSON.stringify([
-                { value: "all", label: "All authors" },
-                ...publishedAuthors,
-              ])}
-              disabled={publishedAuthors.length ? undefined : ""}
-              dangerouslySetInnerHTML={opaqueContent}
+            <LibraryFilterMenu
+              kind={kind}
+              onKindChange={onKindChange}
+              author={author}
+              onAuthorChange={onAuthorChange}
+              origin={origin}
+              onOriginChange={onOriginChange}
+              authors={publishedAuthors}
             />
           </div>
           <hstack class="app-nav-header-actions">

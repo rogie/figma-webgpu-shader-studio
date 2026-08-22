@@ -44,6 +44,8 @@ export default function AccountMenu({
   settingsOpen = false,
   onSettingsOpenChange,
   onProfileChange,
+  position = "bottom right",
+  layout = "compact",
 }) {
   const {
     user,
@@ -295,19 +297,18 @@ export default function AccountMenu({
     setFigmaTestMessage("Figma disconnected from this device.");
   };
 
+  const accountName =
+    displayName ||
+    accountDisplayName(user) ||
+    user?.email ||
+    "Account";
+
   return (
     <>
-      <fig-menu ref={accountMenuRef} position="bottom right">
-        <fig-tooltip text={user ? user.email || "Account" : "Settings"}>
-          <fig-button
-            ref={settingsAnchorRef}
-            fig-menu-trigger=""
-            variant="ghost"
-            icon="true"
-            aria-label={user ? "Account" : "Settings"}
-            disabled={!user && loading ? "" : undefined}
-          >
-            {user ? (
+      {layout === "bar" ? (
+        <div className="app-nav-account">
+          {user ? (
+            <>
               <fig-avatar
                 class="account-avatar"
                 src={
@@ -315,15 +316,45 @@ export default function AccountMenu({
                   user.user_metadata?.picture ||
                   ""
                 }
-                name={
-                  displayName ||
-                  accountDisplayName(user) ||
-                  user.email ||
-                  "Account"
-                }
+                name={accountName}
               />
-            ) : (
+              <fig-truncate>{accountName}</fig-truncate>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      <fig-menu ref={accountMenuRef} position={position}>
+        <fig-tooltip
+          text={
+            layout === "bar"
+              ? "Settings"
+              : user
+                ? user.email || "Account"
+                : "Settings"
+          }
+        >
+          <fig-button
+            ref={settingsAnchorRef}
+            fig-menu-trigger=""
+            variant="ghost"
+            icon="true"
+            aria-label={
+              layout === "bar" ? "Settings" : user ? "Account" : "Settings"
+            }
+            disabled={!user && loading ? "" : undefined}
+          >
+            {layout === "bar" || !user ? (
               <fig-icon name="settings" />
+            ) : (
+              <fig-avatar
+                class="account-avatar"
+                src={
+                  user.user_metadata?.avatar_url ||
+                  user.user_metadata?.picture ||
+                  ""
+                }
+                name={accountName}
+              />
             )}
           </fig-button>
         </fig-tooltip>
@@ -351,7 +382,7 @@ export default function AccountMenu({
         is="fig-popup"
         ref={authPopupRef}
         class="auth-popup"
-        position="bottom right"
+        position={position}
         offset="8 0"
         variant="popover"
         theme="menu"
@@ -396,10 +427,9 @@ export default function AccountMenu({
         is="fig-popup"
         ref={settingsDialogRef}
         class="settings-popup"
-        position="bottom right"
+        position={position}
         offset="8 0"
         variant="popover"
-        theme="menu"
         popover="manual"
         closedby="any"
         onClose={() => setSettingsOpen(false)}

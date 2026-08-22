@@ -1,0 +1,34 @@
+.overflow-fade[data-overflow-top] {
+  mask-image: linear-gradient(to bottom, transparent, black var(--spacer-5));
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--spacer-5)
+  );
+}
+
+.overflow-fade[data-overflow-bottom] {
+  mask-image: linear-gradient(to top, transparent, black var(--spacer-5));
+  -webkit-mask-image: linear-gradient(
+    to top,
+    transparent,
+    black var(--spacer-5)
+  );
+}
+
+.overflow-fade[data-overflow-top][data-overflow-bottom] {
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--spacer-5),
+    black calc(100% - var(--spacer-5)),
+    transparent
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    black var(--spacer-5),
+    black calc(100% - var(--spacer-5)),
+    transparent
+  );
+}

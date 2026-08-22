@@ -1,5 +1,4 @@
 import { memo } from "react";
-import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import FigmaIcon from "./FigmaIcon.jsx";
 import "./ShaderListItem.css";
 
@@ -13,52 +12,24 @@ function ShaderListItem({
   showPreview = true,
   figmaLinked = false,
   actions,
-  onPublish,
-  onDelete,
 }) {
-  const menuRef = useFigMenuChange((value, menu) => {
-    if (value === "publish") {
-      onPublish?.(menu.closest("fig-choice"));
-      return;
-    }
-    if (value === "delete") onDelete?.();
-  });
-
-  const menu = (actions || onDelete) && (
-    <div className="shader-list-item-actions">
-      {actions}
-      {onDelete && (
-        <fig-menu
-          ref={menuRef}
-          class="shader-list-item-menu"
-          position="bottom right"
-        >
-          <fig-button
-            fig-menu-trigger=""
-            variant="ghost"
-            icon="true"
-            aria-label={`More actions for ${label}`}
-          >
-            <fig-icon name="more" />
-          </fig-button>
-          <fig-menu-item value="publish">
-            Publish
-          </fig-menu-item>
-          <fig-separator />
-          <fig-menu-item value="delete">Delete</fig-menu-item>
-        </fig-menu>
-      )}
-    </div>
-  );
-
   if (layout === "grid") {
+    const previewSrc = showPreview && src ? src : undefined;
+    if (previewSrc) {
+      return (
+        <fig-card
+          src={previewSrc}
+          label={label}
+          alt={label}
+          aspect-ratio="1/1"
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      );
+    }
     return (
-      <fig-card
-        src={showPreview ? src || undefined : undefined}
-        label={label}
-        alt={label}
-        dangerouslySetInnerHTML={opaqueContent}
-      />
+      <fig-card label={label} alt={label} aspect-ratio="1/1">
+        <fig-preview aspect-ratio="1/1" />
+      </fig-card>
     );
   }
 
@@ -85,7 +56,9 @@ function ShaderListItem({
           <FigmaIcon class="shader-list-item-figma" />
         </fig-tooltip>
       )}
-      {menu}
+      {actions ? (
+        <div className="shader-list-item-actions">{actions}</div>
+      ) : null}
     </div>
   );
 }

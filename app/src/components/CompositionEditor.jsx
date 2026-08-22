@@ -8,6 +8,8 @@ import {
 } from "../lib/composition.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
+import { useOverflowFade } from "../hooks/useOverflowFade.js";
+import { syncOverflowFade } from "../lib/overflowFade.js";
 import ShaderPicker, {
   SHADER_PICKER_ANCHOR_IDS,
   SHADER_PICKER_TRIGGER_IDS,
@@ -53,7 +55,7 @@ function PropertiesLayerRow({
         {control || (
           <fig-button
             type="button"
-            variant="secondary"
+            variant={expanded ? "ghost" : "secondary"}
             full=""
             aria-haspopup="dialog"
             aria-expanded={expanded ? "true" : "false"}
@@ -140,6 +142,8 @@ export default function CompositionEditor({
   onImageFill,
 }) {
   const propertiesPopupRef = useRef(null);
+  const propertiesContentRef = useRef(null);
+  const propertiesContentFadeRef = useOverflowFade(propertiesContentRef);
   const effectsReorderRef = useRef(null);
   const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
@@ -261,6 +265,10 @@ export default function CompositionEditor({
       popup.removeEventListener("close", onClose);
     };
   }, [propertiesLayerEnabled, propertiesLayerId]);
+
+  useEffect(() => {
+    syncOverflowFade(propertiesContentRef.current);
+  }, [layerControls, openPropertiesLayerId]);
 
   const effectPickerDisabled =
     readOnly || normalized.effects.length >= MAX_COMPOSITION_EFFECTS;
@@ -556,7 +564,7 @@ export default function CompositionEditor({
         >
           <fig-header>
             <h3>{propertiesTitle}</h3>
-            <hstack>
+            <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
               {!readOnly && (
                 <fig-tooltip text="Reset properties">
                   <fig-button
@@ -583,7 +591,10 @@ export default function CompositionEditor({
               </fig-tooltip>
             </hstack>
           </fig-header>
-          <fig-content class="composition-layer-props-content">
+          <fig-content
+            ref={propertiesContentFadeRef}
+            class="composition-layer-props-content"
+          >
             {layerControls}
           </fig-content>
         </dialog>

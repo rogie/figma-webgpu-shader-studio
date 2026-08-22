@@ -56,12 +56,6 @@
     white-space: pre;
     scrollbar-width: thin;
     scrollbar-color: var(--figma-color-border) transparent;
-    mask-image: linear-gradient(to bottom, transparent, black var(--spacer-5));
-    -webkit-mask-image: linear-gradient(
-      to bottom,
-      transparent,
-      black var(--spacer-5)
-    );
 
     &::-webkit-scrollbar {
       width: 6px;

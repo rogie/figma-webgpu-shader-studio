@@ -79,6 +79,7 @@ import {
   buildShaderLibraryCards,
   figmaLibraryKey,
   filterShaderLibraryCards,
+  nextLibraryCardKey,
 } from "./lib/shaderLibrary.js";
 import {
   formatSupabaseError,
@@ -541,6 +542,8 @@ export default function App() {
   const videoFrameRateRef = useRef(null);
   const videoBitrateRef = useRef(null);
   const deleteDialogRef = useRef(null);
+  const editorCardsRef = useRef([]);
+  const chooseItemRef = useRef(() => {});
   const figmaImportDialogRef = useRef(null);
   const figmaImportChooserRef = useRef(null);
   const figmaImportKindRef = useRef(null);
@@ -2555,6 +2558,21 @@ export default function App() {
     [activateShaderSession, routeId, setShaderRoute],
   );
 
+  const selectAfterLibraryDelete = useCallback(
+    (deletedKey) => {
+      if (draftSessionRef.current.presetId !== deletedKey) return;
+      const nextKey = nextLibraryCardKey(editorCardsRef.current, deletedKey);
+      if (nextKey) {
+        chooseItemRef.current(nextKey);
+        return;
+      }
+      choosePreset("dither", { syncUrl: Boolean(routeId) }).catch(
+        (presetError) => setError(presetError.message || String(presetError))
+      );
+    },
+    [choosePreset, routeId]
+  );
+
   const removeDraft = useCallback(
     (draft) => {
       setDrafts((current) => current.filter((item) => item.id !== draft.id));
@@ -2566,13 +2584,9 @@ export default function App() {
         return next;
       });
       delete thumbnailDataUrlsRef.current[draft.id];
-      if (presetId === draft.id) {
-        choosePreset("dither", { syncUrl: Boolean(routeId) }).catch(
-          (presetError) => setError(presetError.message || String(presetError))
-        );
-      }
+      selectAfterLibraryDelete(draft.id);
     },
-    [choosePreset, presetId, routeId]
+    [selectAfterLibraryDelete]
   );
 
   const openRouteId = useCallback(
@@ -2664,6 +2678,7 @@ export default function App() {
       openRouteId,
     ]
   );
+  chooseItemRef.current = chooseItem;
 
   const openHomeChoice = useCallback(
     (id) => {
@@ -2683,29 +2698,6 @@ export default function App() {
       chooseItem(id);
     },
     [chooseItem, cloudShaders, drafts]
-  );
-
-  const openPublishForCard = useCallback(
-    async (card, anchor) => {
-      if (!user) {
-        setAuthOpen(true);
-        return;
-      }
-      publishAnchorRef.current = anchor;
-      try {
-        if (card.draft) {
-          await openDraft(card.draft);
-        } else if (card.cloud) {
-          await openCloudShader(card.cloud);
-        } else {
-          return;
-        }
-        setPublishOpen(true);
-      } catch (publishError) {
-        setError(publishError.message || String(publishError));
-      }
-    },
-    [openCloudShader, openDraft, user]
   );
 
   const updateControl = useCallback(
@@ -2902,14 +2894,6 @@ export default function App() {
     },
     [pickFile]
   );
-
-  const onDeleteLibraryCard = useCallback((card) => {
-    if (card.draft) {
-      setDeleteTarget({ draft: card.draft, name: card.name });
-    } else if (card.cloud) {
-      setDeleteTarget({ cloud: card.cloud, name: card.name });
-    }
-  }, []);
 
   const exportFiles = useCallback(() => {
     exportFigmaFiles(sourceRef.current, shaderName || "Shader");
@@ -3884,9 +3868,7 @@ export default function App() {
         setCloudShaders((current) =>
           current.filter((item) => item.id !== shader.id)
         );
-        if (currentShader?.id === shader.id) {
-          await choosePreset("dither", { syncUrl: Boolean(routeId) });
-        }
+        selectAfterLibraryDelete(cloudChoiceId(shader.id));
         showNotice("Shader deleted", { danger: true });
         return true;
       } catch (deleteError) {
@@ -3894,7 +3876,7 @@ export default function App() {
         return false;
       }
     },
-    [choosePreset, currentShader, routeId, showNotice, user]
+    [selectAfterLibraryDelete, showNotice, user]
   );
 
   const removeCurrentShader = useCallback(() => {
@@ -4314,6 +4296,7 @@ export default function App() {
       ),
     [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
+  editorCardsRef.current = groupedEditorCards;
   const compositionFillCards = useMemo(
     () => filterShaderLibraryCards(libraryCards, { kind: "fill" }),
     [libraryCards]
@@ -4893,19 +4876,17 @@ export default function App() {
                         Publish…
                       </fig-menu-item>
                     )}
+                    {isOwner && (
+                      <fig-menu-item value="delete">
+                        Delete
+                      </fig-menu-item>
+                    )}
                     <fig-separator />
                     <fig-menu-item value="duplicate">
                       Duplicate
                     </fig-menu-item>
                     <fig-menu-item value="share">
                       Copy link
-                    </fig-menu-item>
-                    <fig-menu-item
-                      value="delete"
-                      hidden={!isOwner}
-                      disabled={!isOwner}
-                    >
-                      Delete
                     </fig-menu-item>
                     <fig-separator />
                     <fig-menu-item
@@ -5170,26 +5151,6 @@ export default function App() {
                     </>
                   )}
                 </fig-menu>
-                <AccountMenu
-                  open={authOpen}
-                  onOpenChange={setAuthOpen}
-                  theme={theme}
-                  onThemeChange={setTheme}
-                  canvasTheme={canvasTheme}
-                  onCanvasThemeChange={setCanvasTheme}
-                  settingsOpen={settingsOpen}
-                  onSettingsOpenChange={setSettingsOpen}
-                  onProfileChange={(displayName) => {
-                    if (!user) return;
-                    setCloudShaders((current) =>
-                      current.map((shader) =>
-                        shader.owner_id === user.id
-                          ? { ...shader, author_name: displayName }
-                          : shader
-                      )
-                    );
-                  }}
-                />
               </div>
             </fig-header>
             <fig-header class="app-nav-library-filters">
@@ -5249,9 +5210,31 @@ export default function App() {
             cards={groupedEditorCards}
             layout={libraryView}
             onChoice={chooseItem}
-            onPublish={openPublishForCard}
-            onDelete={onDeleteLibraryCard}
           />
+          <fig-footer sticky="">
+            <AccountMenu
+              layout="bar"
+              position="top right"
+              open={authOpen}
+              onOpenChange={setAuthOpen}
+              theme={theme}
+              onThemeChange={setTheme}
+              canvasTheme={canvasTheme}
+              onCanvasThemeChange={setCanvasTheme}
+              settingsOpen={settingsOpen}
+              onSettingsOpenChange={setSettingsOpen}
+              onProfileChange={(displayName) => {
+                if (!user) return;
+                setCloudShaders((current) =>
+                  current.map((shader) =>
+                    shader.owner_id === user.id
+                      ? { ...shader, author_name: displayName }
+                      : shader
+                  )
+                );
+              }}
+            />
+          </fig-footer>
         </nav>
 
         <div

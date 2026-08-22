@@ -127,6 +127,15 @@ export function buildShaderLibraryCards({
   return cards;
 }
 
+export function nextLibraryCardKey(cards, deletedKey) {
+  const keys = (cards || [])
+    .filter((card) => card?.key && !card.separatorLabel)
+    .map((card) => card.key);
+  const index = keys.indexOf(deletedKey);
+  if (index >= 0) return keys[index + 1] ?? keys[index - 1] ?? null;
+  return keys[0] ?? null;
+}
+
 export function filterShaderLibraryCards(
   cards,
   { query = "", kind = "all", origin = "all", author = "all" } = {}

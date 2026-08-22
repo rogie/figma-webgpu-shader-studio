@@ -50,4 +50,5 @@ dialog[is="fig-popup"].composition-layer-props {
 fig-content.composition-layer-props-content {
   min-height: 0;
   overflow: auto;
+  scrollbar-width: thin;
 }

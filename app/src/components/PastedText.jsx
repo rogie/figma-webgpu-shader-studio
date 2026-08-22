@@ -6,6 +6,7 @@ import {
   loadLanguageSupport,
 } from "../lib/pastedHighlight.js";
 import CodeBlockIcon from "./CodeBlockIcon.jsx";
+import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "./PastedText.css";
 
 export default function PastedText({
@@ -17,6 +18,7 @@ export default function PastedText({
   onRemove,
 }) {
   const groupRef = useRef(null);
+  const sourceFadeRef = useOverflowFade();
   const initializedRef = useRef(false);
   const [languageSupport, setLanguageSupport] = useState(null);
 
@@ -91,7 +93,7 @@ export default function PastedText({
           />
         )}
       </fig-header>
-      <pre className="pasted-text-source">
+      <pre ref={sourceFadeRef} className="pasted-text-source">
         <code>
           {highlighted.map((range) =>
             range.classes ? (

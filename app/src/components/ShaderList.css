@@ -25,18 +25,6 @@ fig-chooser.shader-list {
 
     &[selected]{
       background-color: var(--figma-color-bg-selected);
-
-      .shader-list-item-menu {
-        visibility: visible;
-      }
-
-      .shader-list-item-actions {
-        display: grid;
-      }
-
-      .shader-list-item-figma {
-        display: none;
-      }
     }
   }
 

@@ -67,6 +67,7 @@ import MarkdownProse from "./MarkdownProse.jsx";
 import PlanIcon from "./PlanIcon.jsx";
 import PlanMarkdownBlock from "./PlanMarkdownBlock.jsx";
 import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
+import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
@@ -188,6 +189,7 @@ const ChatPane = forwardRef(function ChatPane(
   const [latestActivity, setLatestActivity] = useState("");
   const abortRef = useRef(null);
   const listRef = useRef(null);
+  const listFadeRef = useOverflowFade(listRef);
   const followingLatestRef = useRef(true);
   const undoStackRef = useRef([]);
   const modelControlRef = useRef(null);
@@ -1239,7 +1241,7 @@ ${pendingPlan.content}
 
   return (
     <div className="code-chat" hidden={hidden}>
-      <div className="chat-messages" ref={listRef}>
+      <div className="chat-messages" ref={listFadeRef}>
         {messages.length === 0 && (
           <div className="chat-empty">
             <p>

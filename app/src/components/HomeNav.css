@@ -32,11 +32,6 @@
     margin-left: auto;
   }
 
-  .app-nav-filter {
-    flex: 0 0 auto;
-    width: auto;
-  }
-
   fig-chooser {
     --fig-chooser-inline-padding: var(--spacer-1);
     --fig-chooser-inline-margin: var(--spacer-2-5);

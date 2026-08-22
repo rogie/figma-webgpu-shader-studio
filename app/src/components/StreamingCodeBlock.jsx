@@ -1,6 +1,7 @@
 import { classHighlighter, highlightTree } from "@lezer/highlight";
 import { useEffect, useMemo, useRef } from "react";
 import { figmaShaderLanguage } from "../lib/codeLanguage.js";
+import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "./StreamingCodeBlock.css";
 
 function highlightSource(source) {
@@ -30,6 +31,7 @@ export default function StreamingCodeBlock({
 }) {
   const groupRef = useRef(null);
   const preRef = useRef(null);
+  const preFadeRef = useOverflowFade(preRef);
   const wasPendingRef = useRef(Boolean(pending));
   const initializedRef = useRef(false);
   const highlightedSource = useMemo(
@@ -151,7 +153,7 @@ export default function StreamingCodeBlock({
           </fig-tooltip>
         )}
       </fig-header>
-      <pre ref={preRef} className="streaming-code-source">
+      <pre ref={preFadeRef} className="streaming-code-source">
         <code>
           {highlightedSource}
           {pending && (

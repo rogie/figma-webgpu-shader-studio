@@ -1,4 +1,5 @@
-import { forwardRef, memo, useEffect, useRef } from "react";
+import { forwardRef, memo, useCallback, useEffect, useRef } from "react";
+import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
 
@@ -6,8 +7,6 @@ const ShaderList = forwardRef(function ShaderList(
   {
     cards,
     value,
-    onPublish,
-    onDelete,
     onChoice,
     className,
     layout = "list",
@@ -18,6 +17,15 @@ const ShaderList = forwardRef(function ShaderList(
   ref
 ) {
   const innerRef = useRef(null);
+  const bindChooser = useCallback(
+    (node) => {
+      innerRef.current = node;
+      if (typeof ref === "function") ref(node);
+      else if (ref) ref.current = node;
+    },
+    [ref]
+  );
+  const chooserRef = useOverflowFade(bindChooser);
 
   useEffect(() => {
     const node = innerRef.current;
@@ -31,11 +39,7 @@ const ShaderList = forwardRef(function ShaderList(
 
   return (
     <fig-chooser
-      ref={(node) => {
-        innerRef.current = node;
-        if (typeof ref === "function") ref(node);
-        else if (ref) ref.current = node;
-      }}
+      ref={chooserRef}
       class={className ? `shader-list ${className}` : "shader-list"}
       value={value}
       layout={layout === "grid" ? "grid" : "vertical"}
@@ -64,14 +68,6 @@ const ShaderList = forwardRef(function ShaderList(
             showPreview={showPreview}
             figmaLinked={Boolean(card.figmaLinked)}
             actions={renderActions?.(card)}
-            onPublish={
-              card.canDelete
-                ? (anchor) => onPublish?.(card, anchor)
-                : undefined
-            }
-            onDelete={
-              card.canDelete ? () => onDelete?.(card) : undefined
-            }
           />
         );
 
