@@ -18,6 +18,10 @@ import {
   serializeCompositionExport,
   unpublishedCompositionRefs,
   promoteCompositionRefs,
+  compositionLayerName,
+  compositionLayerShaderId,
+  resolveReferencedShaderSource,
+  COMPOSITION_FILL_ID,
 } from "./composition.js";
 
 test("empty composition defaults to an image fill", () => {
@@ -311,6 +315,75 @@ test("promoteCompositionRefs rewrites published draft ids to cloud ids", () => {
   );
   assert.equal(promoted.fill.shaderId, "cloud:fill");
   assert.equal(promoted.effects[0].shaderId, "cloud:fx");
+});
+
+test("compositionLayerShaderId reads fill and effect shader ids", () => {
+  const graph = normalizeComposition({
+    fill: { type: "shader", shaderId: "cloud:fill" },
+    effects: [{ id: "fx", shaderId: "draft:grain" }],
+  });
+  assert.equal(compositionLayerShaderId(graph, COMPOSITION_FILL_ID), "cloud:fill");
+  assert.equal(compositionLayerShaderId(graph, "fx"), "draft:grain");
+  assert.equal(compositionLayerShaderId(graph, "missing"), null);
+});
+
+test("resolveReferencedShaderSource prefers live source over a resolved cache", () => {
+  assert.equal(
+    resolveReferencedShaderSource("draft:fx", {
+      liveByKey: new Map([
+        ["cloud:fx", { source: "export function render() { return 2; }" }],
+      ]),
+      resolvedByKey: new Map([
+        ["draft:fx", { source: "export function render() { return 1; }" }],
+      ]),
+    }),
+    "export function render() { return 2; }"
+  );
+  assert.equal(
+    resolveReferencedShaderSource("cloud:fx", {
+      resolvedByKey: new Map([
+        ["cloud:fx", { source: "export function render() { return 1; }" }],
+      ]),
+    }),
+    "export function render() { return 1; }"
+  );
+});
+
+test("compositionLayerName prefers resolved names, then library cards", () => {
+  const resolved = new Map([
+    ["cloud:fill", { name: "Mesh", broken: false }],
+    ["draft:fx", { name: "Grain", broken: false }],
+  ]);
+  assert.equal(
+    compositionLayerName("cloud:fill", resolved, [], "Choose a shader fill"),
+    "Mesh"
+  );
+  assert.equal(
+    compositionLayerName("draft:fill", resolved, [], "Choose a shader fill"),
+    "Mesh"
+  );
+  assert.equal(
+    compositionLayerName(
+      "cloud:missing",
+      resolved,
+      [{ key: "cloud:missing", name: "Sphere" }],
+      "Choose a shader fill"
+    ),
+    "Sphere"
+  );
+  assert.equal(
+    compositionLayerName("cloud:gone", resolved, [], "Shader effect"),
+    "Shader effect"
+  );
+  assert.equal(
+    compositionLayerName(
+      "cloud:broken",
+      new Map([["cloud:broken", { broken: true }]]),
+      [],
+      "Shader effect"
+    ),
+    "Missing shader"
+  );
 });
 
 test("finds compositions that reference a shader", () => {

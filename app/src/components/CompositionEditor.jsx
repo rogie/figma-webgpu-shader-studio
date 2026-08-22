@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   COMPOSITION_FILL_ID,
+  compositionLayerName,
   emptyComposition,
   MAX_COMPOSITION_EFFECTS,
   normalizeComposition,
@@ -25,11 +26,6 @@ const FILL_TYPE_OPTIONS = [
   { value: "video", label: "Video" },
   { value: "html", label: "HTML-in-canvas" },
 ];
-
-function layerName(resolved, fallback) {
-  if (resolved?.broken) return resolved.name || "Missing shader";
-  return resolved?.name || fallback;
-}
 
 function layerPropsAnchorId(layerId) {
   return `composition-layer-props-${layerId}`;
@@ -57,13 +53,14 @@ function PropertiesLayerRow({
             type="button"
             variant={expanded ? "ghost" : "secondary"}
             full=""
+            title={name}
             aria-haspopup="dialog"
             aria-expanded={expanded ? "true" : "false"}
             selected={expanded ? "" : undefined}
             disabled={enabled ? undefined : ""}
             onClick={onOpen}
           >
-            <fig-truncate>{name}</fig-truncate>
+            <span className="properties-layer-row-label">{name}</span>
           </fig-button>
         )}
       </div>
@@ -132,6 +129,7 @@ export default function CompositionEditor({
   resolvedByKey,
   fillCards = [],
   effectCards = [],
+  nameCards = [],
   readOnly = false,
   layerControls = null,
   onChange,
@@ -149,6 +147,8 @@ export default function CompositionEditor({
   const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
+  const propertiesLayerIdRef = useRef(null);
+  propertiesLayerIdRef.current = propertiesLayerId;
   const [imageFillValue, setImageFillValue] = useState(EMPTY_IMAGE_FILL_VALUE);
   const [imageFillKey, setImageFillKey] = useState(0);
   const lastImageFillUrlRef = useRef(null);
@@ -247,9 +247,8 @@ export default function CompositionEditor({
       event.preventDefault();
     };
     const onClose = () => {
-      if (!propertiesLayerId || !propertiesLayerEnabled) return;
-      lockDismiss();
-      popup.open = true;
+      if (!propertiesLayerIdRef.current) return;
+      setPropertiesLayerId(null);
     };
     popup.addEventListener("cancel", onCancel);
     popup.addEventListener("close", onClose);
@@ -376,7 +375,7 @@ export default function CompositionEditor({
     [normalized, update]
   );
 
-  const openLayerProperties = useCallback(
+  const toggleLayerProperties = useCallback(
     (layerId) => {
       const enabled =
         layerId === COMPOSITION_FILL_ID
@@ -384,30 +383,21 @@ export default function CompositionEditor({
           : normalized.effects.find((effect) => effect.id === layerId)
               ?.enabled !== false;
       if (!enabled) return;
+      if (propertiesLayerIdRef.current === layerId) {
+        setPropertiesLayerId(null);
+        return;
+      }
       onSelectLayer?.(layerId);
       setPropertiesLayerId(layerId);
     },
     [normalized, onSelectLayer]
   );
 
-  const fillResolved = normalized.fill.shaderId
-    ? resolvedByKey?.get(normalized.fill.shaderId)
-    : null;
-  const propertiesResolved =
-    propertiesLayerId === COMPOSITION_FILL_ID
-      ? fillResolved
-      : resolvedByKey?.get(
-          normalized.effects.find((effect) => effect.id === propertiesLayerId)
-            ?.shaderId
-        );
-  const propertiesTitle = propertiesLayerId
-    ? layerName(
-        propertiesResolved,
-        propertiesLayerId === COMPOSITION_FILL_ID
-          ? "Fill properties"
-          : "Effect properties"
-      )
-    : "Properties";
+  const layerCards = useMemo(
+    () =>
+      nameCards.length ? nameCards : [...shaderFillCards, ...effectCards],
+    [effectCards, nameCards, shaderFillCards]
+  );
   const propertiesNoun =
     propertiesLayerId === COMPOSITION_FILL_ID ? "fill" : "effect";
   const propertiesShaderId =
@@ -417,6 +407,16 @@ export default function CompositionEditor({
         : null
       : normalized.effects.find((effect) => effect.id === propertiesLayerId)
           ?.shaderId ?? null;
+  const propertiesTitle = propertiesLayerId
+    ? compositionLayerName(
+        propertiesShaderId,
+        resolvedByKey,
+        layerCards,
+        propertiesLayerId === COMPOSITION_FILL_ID
+          ? "Fill properties"
+          : "Effect properties"
+      )
+    : "Properties";
 
   return (
     <div className="composition-editor">
@@ -459,7 +459,12 @@ export default function CompositionEditor({
         id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
         name={
           normalized.fill.type === "shader"
-            ? layerName(fillResolved, "Choose a shader fill")
+            ? compositionLayerName(
+                normalized.fill.shaderId,
+                resolvedByKey,
+                layerCards,
+                "Choose a shader fill"
+              )
             : FILL_TYPE_OPTIONS.find(
                 (option) => option.value === normalized.fill.type
               )?.label ?? "Image"
@@ -478,7 +483,7 @@ export default function CompositionEditor({
             />
           ) : null
         }
-        onOpen={() => openLayerProperties(COMPOSITION_FILL_ID)}
+        onOpen={() => toggleLayerProperties(COMPOSITION_FILL_ID)}
         onToggleVisible={toggleFillVisible}
         onRemove={removeFill}
       />
@@ -521,22 +526,24 @@ export default function CompositionEditor({
           disabled={readOnly ? "" : undefined}
           aria-label="Effects"
         >
-          {normalized.effects.map((effect) => {
-            const resolved = resolvedByKey?.get(effect.shaderId);
-            return (
-              <PropertiesLayerRow
-                key={effect.id}
-                id={layerPropsAnchorId(effect.id)}
-                name={layerName(resolved, "Shader effect")}
-                expanded={propertiesLayerId === effect.id}
-                enabled={effect.enabled}
-                readOnly={readOnly}
-                onOpen={() => openLayerProperties(effect.id)}
-                onToggleVisible={() => toggleEffectVisible(effect.id)}
-                onRemove={() => removeEffect(effect.id)}
-              />
-            );
-          })}
+          {normalized.effects.map((effect) => (
+            <PropertiesLayerRow
+              key={effect.id}
+              id={layerPropsAnchorId(effect.id)}
+              name={compositionLayerName(
+                effect.shaderId,
+                resolvedByKey,
+                layerCards,
+                "Shader effect"
+              )}
+              expanded={propertiesLayerId === effect.id}
+              enabled={effect.enabled}
+              readOnly={readOnly}
+              onOpen={() => toggleLayerProperties(effect.id)}
+              onToggleVisible={() => toggleEffectVisible(effect.id)}
+              onRemove={() => removeEffect(effect.id)}
+            />
+          ))}
         </fig-reorder>
       )}
 

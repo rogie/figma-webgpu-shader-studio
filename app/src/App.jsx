@@ -139,6 +139,7 @@ import {
 } from "./lib/layoutStorage.js";
 import {
   collectCompositionFeatures,
+  compositionLayerShaderId,
   compositionStructureKey,
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
@@ -151,6 +152,7 @@ import {
   parseCompositionShaderId,
   readReferencedShader,
   referencedShaderKeys,
+  resolveReferencedShaderSource,
   unpublishedCompositionLabels,
   unpublishedCompositionRefs,
   promoteCompositionRefs,
@@ -369,6 +371,7 @@ export default function App() {
   const [composition, setComposition] = useState(null);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
+  const [layerControlsEpoch, setLayerControlsEpoch] = useState(0);
   const [resolvedShaders, setResolvedShaders] = useState({});
   const [props, setProps] = useState(INITIAL_MODULE.props);
   const [values, setValues] = useState(INITIAL_VALUES);
@@ -1166,10 +1169,10 @@ export default function App() {
           latest[aliasKey] = aliased;
         }
       };
-      const rowFromLive = (key, live, id, isPublic) => ({
+      const rowFromLive = (key, live, id, isPublic, catalogName) => ({
         key,
         id: id || live.id || live.presetId || key,
-        name: live.name || live.shaderName,
+        name: live.name || live.shaderName || catalogName,
         kind: live.kind || "effect",
         source: live.source,
         is_public: isPublic,
@@ -1204,7 +1207,8 @@ export default function App() {
               cloudKey || key,
               live,
               cloudId || live.id,
-              liveCloud?.is_public ?? live.is_public ?? live.isPublic
+              liveCloud?.is_public ?? live.is_public ?? live.isPublic,
+              liveCloud?.name
             ),
             key
           );
@@ -1284,10 +1288,15 @@ export default function App() {
       const map = new Map(Object.entries(resolved));
       const layers = [];
       const loadLayer = (id, role, shaderId, values, enabled = true) => {
-        const row = resolved[shaderId];
-        if (!row?.source || row.broken) return;
+        const source = resolveReferencedShaderSource(shaderId, {
+          session: draftSessionRef.current,
+          drafts,
+          liveByKey: liveShaderSourceRef.current,
+          resolvedByKey: map,
+        });
+        if (!source) return;
         try {
-          const loaded = loadModule(row.source);
+          const loaded = loadModule(source);
           layers.push({
             id,
             role,
@@ -1300,9 +1309,10 @@ export default function App() {
         } catch (loadError) {
           rememberResolved([
             {
-              ...row,
+              key: shaderId,
+              source,
               broken: true,
-              name: row.name || loadError.message,
+              name: loadError.message,
             },
           ]);
         }
@@ -1365,7 +1375,7 @@ export default function App() {
         setRunning(false);
       }
     },
-    [hydrateCompositionRefs, rememberResolved, setRuntimeValues]
+    [drafts, hydrateCompositionRefs, rememberResolved, setRuntimeValues]
   );
   compileCompositionRef.current = compileComposition;
 
@@ -2814,20 +2824,47 @@ export default function App() {
   }, []);
 
   const resetProperties = useCallback(() => {
+    if (sessionKindRef.current === COMPOSITION_KIND) {
+      const graph = normalizeComposition(compositionRef.current);
+      const layerId = selectedLayerIdRef.current;
+      const source = resolveReferencedShaderSource(
+        compositionLayerShaderId(graph, layerId),
+        {
+          session: draftSessionRef.current,
+          drafts,
+          liveByKey: liveShaderSourceRef.current,
+          resolvedByKey: new Map(Object.entries(resolvedShaders)),
+        }
+      );
+      if (!source) return;
+      try {
+        const loaded = loadModule(source);
+        const next = buildDefaults(loaded.props);
+        const nextGraph = compositionWithLayerValues(graph, layerId, next);
+        compositionRef.current = nextGraph;
+        setComposition(nextGraph);
+        setProps(loaded.props);
+        setRuntimeValues(next);
+        setLayerControlsEpoch((epoch) => epoch + 1);
+        setError(null);
+        if (!protectedPreview) setDirty(true);
+        compileCompositionRef.current?.(nextGraph);
+      } catch (resetError) {
+        setError(resetError.message || String(resetError));
+      }
+      return;
+    }
     const next = buildDefaults(props);
     setRuntimeValues(next);
-    if (sessionKindRef.current === COMPOSITION_KIND) {
-      const graph = compositionWithLayerValues(
-        compositionRef.current,
-        selectedLayerIdRef.current,
-        next
-      );
-      compositionRef.current = graph;
-      setComposition(graph);
-    }
     setError(null);
     if (!protectedPreview) setDirty(true);
-  }, [props, protectedPreview, setRuntimeValues]);
+  }, [
+    drafts,
+    props,
+    protectedPreview,
+    resolvedShaders,
+    setRuntimeValues,
+  ]);
 
   const savePropertiesAsDefault = useCallback(() => {
     if (protectedPreview) return;
@@ -4429,6 +4466,18 @@ export default function App() {
     () => filterShaderLibraryCards(libraryCards, { kind: "effect" }),
     [libraryCards]
   );
+  const compositionNameCards = useMemo(
+    () =>
+      buildShaderLibraryCards({
+        drafts: drafts.filter((draft) => draft.kind !== COMPOSITION_KIND),
+        cloudShaders,
+        liveNames: {
+          [presetId]: shaderName,
+        },
+        user,
+      }),
+    [cloudShaders, drafts, presetId, shaderName, user]
+  );
 
   const onCompositionChange = useCallback(
     (next) => {
@@ -4449,20 +4498,23 @@ export default function App() {
     selectedLayerIdRef.current = layerId;
     setSelectedLayerId(layerId);
     const graph = normalizeComposition(compositionRef.current);
-    const resolved =
-      layerId === COMPOSITION_FILL_ID
-        ? resolvedShaders[graph.fill.shaderId]
-        : resolvedShaders[
-            graph.effects.find((effect) => effect.id === layerId)?.shaderId
-          ];
-    if (!resolved?.source) {
+    const source = resolveReferencedShaderSource(
+      compositionLayerShaderId(graph, layerId),
+      {
+        session: draftSessionRef.current,
+        drafts,
+        liveByKey: liveShaderSourceRef.current,
+        resolvedByKey: new Map(Object.entries(resolvedShaders)),
+      }
+    );
+    if (!source) {
       setProps({});
       valuesRef.current = {};
       setValues({});
       return;
     }
     try {
-      const loaded = loadModule(resolved.source);
+      const loaded = loadModule(source);
       const values =
         layerId === COMPOSITION_FILL_ID
           ? graph.fill.values
@@ -4476,7 +4528,7 @@ export default function App() {
       valuesRef.current = {};
       setValues({});
     }
-  }, [resolvedShaders]);
+  }, [drafts, resolvedShaders]);
 
   const figmaImportedKeys = useMemo(() => {
     const keys = new Set();
@@ -4634,10 +4686,12 @@ export default function App() {
                 resolvedByKey={resolvedByKey}
                 fillCards={compositionFillCards}
                 effectCards={compositionEffectCards}
+                nameCards={compositionNameCards}
                 readOnly={protectedPreview}
                 layerControls={
                   <Suspense fallback={null}>
                     <Controls
+                      key={layerControlsEpoch}
                       props={props}
                       values={values}
                       onChange={updateControl}

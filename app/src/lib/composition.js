@@ -194,6 +194,25 @@ function storeGet(store, key) {
   return typeof store.get === "function" ? store.get(key) : store[key];
 }
 
+export function compositionLayerShaderId(graph, layerId) {
+  const normalized = normalizeComposition(graph);
+  if (layerId === COMPOSITION_FILL_ID) {
+    return normalized.fill.type === "shader" ? normalized.fill.shaderId : null;
+  }
+  return (
+    normalized.effects.find((effect) => effect.id === layerId)?.shaderId ?? null
+  );
+}
+
+export function resolveReferencedShaderSource(
+  shaderId,
+  { session = null, drafts = [], liveByKey = null, resolvedByKey = null } = {}
+) {
+  const live = readReferencedShader(shaderId, { session, drafts, liveByKey });
+  if (live?.source) return live.source;
+  return resolvedCompositionEntry(resolvedByKey, shaderId)?.source || null;
+}
+
 function resolvedCompositionEntry(store, shaderId) {
   const parsed = parseCompositionShaderId(shaderId);
   const id = parsed?.id || shaderId;
@@ -207,6 +226,20 @@ function resolvedCompositionEntry(store, shaderId) {
     storeGet(store, bare) ||
     null
   );
+}
+
+export function compositionLayerName(
+  shaderId,
+  resolvedByKey = new Map(),
+  cards = [],
+  fallback = ""
+) {
+  const resolved = resolvedCompositionEntry(resolvedByKey, shaderId);
+  if (resolved?.broken) return resolved.name || "Missing shader";
+  if (resolved?.name) return resolved.name;
+  const aliases = new Set(compositionRefAliases(shaderId));
+  const card = (cards || []).find((item) => aliases.has(item?.key));
+  return card?.name || fallback;
 }
 
 export function serializeCompositionExport(
