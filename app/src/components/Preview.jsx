@@ -30,6 +30,7 @@ function Preview({
   onPickFile,
   onDropError,
   dropTarget = "input",
+  showCanvasControls = true,
   onStageSize,
   onPointerSurface,
   inputSource = "image",
@@ -301,14 +302,16 @@ function Preview({
             height: overlayBox.height,
           }}
         >
-          <CanvasControlsOverlay
-            props={props}
-            values={values}
-            canvasSize={canvasSize}
-            surfaceSize={overlayBox}
-            onInputValue={onControlInput}
-            onCommit={onControlChange}
-          />
+          {showCanvasControls ? (
+            <CanvasControlsOverlay
+              props={props}
+              values={values}
+              canvasSize={canvasSize}
+              surfaceSize={overlayBox}
+              onInputValue={onControlInput}
+              onCommit={onControlChange}
+            />
+          ) : null}
         </div>
       )}
       {dragging && (

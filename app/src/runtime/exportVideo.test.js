@@ -4,6 +4,8 @@ import {
   resolveVideoFrameTime,
   resolveVideoDimensions,
   supportedWebmMimeType,
+  supportsOfflineVideoExport,
+  videoExportFramePlan,
 } from "./exportVideo.js";
 
 test("resolveVideoDimensions keeps current dimensions", () => {
@@ -40,4 +42,38 @@ test("resolveVideoFrameTime seeks exact timestamps and loops at duration", () =>
   assert.equal(resolveVideoFrameTime(1.25, 3), 1.25);
   assert.equal(resolveVideoFrameTime(3.25, 3), 0.25);
   assert.equal(resolveVideoFrameTime(-1, 3), 0);
+});
+
+test("videoExportFramePlan lists offline timestamps without wall-clock gaps", () => {
+  const frames = videoExportFramePlan(1, 30);
+  assert.equal(frames.length, 30);
+  assert.deepEqual(frames[0], {
+    frame: 0,
+    timeMs: 0,
+    deltaMs: 1000 / 30,
+    timeSec: 0,
+    durationSec: 1 / 30,
+  });
+  assert.equal(frames[29].frame, 29);
+  assert.equal(frames[29].timeSec, 29 / 30);
+  assert.ok(frames.every((item, index) => item.timeMs === index * (1000 / 30)));
+});
+
+test("supportsOfflineVideoExport requires a worker, OffscreenCanvas, and VideoEncoder", () => {
+  assert.equal(
+    supportsOfflineVideoExport({
+      WorkerClass: function Worker() {},
+      OffscreenCanvasClass: function OffscreenCanvas() {},
+      VideoEncoderClass: function VideoEncoder() {},
+    }),
+    true
+  );
+  assert.equal(
+    supportsOfflineVideoExport({
+      WorkerClass: function Worker() {},
+      OffscreenCanvasClass: function OffscreenCanvas() {},
+      VideoEncoderClass: undefined,
+    }),
+    false
+  );
 });

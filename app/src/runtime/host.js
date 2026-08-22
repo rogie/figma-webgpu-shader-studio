@@ -105,6 +105,10 @@ export class ShaderHost {
       renderScale: 1,
       mousePosition: { x: 0, y: 0 },
     };
+    // Actual GPU presents. Independent of frame.frame, which is the shader
+    // clock and resets on compile / pause. Compositions often present from
+    // video, HTML, or redraws without advancing that clock.
+    this.presentedFrames = 0;
 
     this.ready = false;
     this.running = false;
@@ -952,45 +956,27 @@ export class ShaderHost {
   }
 
   /**
-   * Snapshot the current preview into an image blob (default 512² cover crop).
-   * Reads pixels via copyTextureToBuffer — WebGPU canvas 2D drawImage often
-   * returns a cleared/black frame once the browser has composited.
+   * Read a presented WebGPU texture into ImageData. Copy off the swapchain
+   * first so a later present cannot cancel the map.
    */
-  async captureThumbnailBlob({
-    width = 512,
-    height = 512,
-    type = "image/webp",
-    quality = 0.85,
-    shouldResume = () => true,
-  } = {}) {
-    if (!this.ready || !this.canvas?.width || !this.canvas?.height) return null;
-    if (!this.renderFn) return null;
+  async readbackTextureImageData(texture) {
+    if (!this.ready || !this.device || !texture) return null;
 
-    const wasRunning = this.running;
-    const playbackGeneration = this._playbackGeneration;
+    const srcW = texture.width;
+    const srcH = texture.height;
+    const bytesPerPixel = 4;
+    const bytesPerRow = Math.ceil((srcW * bytesPerPixel) / 256) * 256;
+    const bufferSize = bytesPerRow * srcH;
+    const maxBufferSize = this.device.limits?.maxBufferSize;
+    if (maxBufferSize && bufferSize > maxBufferSize) {
+      throw new Error(
+        `Preview is too large to export (${srcW}×${srcH}). Try a smaller stage size.`
+      );
+    }
+
     let readbackBuffer = null;
     let staging = null;
-    this._beginCapture();
     try {
-      if (wasRunning) this.stop();
-
-      const texture = this._present();
-      if (!texture) return null;
-
-      const srcW = texture.width;
-      const srcH = texture.height;
-      const bytesPerPixel = 4;
-      const bytesPerRow = Math.ceil((srcW * bytesPerPixel) / 256) * 256;
-      const bufferSize = bytesPerRow * srcH;
-      const maxBufferSize = this.device.limits?.maxBufferSize;
-      if (maxBufferSize && bufferSize > maxBufferSize) {
-        throw new Error(
-          `Preview is too large to export (${srcW}×${srcH}). Try a smaller stage size.`
-        );
-      }
-
-      // Copy swapchain → owned staging texture first so a later canvas resize
-      // cannot cancel the readback after we yield to the event loop.
       staging = this.device.createTexture({
         size: [srcW, srcH],
         format: this.format,
@@ -1009,7 +995,6 @@ export class ShaderHost {
         size: bufferSize,
         usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
       });
-
       const encoder = this.device.createCommandEncoder();
       encoder.copyTextureToBuffer(
         { texture: staging },
@@ -1030,24 +1015,7 @@ export class ShaderHost {
       readbackBuffer = null;
       staging.destroy();
       staging = null;
-
-      const source = document.createElement("canvas");
-      source.width = srcW;
-      source.height = srcH;
-      source.getContext("2d").putImageData(new ImageData(packed, srcW, srcH), 0, 0);
-
-      const thumb = document.createElement("canvas");
-      thumb.width = width;
-      thumb.height = height;
-      const ctx = thumb.getContext("2d");
-      if (!ctx) throw new Error("Could not create an export canvas.");
-
-      const scale = Math.max(width / srcW, height / srcH);
-      const dw = srcW * scale;
-      const dh = srcH * scale;
-      ctx.drawImage(source, (width - dw) / 2, (height - dh) / 2, dw, dh);
-
-      return await this._canvasToBlob(thumb, type, quality);
+      return new ImageData(packed, srcW, srcH);
     } finally {
       if (readbackBuffer) {
         try {
@@ -1063,6 +1031,54 @@ export class ShaderHost {
           /* ignore */
         }
       }
+    }
+  }
+
+  /**
+   * Snapshot the current preview into an image blob (default 512² cover crop).
+   * Reads pixels via copyTextureToBuffer — WebGPU canvas 2D drawImage often
+   * returns a cleared/black frame once the browser has composited.
+   */
+  async captureThumbnailBlob({
+    width = 512,
+    height = 512,
+    type = "image/webp",
+    quality = 0.85,
+    shouldResume = () => true,
+  } = {}) {
+    if (!this.ready || !this.canvas?.width || !this.canvas?.height) return null;
+    if (!this.renderFn) return null;
+
+    const wasRunning = this.running;
+    const playbackGeneration = this._playbackGeneration;
+    this._beginCapture();
+    try {
+      if (wasRunning) this.stop();
+
+      const texture = this._present();
+      const imageData = await this.readbackTextureImageData(texture);
+      if (!imageData) return null;
+      const srcW = imageData.width;
+      const srcH = imageData.height;
+
+      const source = document.createElement("canvas");
+      source.width = srcW;
+      source.height = srcH;
+      source.getContext("2d").putImageData(imageData, 0, 0);
+
+      const thumb = document.createElement("canvas");
+      thumb.width = width;
+      thumb.height = height;
+      const ctx = thumb.getContext("2d");
+      if (!ctx) throw new Error("Could not create an export canvas.");
+
+      const scale = Math.max(width / srcW, height / srcH);
+      const dw = srcW * scale;
+      const dh = srcH * scale;
+      ctx.drawImage(source, (width - dw) / 2, (height - dh) / 2, dw, dh);
+
+      return await this._canvasToBlob(thumb, type, quality);
+    } finally {
       this._endCapture();
       // Resume from the caller's play intent. A newer setModule bumps the
       // generation during capture; if that compile's start() already ran we
@@ -1252,15 +1268,18 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.frame.output = this.context.getCurrentTexture();
     if (this.compositionLayers) {
       const output = this._presentComposition();
+      this.presentedFrames += 1;
       measurePerf("host.present", startedAt);
       return output;
     }
     if (!this.effectVisible) {
       const output = this._presentPassthrough();
+      this.presentedFrames += 1;
       measurePerf("host.present", startedAt);
       return output;
     }
     this.renderFn(this.device, this.frame);
+    this.presentedFrames += 1;
     measurePerf("host.present", startedAt);
     return this.frame.output;
   }

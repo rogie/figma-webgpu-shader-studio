@@ -825,3 +825,41 @@ test("fill mode drops leftover effect input and sizes to the stage", () => {
   assert.equal(fillSize, null);
   assert.equal(adaptive, 1);
 });
+
+test("presentedFrames counts GPU presents and survives a shader clock reset", () => {
+  const host = makeHost();
+  host.context = {
+    getCurrentTexture() {
+      return { width: 1, height: 1 };
+    },
+  };
+  host.device = {};
+  let renders = 0;
+  host.renderFn = () => {
+    renders += 1;
+  };
+
+  host._present();
+  host._present();
+  assert.equal(renders, 2);
+  assert.equal(host.presentedFrames, 2);
+
+  host.frame.frame = 0;
+  host._present();
+  assert.equal(host.presentedFrames, 3);
+});
+
+test("composition presents increment presentedFrames once per preview frame", () => {
+  const host = makeHost();
+  host.context = {
+    getCurrentTexture() {
+      return { width: 4, height: 4 };
+    },
+  };
+  host.compositionLayers = [];
+  host.logicalOutputSize = { width: 4, height: 4 };
+  host._presentPassthrough = () => "passthrough";
+
+  assert.equal(host._present(), "passthrough");
+  assert.equal(host.presentedFrames, 1);
+});

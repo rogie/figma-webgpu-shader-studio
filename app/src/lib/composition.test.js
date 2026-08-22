@@ -14,6 +14,7 @@ import {
   reorderCompositionEffects,
   referencedShaderKeys,
   resolvedLibraryKind,
+  serializeCompositionExport,
   unpublishedCompositionRefs,
   promoteCompositionRefs,
 } from "./composition.js";
@@ -279,6 +280,73 @@ test("mergeLayerValues drops unknown keys and fills defaults", () => {
     ),
     { amount: 3, mix: 0.5 }
   );
+});
+
+test("serializeCompositionExport inlines playable layer sources", () => {
+  const graph = {
+    fill: {
+      type: "shader",
+      shaderId: "cloud:fill",
+      values: { speed: 2 },
+      enabled: true,
+    },
+    effects: [
+      {
+        id: "fx-1",
+        shaderId: "cloud:grain",
+        values: { amount: 0.4 },
+        enabled: true,
+      },
+      { id: "fx-2", shaderId: "cloud:broken", values: {}, enabled: true },
+    ],
+  };
+  const resolved = new Map([
+    ["cloud:fill", { source: "export function render() { return 1 }", broken: false }],
+    ["cloud:grain", { source: "export function render() { return 2 }", broken: false }],
+    ["cloud:broken", { source: "nope", broken: true }],
+  ]);
+  const live = new Map([
+    ["cloud:grain", { source: "export function render() { return 3 }" }],
+  ]);
+
+  assert.deepEqual(serializeCompositionExport(graph, resolved, live), {
+    isFill: true,
+    fillType: "shader",
+    layers: [
+      {
+        id: "fill",
+        role: "fill",
+        enabled: true,
+        source: "export function render() { return 1 }",
+        params: { speed: 2 },
+      },
+      {
+        id: "fx-1",
+        role: "effect",
+        enabled: true,
+        source: "export function render() { return 3 }",
+        params: { amount: 0.4 },
+      },
+    ],
+  });
+});
+
+test("serializeCompositionExport treats media fills as input-backed", () => {
+  const serialized = serializeCompositionExport(
+    {
+      fill: { type: "image" },
+      effects: [
+        { id: "fx-1", shaderId: "cloud:grain", values: { amount: 1 } },
+      ],
+    },
+    new Map([
+      ["cloud:grain", { source: "export function render() {}", broken: false }],
+    ])
+  );
+  assert.equal(serialized.isFill, false);
+  assert.equal(serialized.fillType, "image");
+  assert.equal(serialized.layers.length, 1);
+  assert.equal(serialized.layers[0].role, "effect");
 });
 
 test("libraryKind preserves composition", () => {

@@ -138,6 +138,75 @@ export function referencedShaderKeys(graph) {
   return [...new Set(keys)];
 }
 
+function storeGet(store, key) {
+  if (!store || !key) return null;
+  return typeof store.get === "function" ? store.get(key) : store[key];
+}
+
+function resolvedCompositionEntry(store, shaderId) {
+  const parsed = parseCompositionShaderId(shaderId);
+  const id = parsed?.id || shaderId;
+  const bare = String(id || "").replace(/^(cloud:|draft:)/, "");
+  return (
+    storeGet(store, shaderId) ||
+    storeGet(store, parsed?.key) ||
+    storeGet(store, id) ||
+    storeGet(store, bare ? `cloud:${bare}` : null) ||
+    storeGet(store, bare ? `draft:${bare}` : null) ||
+    storeGet(store, bare) ||
+    null
+  );
+}
+
+export function serializeCompositionExport(
+  graph,
+  resolvedByKey = new Map(),
+  liveByKey = null
+) {
+  const normalized = normalizeComposition(graph);
+  const layers = [];
+  const pushLayer = (id, role, shaderId, values, enabled) => {
+    if (!shaderId) return;
+    const live = resolvedCompositionEntry(liveByKey, shaderId);
+    const resolved = resolvedCompositionEntry(resolvedByKey, shaderId);
+    const source = live?.source || resolved?.source;
+    const broken = live ? live.broken : resolved?.broken;
+    if (!source || broken) return;
+    layers.push({
+      id,
+      role,
+      enabled: enabled !== false,
+      source,
+      params: values && typeof values === "object" ? values : {},
+    });
+  };
+
+  if (normalized.fill.type === "shader") {
+    pushLayer(
+      COMPOSITION_FILL_ID,
+      "fill",
+      normalized.fill.shaderId,
+      normalized.fill.values,
+      normalized.fill.enabled
+    );
+  }
+  for (const effect of normalized.effects) {
+    pushLayer(
+      effect.id,
+      "effect",
+      effect.shaderId,
+      effect.values,
+      effect.enabled
+    );
+  }
+
+  return {
+    isFill: normalized.fill.type === "shader",
+    fillType: normalized.fill.type,
+    layers,
+  };
+}
+
 export function compositionReferencesKind(graph, resolvedByKey, expectedKind) {
   const normalized = normalizeComposition(graph);
   const keys = referencedShaderKeys(normalized);

@@ -12,7 +12,7 @@ export default function EmbedDialog({
       is="fig-dialog"
       ref={dialogRef}
       class="embed-dialog"
-      title="Embed shader"
+      title="Embed"
       modal=""
       closedby="closerequest"
       position="center center"

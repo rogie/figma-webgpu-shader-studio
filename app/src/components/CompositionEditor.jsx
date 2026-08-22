@@ -134,6 +134,7 @@ export default function CompositionEditor({
   layerControls = null,
   onChange,
   onSelectLayer,
+  onPropertiesLayerChange,
   onResetLayer,
   onMediaFill,
   onImageFill,
@@ -204,6 +205,18 @@ export default function CompositionEditor({
     }
   }, [propertiesLayerEnabled, propertiesLayerId]);
 
+  const openPropertiesLayerId =
+    propertiesLayerId && propertiesLayerEnabled ? propertiesLayerId : null;
+
+  useEffect(() => {
+    onPropertiesLayerChange?.(openPropertiesLayerId);
+  }, [onPropertiesLayerChange, openPropertiesLayerId]);
+
+  useEffect(
+    () => () => onPropertiesLayerChange?.(null),
+    [onPropertiesLayerChange]
+  );
+
   useEffect(() => {
     const list = effectsReorderRef.current;
     if (!list) return undefined;
@@ -218,13 +231,35 @@ export default function CompositionEditor({
   useEffect(() => {
     const popup = propertiesPopupRef.current;
     if (!popup) return undefined;
+
+    const lockDismiss = () => {
+      popup.setAttribute("closedby", "none");
+      if ("closedBy" in popup) popup.closedBy = "none";
+    };
+    lockDismiss();
+
+    const onCancel = (event) => {
+      event.preventDefault();
+    };
+    const onClose = () => {
+      if (!propertiesLayerId || !propertiesLayerEnabled) return;
+      lockDismiss();
+      popup.open = true;
+    };
+    popup.addEventListener("cancel", onCancel);
+    popup.addEventListener("close", onClose);
+
     if (propertiesLayerId && propertiesLayerEnabled) {
       popup.setAttribute("anchor", `#${layerPropsAnchorId(propertiesLayerId)}`);
       popup.open = true;
-      return undefined;
+    } else {
+      popup.open = false;
     }
-    popup.open = false;
-    return undefined;
+
+    return () => {
+      popup.removeEventListener("cancel", onCancel);
+      popup.removeEventListener("close", onClose);
+    };
   }, [propertiesLayerEnabled, propertiesLayerId]);
 
   const effectPickerDisabled =
@@ -511,14 +546,13 @@ export default function CompositionEditor({
           class="composition-layer-props"
           position="left"
           popover="manual"
-          closedby="any"
+          closedby="none"
           anchor={
             propertiesLayerId
               ? `#${layerPropsAnchorId(propertiesLayerId)}`
               : undefined
           }
-          onClose={() => setPropertiesLayerId(null)}
-          onCancel={() => setPropertiesLayerId(null)}
+          onCancel={(event) => event.preventDefault()}
         >
           <fig-header>
             <h3>{propertiesTitle}</h3>

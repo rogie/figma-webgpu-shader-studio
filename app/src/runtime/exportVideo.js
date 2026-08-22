@@ -37,6 +37,20 @@ export function supportedWebmMimeType(MediaRecorderClass = window.MediaRecorder)
 
 const VIDEO_EXPORT_STALL_TIMEOUT_MS = 30_000;
 
+export { videoExportFramePlan } from "./videoExportFrames.js";
+
+export function supportsOfflineVideoExport({
+  WorkerClass = globalThis.Worker,
+  OffscreenCanvasClass = globalThis.OffscreenCanvas,
+  VideoEncoderClass = globalThis.VideoEncoder,
+} = {}) {
+  return (
+    typeof WorkerClass === "function" &&
+    typeof OffscreenCanvasClass === "function" &&
+    typeof VideoEncoderClass === "function"
+  );
+}
+
 export function resolveVideoFrameTime(time, duration) {
   const requestedTime = Math.max(0, Number(time) || 0);
   const sourceDuration = Number(duration);
@@ -151,6 +165,7 @@ export async function renderVideoInWorker({
   source,
   values,
   isFill,
+  composition = null,
   inputBitmap = null,
   inputVideo = null,
   width,
@@ -160,38 +175,11 @@ export async function renderVideoInWorker({
   bitrate,
   onProgress,
 }) {
-  if (
-    typeof Worker !== "function" ||
-    typeof OffscreenCanvas !== "function" ||
-    typeof HTMLCanvasElement !== "function" ||
-    typeof HTMLCanvasElement.prototype.transferControlToOffscreen !== "function"
-  ) {
-    throw new Error("Offscreen worker export is not supported in this browser.");
+  if (!supportsOfflineVideoExport()) {
+    throw new Error("Offline video export is not supported in this browser.");
   }
-  if (typeof window.MediaRecorder !== "function") {
-    throw new Error("Video encoding is not supported in this browser.");
-  }
-
-  const mimeType = supportedWebmMimeType(window.MediaRecorder);
-  if (!mimeType) throw new Error("This browser cannot encode WebM video.");
-
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  Object.assign(canvas.style, {
-    position: "fixed",
-    left: "-9999px",
-    top: "0",
-    width: "1px",
-    height: "1px",
-    opacity: "0",
-    pointerEvents: "none",
-  });
-  document.body.appendChild(canvas);
 
   let worker = null;
-  let stream = null;
-  let recorder = null;
   let timeout = 0;
   let disposeWorker = null;
   let videoFrameSource = null;
@@ -202,39 +190,9 @@ export async function renderVideoInWorker({
       workerInputBitmap = await videoFrameSource.capture(0, width, height);
     }
 
-    stream = canvas.captureStream(frameRate);
-    const offscreen = canvas.transferControlToOffscreen();
     worker = new Worker(new URL("./videoExportWorker.js", import.meta.url), {
       type: "module",
     });
-
-    const chunks = [];
-    recorder = new window.MediaRecorder(stream, {
-      mimeType,
-      videoBitsPerSecond: bitrate * 1_000_000,
-    });
-    const recording = new Promise((resolve, reject) => {
-      recorder.addEventListener("dataavailable", (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      });
-      recorder.addEventListener(
-        "error",
-        (event) =>
-          reject(
-            event.error || new Error("The browser could not encode the video.")
-          ),
-        { once: true }
-      );
-      recorder.addEventListener(
-        "stop",
-        () => resolve(new Blob(chunks, { type: mimeType })),
-        { once: true }
-      );
-    });
-    const encodingFailure = recording.then(
-      () => new Promise(() => {}),
-      (error) => Promise.reject(error)
-    );
 
     let rejectTimeout;
     const timeoutPromise = new Promise((_, reject) => {
@@ -278,22 +236,18 @@ export async function renderVideoInWorker({
             });
         } else if (message.type === "ready") {
           refreshTimeout();
-          const startRendering = () => {
-            refreshTimeout();
-            worker.postMessage({ type: "record" });
-          };
-          recorder.addEventListener("start", startRendering, { once: true });
-          try {
-            recorder.start(250);
-          } catch (error) {
-            recorder.removeEventListener("start", startRendering);
-            reject(error);
-          }
+          worker.postMessage({ type: "record" });
         } else if (message.type === "progress") {
           refreshTimeout();
           onProgress?.(message.progress);
         } else if (message.type === "done") {
-          resolve();
+          const buffer = message.buffer;
+          const type = message.mimeType || "video/webm";
+          if (!buffer || !buffer.byteLength) {
+            reject(new Error("The exported video was empty."));
+            return;
+          }
+          resolve(new Blob([buffer], { type }));
         } else if (message.type === "error") {
           reject(new Error(message.message || "Video rendering failed."));
         }
@@ -318,47 +272,35 @@ export async function renderVideoInWorker({
         worker.postMessage({ type: "dispose" });
       });
 
-    const transfer = [offscreen];
+    const transfer = [];
     if (workerInputBitmap) transfer.push(workerInputBitmap);
     worker.postMessage(
       {
         type: "init",
-        canvas: offscreen,
         source,
         values,
         isFill,
+        composition,
         inputBitmap: workerInputBitmap,
         dynamicVideoInput: Boolean(videoFrameSource),
         width,
         height,
         duration,
         frameRate,
+        bitrate,
       },
       transfer
     );
 
     refreshTimeout();
-    await Promise.race([rendered, encodingFailure, timeoutPromise]);
+    const blob = await Promise.race([rendered, timeoutPromise]);
     window.clearTimeout(timeout);
     onProgress?.(1);
-    recorder.requestData?.();
-    recorder.stop();
-    const blob = await recording;
-    if (!blob.size) throw new Error("The exported video was empty.");
     return blob;
   } finally {
     window.clearTimeout(timeout);
-    if (recorder?.state !== "inactive") {
-      try {
-        recorder.stop();
-      } catch {
-        // Recorder may already be stopping after an encoding error.
-      }
-    }
-    stream?.getTracks().forEach((track) => track.stop());
     await disposeWorker?.();
     worker?.terminate();
-    canvas.remove();
     workerInputBitmap?.close?.();
     if (workerInputBitmap !== inputBitmap) inputBitmap?.close?.();
     videoFrameSource?.dispose();

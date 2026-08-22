@@ -141,6 +141,7 @@ import {
   referencedShaderKeys,
   unpublishedCompositionRefs,
   promoteCompositionRefs,
+  serializeCompositionExport,
 } from "./lib/composition.js";
 import {
   cloudChoiceId,
@@ -354,6 +355,7 @@ export default function App() {
   );
   const [composition, setComposition] = useState(null);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
+  const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
   const [resolvedShaders, setResolvedShaders] = useState({});
   const [props, setProps] = useState(INITIAL_MODULE.props);
   const [values, setValues] = useState(INITIAL_VALUES);
@@ -2994,18 +2996,32 @@ export default function App() {
     setVideoExportProgress({ progress: 0 });
 
     try {
-      const inputVideo = kind === "effect" ? host.video : null;
+      const compositionExport =
+        kind === COMPOSITION_KIND
+          ? serializeCompositionExport(
+              composition,
+              resolvedByKey,
+              liveShaderSourceRef.current
+            )
+          : null;
+      const needsMediaInput =
+        kind === "effect" ||
+        (kind === COMPOSITION_KIND && !compositionExport?.isFill);
+      const inputVideo = needsMediaInput ? host.video : null;
       const inputBitmap =
-        kind === "effect" && !inputVideo
+        needsMediaInput && !inputVideo
           ? await host.captureInputBitmap({ width, height })
           : null;
-      if (kind === "effect" && !inputBitmap && !inputVideo) {
+      if (needsMediaInput && !inputBitmap && !inputVideo) {
         throw new Error("Could not snapshot the current shader input.");
       }
       const blob = await renderVideoInWorker({
-        source: sourceRef.current,
-        values: valuesRef.current,
-        isFill: kind === "fill",
+        source: compositionExport ? "" : sourceRef.current,
+        values: compositionExport ? {} : valuesRef.current,
+        isFill: compositionExport
+          ? compositionExport.isFill
+          : kind === "fill",
+        composition: compositionExport,
         inputBitmap,
         inputVideo,
         width,
@@ -3038,7 +3054,13 @@ export default function App() {
     } finally {
       setVideoExportProgress(null);
     }
-  }, [kind, shaderName, videoExportSettings]);
+  }, [
+    composition,
+    kind,
+    resolvedByKey,
+    shaderName,
+    videoExportSettings,
+  ]);
 
   const saveShader = useCallback(
     async (options = {}) => {
@@ -3934,17 +3956,23 @@ export default function App() {
     ? makeShareUrl(currentShader.id, currentShader.kind)
     : window.location.href;
   const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
-  const standaloneEmbedCode = useMemo(
-    () =>
-      embedOpen
-        ? buildStandaloneEmbedCode({
-            source,
-            values,
-            kind,
-          })
-        : "",
-    [embedOpen, kind, source, values]
-  );
+  const standaloneEmbedCode = useMemo(() => {
+    if (!embedOpen) return "";
+    if (kind === COMPOSITION_KIND) {
+      return buildStandaloneEmbedCode({
+        composition: serializeCompositionExport(
+          composition,
+          resolvedByKey,
+          liveShaderSourceRef.current
+        ),
+      });
+    }
+    return buildStandaloneEmbedCode({
+      source,
+      values,
+      kind,
+    });
+  }, [composition, embedOpen, kind, resolvedByKey, source, values]);
   const embedCode =
     embedTab === "code" ? standaloneEmbedCode : iframeEmbedCode;
 
@@ -4512,6 +4540,7 @@ export default function App() {
                 }
                 onChange={onCompositionChange}
                 onSelectLayer={onCompositionSelectLayer}
+                onPropertiesLayerChange={setCompositionPropsLayerId}
                 onOpenShader={(shaderId) => chooseItem(shaderId)}
                 onResetLayer={resetProperties}
                 onMediaFill={(type) => {
@@ -4722,10 +4751,8 @@ export default function App() {
         setError(downloadError.message || String(downloadError));
       });
     } else if (value === "video") {
-      if (kind === COMPOSITION_KIND) return;
       setVideoExportOpen(true);
     } else if (value === "embed") {
-      if (kind === COMPOSITION_KIND) return;
       openEmbedDialog();
     }
   });
@@ -4929,6 +4956,9 @@ export default function App() {
           onPickFile={onPreviewFile}
           onDropError={setError}
           dropTarget={isComposerView ? "fill" : "input"}
+          showCanvasControls={
+            !isComposerView || compositionPropsLayerId != null
+          }
           canvasTheme={canvasTheme}
         />
       )}
@@ -5036,16 +5066,10 @@ export default function App() {
               <fig-menu-item value="image">
                 Image
               </fig-menu-item>
-              <fig-menu-item
-                value="video"
-                disabled={isComposerView ? "" : undefined}
-              >
+              <fig-menu-item value="video">
                 Video…
               </fig-menu-item>
-              <fig-menu-item
-                value="embed"
-                disabled={isComposerView ? "" : undefined}
-              >
+              <fig-menu-item value="embed">
                 Embed…
               </fig-menu-item>
             </fig-menu>

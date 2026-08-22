@@ -53,6 +53,7 @@ export default function ShaderPicker({
   const popupRef = useRef(null);
   const chooserRef = useRef(null);
   const searchRef = useRef(null);
+  const allowDismissRef = useRef(false);
   const [query, setQuery] = useState("");
   const filteredCards = useMemo(
     () => filterShaderLibraryCards(cards, { query, kind: type }),
@@ -60,6 +61,7 @@ export default function ShaderPicker({
   );
 
   const close = useCallback(() => {
+    allowDismissRef.current = true;
     onOpenChange?.(false);
   }, [onOpenChange]);
 
@@ -71,16 +73,46 @@ export default function ShaderPicker({
   useEffect(() => {
     const popup = popupRef.current;
     const trigger = triggerId ? document.getElementById(triggerId) : null;
-    if (!popup) return;
+    if (!popup) return undefined;
+
+    popup.setAttribute("closedby", "none");
+    if ("closedBy" in popup) popup.closedBy = "none";
+
+    const onCancel = (event) => {
+      event.preventDefault();
+    };
+    const onClose = () => {
+      if (allowDismissRef.current) {
+        allowDismissRef.current = false;
+        return;
+      }
+      if (!open || disabled) return;
+      popup.setAttribute("closedby", "none");
+      if ("closedBy" in popup) popup.closedBy = "none";
+      popup.open = true;
+    };
+    const onCloseButton = (event) => {
+      if (event.target.closest?.("[close-dialog]")) close();
+    };
+    popup.addEventListener("cancel", onCancel);
+    popup.addEventListener("close", onClose);
+    popup.addEventListener("click", onCloseButton);
+
     if (open && !disabled) {
       popup.open = true;
       trigger?.setAttribute("aria-expanded", "true");
       trigger?.setAttribute("aria-haspopup", "dialog");
-      return;
+    } else {
+      popup.open = false;
+      trigger?.setAttribute("aria-expanded", "false");
     }
-    popup.open = false;
-    trigger?.setAttribute("aria-expanded", "false");
-  }, [disabled, open, triggerId]);
+
+    return () => {
+      popup.removeEventListener("cancel", onCancel);
+      popup.removeEventListener("close", onClose);
+      popup.removeEventListener("click", onCloseButton);
+    };
+  }, [close, disabled, open, triggerId]);
 
   useEffect(() => {
     if (!interceptTrigger || !triggerId) return undefined;
@@ -140,10 +172,9 @@ export default function ShaderPicker({
       handle="fig-header"
       position={popupPosition}
       popover="manual"
-      closedby="any"
+      closedby="none"
       anchor={`#${anchorId}`}
-      onClose={close}
-      onCancel={close}
+      onCancel={(event) => event.preventDefault()}
     >
       <fig-header class="shader-picker-search">
         <fig-input-text

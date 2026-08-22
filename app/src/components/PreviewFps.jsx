@@ -45,12 +45,9 @@ function PreviewFps({ hostRef, canvasTheme = "light", onCanvasThemeChange }) {
     const sample = () => {
       const now = performance.now();
       const host = hostRef.current;
-      const currentFrame = Number(host?.frame?.frame) || 0;
+      const currentFrame = Number(host?.presentedFrames) || 0;
       const nextFps =
-        host?.ready &&
-        host?.running &&
-        host?.active &&
-        previousFrame != null
+        host?.ready && host?.active && previousFrame != null
           ? calculateFrameRate(previousFrame, currentFrame, now - previousTime)
           : 0;
       previousFrame = currentFrame;
