@@ -1,29 +1,58 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  formatVideoExportPixels,
   resolveVideoFrameTime,
-  resolveVideoDimensions,
+  resolveVideoExportAspect,
+  resolveVideoExportResolution,
+  resolveVideoExportSize,
   supportedWebmMimeType,
   supportsOfflineVideoExport,
   videoExportFramePlan,
+  videoResolutionOptions,
 } from "./exportVideo.js";
 
-test("resolveVideoDimensions keeps current dimensions", () => {
-  assert.deepEqual(resolveVideoDimensions("current", 814, 926), {
+test("resolveVideoExportSize keeps current dimensions", () => {
+  assert.deepEqual(resolveVideoExportSize("current", "16:9", 814, 926), {
     width: 814,
     height: 926,
   });
 });
 
-test("resolveVideoDimensions parses and caps presets", () => {
-  assert.deepEqual(resolveVideoDimensions("1920x1080", 1, 1), {
+test("resolveVideoExportSize maps resolution and aspect", () => {
+  assert.deepEqual(resolveVideoExportSize("1080", "16:9", 1, 1), {
     width: 1920,
     height: 1080,
   });
-  assert.deepEqual(resolveVideoDimensions("4096x2160", 1, 1), {
+  assert.deepEqual(resolveVideoExportSize("2k", "1:1", 1, 1), {
     width: 2048,
     height: 2048,
   });
+  assert.deepEqual(resolveVideoExportSize("4k", "16:9", 1, 1), {
+    width: 3840,
+    height: 2160,
+  });
+  assert.deepEqual(resolveVideoExportSize("4k", "9:16", 1, 1), {
+    width: 2160,
+    height: 3840,
+  });
+});
+
+test("videoResolutionOptions labels Current with pixel size", () => {
+  assert.equal(formatVideoExportPixels(1920, 1080), "1920 × 1080");
+  assert.equal(formatVideoExportPixels(0, 1080), "");
+  assert.equal(
+    videoResolutionOptions(814, 926)[0].label,
+    "Current (814 × 926)"
+  );
+  assert.equal(videoResolutionOptions()[0].label, "Current");
+});
+
+test("resolveVideoExportResolution and aspect fall back safely", () => {
+  assert.equal(resolveVideoExportResolution("4k"), "4k");
+  assert.equal(resolveVideoExportResolution("uhd"), "current");
+  assert.equal(resolveVideoExportAspect("1:1"), "1:1");
+  assert.equal(resolveVideoExportAspect("21:9"), "16:9");
 });
 
 test("supportedWebmMimeType selects the first supported codec", () => {

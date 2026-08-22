@@ -1,23 +1,75 @@
-export const VIDEO_DIMENSION_OPTIONS = [
+export const VIDEO_RESOLUTION_OPTIONS = [
   { value: "current", label: "Current" },
-  { value: "512x512", label: "512 × 512" },
-  { value: "1080x1080", label: "1080 × 1080" },
-  { value: "1920x1080", label: "1920 × 1080" },
-  { value: "1080x1920", label: "1080 × 1920" },
+  { value: "1080", label: "1080" },
+  { value: "2k", label: "2K" },
+  { value: "4k", label: "4K" },
 ];
 
-export function resolveVideoDimensions(value, currentWidth, currentHeight) {
+export function formatVideoExportPixels(width, height) {
+  const w = Math.max(0, Math.round(Number(width) || 0));
+  const h = Math.max(0, Math.round(Number(height) || 0));
+  if (!w || !h) return "";
+  return `${w} × ${h}`;
+}
+
+export function videoResolutionOptions(width, height) {
+  const pixels = formatVideoExportPixels(width, height);
+  return VIDEO_RESOLUTION_OPTIONS.map((option) =>
+    option.value === "current"
+      ? { ...option, label: pixels ? `Current (${pixels})` : "Current" }
+      : option
+  );
+}
+
+export const VIDEO_ASPECT_OPTIONS = [
+  { value: "1:1", label: "1:1" },
+  { value: "16:9", label: "16:9" },
+  { value: "9:16", label: "9:16" },
+];
+
+const VIDEO_EXPORT_SIZES = {
+  1080: {
+    "1:1": [1080, 1080],
+    "16:9": [1920, 1080],
+    "9:16": [1080, 1920],
+  },
+  "2k": {
+    "1:1": [2048, 2048],
+    "16:9": [2048, 1152],
+    "9:16": [1152, 2048],
+  },
+  "4k": {
+    "1:1": [3840, 3840],
+    "16:9": [3840, 2160],
+    "9:16": [2160, 3840],
+  },
+};
+
+export function resolveVideoExportResolution(value) {
+  return value === "current" || value === "1080" || value === "2k" || value === "4k"
+    ? value
+    : "current";
+}
+
+export function resolveVideoExportAspect(value) {
+  return value === "1:1" || value === "16:9" || value === "9:16" ? value : "16:9";
+}
+
+export function resolveVideoExportSize(
+  resolution,
+  aspect,
+  currentWidth,
+  currentHeight
+) {
   const fallback = {
     width: Math.max(1, Math.round(Number(currentWidth) || 1)),
     height: Math.max(1, Math.round(Number(currentHeight) || 1)),
   };
-  if (!value || value === "current") return fallback;
-  const match = /^(\d+)x(\d+)$/.exec(String(value));
-  if (!match) return fallback;
-  return {
-    width: Math.min(2048, Math.max(1, Number(match[1]))),
-    height: Math.min(2048, Math.max(1, Number(match[2]))),
-  };
+  const resolved = resolveVideoExportResolution(resolution);
+  if (resolved === "current") return fallback;
+  const pair = VIDEO_EXPORT_SIZES[resolved]?.[resolveVideoExportAspect(aspect)];
+  if (!pair) return fallback;
+  return { width: pair[0], height: pair[1] };
 }
 
 export function supportedWebmMimeType(MediaRecorderClass = window.MediaRecorder) {
@@ -38,6 +90,20 @@ export function supportedWebmMimeType(MediaRecorderClass = window.MediaRecorder)
 const VIDEO_EXPORT_STALL_TIMEOUT_MS = 30_000;
 
 export { videoExportFramePlan } from "./videoExportFrames.js";
+export {
+  EMBED_FORMAT_OPTIONS,
+  IMAGE_FORMAT_OPTIONS,
+  VIDEO_EXPORT_MAX_DIM,
+  VIDEO_FORMAT_OPTIONS,
+  evenExportSize,
+  imageExportHasQuality,
+  imageExportQualityFactor,
+  resolveEmbedFormat,
+  resolveImageExportFormat,
+  resolveImageExportQuality,
+  resolveVideoExportFormat,
+  videoExportFileExtension,
+} from "./videoExportEncode.js";
 
 export function supportsOfflineVideoExport({
   WorkerClass = globalThis.Worker,
@@ -173,6 +239,7 @@ export async function renderVideoInWorker({
   duration,
   frameRate,
   bitrate,
+  format = "mp4",
   onProgress,
 }) {
   if (!supportsOfflineVideoExport()) {
@@ -288,6 +355,7 @@ export async function renderVideoInWorker({
         duration,
         frameRate,
         bitrate,
+        format,
       },
       transfer
     );

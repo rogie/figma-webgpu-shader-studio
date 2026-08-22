@@ -11,7 +11,7 @@ import CompositionEditor from "./components/CompositionEditor.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
-import EmbedDialog from "./components/EmbedDialog.jsx";
+import ExportDialog from "./components/ExportDialog.jsx";
 import ExportIcon from "./components/ExportIcon.jsx";
 import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
@@ -31,9 +31,18 @@ import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
 import {
+  evenExportSize,
   renderVideoInWorker,
-  resolveVideoDimensions,
-  VIDEO_DIMENSION_OPTIONS,
+  imageExportQualityFactor,
+  resolveEmbedFormat,
+  resolveImageExportFormat,
+  resolveImageExportQuality,
+  resolveVideoExportAspect,
+  resolveVideoExportFormat,
+  resolveVideoExportResolution,
+  resolveVideoExportSize,
+  videoExportFileExtension,
+  videoResolutionOptions,
 } from "./runtime/exportVideo.js";
 import { ShaderHost } from "./runtime/host.js";
 import { loadModule } from "./runtime/loader.js";
@@ -404,11 +413,15 @@ export default function App() {
   const [pendingMedia, setPendingMedia] = useState(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [videoExportOpen, setVideoExportOpen] = useState(false);
-  const [embedOpen, setEmbedOpen] = useState(false);
-  const [embedTab, setEmbedTab] = useState("code");
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportTab, setExportTab] = useState("image");
   const [videoExportSettings, setVideoExportSettings] = useState({
-    dimensions: "current",
+    format: "mp4",
+    imageFormat: "image/webp",
+    imageQuality: 100,
+    embedFormat: "code",
+    resolution: "current",
+    aspect: "16:9",
     duration: 5,
     frameRate: 30,
     bitrate: 8,
@@ -535,15 +548,20 @@ export default function App() {
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
   const noticeToastRef = useRef(null);
-  const videoExportDialogRef = useRef(null);
-  const embedDialogRef = useRef(null);
-  const embedTabsRef = useRef(null);
+  const exportDialogRef = useRef(null);
+  const exportTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
   const inputLoadingToastRef = useRef(null);
-  const videoDimensionsRef = useRef(null);
+  const imageFormatRef = useRef(null);
+  const imageResolutionRef = useRef(null);
+  const imageAspectRef = useRef(null);
+  const videoFormatRef = useRef(null);
+  const videoResolutionRef = useRef(null);
+  const videoAspectRef = useRef(null);
   const videoFrameRateRef = useRef(null);
   const videoBitrateRef = useRef(null);
+  const embedFormatRef = useRef(null);
   const deleteDialogRef = useRef(null);
   const editorCardsRef = useRef([]);
   const chooseItemRef = useRef(() => {});
@@ -895,36 +913,26 @@ export default function App() {
   }, [publishOpen]);
 
   useEffect(() => {
-    const dialog = videoExportDialogRef.current;
+    const dialog = exportDialogRef.current;
     if (!dialog) return;
-    if (videoExportOpen) {
+    if (exportOpen) {
       if (!dialog.open) dialog.showModal();
     } else if (dialog.open) {
       dialog.close();
     }
-  }, [videoExportOpen]);
+  }, [exportOpen]);
 
   useEffect(() => {
-    const dialog = embedDialogRef.current;
-    if (!dialog) return;
-    if (embedOpen) {
-      if (!dialog.open) dialog.showModal();
-    } else if (dialog.open) {
-      dialog.close();
-    }
-  }, [embedOpen]);
-
-  useEffect(() => {
-    const tabs = embedTabsRef.current;
+    const tabs = exportTabsRef.current;
     const onInput = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "code");
-      if (value === "code" || value === "iframe") {
-        setEmbedTab(value);
+      const value = String(event.detail ?? event.target.value ?? "image");
+      if (value === "image" || value === "video" || value === "embed") {
+        setExportTab(value);
       }
     };
     tabs?.addEventListener("input", onInput);
     return () => tabs?.removeEventListener("input", onInput);
-  }, []);
+  }, [exportOpen]);
 
   useEffect(() => {
     const toast = videoExportToastRef.current;
@@ -944,9 +952,15 @@ export default function App() {
   }, [uploading]);
 
   useEffect(() => {
-    const dimensionsSelect = videoDimensionsRef.current;
+    const imageFormatSelect = imageFormatRef.current;
+    const formatSelect = videoFormatRef.current;
+    const imageResolutionSelect = imageResolutionRef.current;
+    const imageAspectSelect = imageAspectRef.current;
+    const resolutionSelect = videoResolutionRef.current;
+    const aspectSelect = videoAspectRef.current;
     const frameRateSelect = videoFrameRateRef.current;
     const bitrateSelect = videoBitrateRef.current;
+    const embedFormatSelect = embedFormatRef.current;
     const readValue = (event) => {
       const detail = event.detail;
       return String(
@@ -955,16 +969,34 @@ export default function App() {
           : (detail ?? event.target.value)
       );
     };
+    const onImageFormat = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        imageFormat: resolveImageExportFormat(readValue(event)),
+      }));
+    };
+    const onFormat = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        format: resolveVideoExportFormat(readValue(event)),
+      }));
+    };
+    const onResolution = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        resolution: resolveVideoExportResolution(readValue(event)),
+      }));
+    };
+    const onAspect = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        aspect: resolveVideoExportAspect(readValue(event)),
+      }));
+    };
     const onFrameRate = (event) => {
       setVideoExportSettings((settings) => ({
         ...settings,
         frameRate: Number(readValue(event)),
-      }));
-    };
-    const onDimensions = (event) => {
-      setVideoExportSettings((settings) => ({
-        ...settings,
-        dimensions: readValue(event),
       }));
     };
     const onBitrate = (event) => {
@@ -973,15 +1005,33 @@ export default function App() {
         bitrate: Number(readValue(event)),
       }));
     };
-    dimensionsSelect?.addEventListener("change", onDimensions);
+    const onEmbedFormat = (event) => {
+      setVideoExportSettings((settings) => ({
+        ...settings,
+        embedFormat: resolveEmbedFormat(readValue(event)),
+      }));
+    };
+    imageFormatSelect?.addEventListener("change", onImageFormat);
+    formatSelect?.addEventListener("change", onFormat);
+    imageResolutionSelect?.addEventListener("change", onResolution);
+    imageAspectSelect?.addEventListener("change", onAspect);
+    resolutionSelect?.addEventListener("change", onResolution);
+    aspectSelect?.addEventListener("change", onAspect);
     frameRateSelect?.addEventListener("change", onFrameRate);
     bitrateSelect?.addEventListener("change", onBitrate);
+    embedFormatSelect?.addEventListener("change", onEmbedFormat);
     return () => {
-      dimensionsSelect?.removeEventListener("change", onDimensions);
+      imageFormatSelect?.removeEventListener("change", onImageFormat);
+      formatSelect?.removeEventListener("change", onFormat);
+      imageResolutionSelect?.removeEventListener("change", onResolution);
+      imageAspectSelect?.removeEventListener("change", onAspect);
+      resolutionSelect?.removeEventListener("change", onResolution);
+      aspectSelect?.removeEventListener("change", onAspect);
       frameRateSelect?.removeEventListener("change", onFrameRate);
       bitrateSelect?.removeEventListener("change", onBitrate);
+      embedFormatSelect?.removeEventListener("change", onEmbedFormat);
     };
-  }, []);
+  }, [videoExportSettings.resolution]);
 
   useEffect(() => {
     const dialog = deleteDialogRef.current;
@@ -2909,20 +2959,32 @@ export default function App() {
 
   const downloadPreviewImage = useCallback(async () => {
     const host = hostRef.current;
-    const width = host?.logicalOutputSize?.width;
-    const height = host?.logicalOutputSize?.height;
-    if (!host || !width || !height) {
+    const canvas = host?.canvas;
+    if (!host?.ready || !canvas?.width || !canvas?.height) {
       setError("Preview image is not ready to download.");
       return;
     }
+
+    const imageType = resolveImageExportFormat(videoExportSettings.imageFormat);
+    const resolvedSize = resolveVideoExportSize(
+      videoExportSettings.resolution,
+      videoExportSettings.aspect,
+      host.logicalOutputSize?.width || canvas.width,
+      host.logicalOutputSize?.height || canvas.height
+    );
+    const { width, height } = resolvedSize;
+    setExportOpen(false);
 
     let blob;
     try {
       blob = await host.captureThumbnailBlob({
         width,
         height,
-        type: "image/webp",
-        quality: 0.92,
+        type: imageType,
+        quality: imageExportQualityFactor(
+          videoExportSettings.imageQuality,
+          imageType
+        ),
         shouldResume: () => playPreferenceRef.current,
       });
     } catch (captureError) {
@@ -2956,7 +3018,26 @@ export default function App() {
     link.click();
     link.remove();
     URL.revokeObjectURL(url);
-  }, [shaderName]);
+  }, [shaderName, videoExportSettings]);
+
+  const currentExportSize = useMemo(() => {
+    if (!exportOpen) return null;
+    const host = hostRef.current;
+    const width = Math.max(
+      1,
+      Math.round(host?.logicalOutputSize?.width || host?.canvas?.width || 0)
+    );
+    const height = Math.max(
+      1,
+      Math.round(host?.logicalOutputSize?.height || host?.canvas?.height || 0)
+    );
+    return width && height ? { width, height } : null;
+  }, [exportOpen, previewRevision]);
+
+  const resolutionOptions = useMemo(
+    () => videoResolutionOptions(currentExportSize?.width, currentExportSize?.height),
+    [currentExportSize]
+  );
 
   const exportPreviewVideo = useCallback(async () => {
     const host = hostRef.current;
@@ -2978,13 +3059,17 @@ export default function App() {
       32,
       Math.max(1, Number(videoExportSettings.bitrate) || 8)
     );
-    const { width, height } = resolveVideoDimensions(
-      videoExportSettings.dimensions,
+    const format = resolveVideoExportFormat(videoExportSettings.format);
+    const resolvedSize = resolveVideoExportSize(
+      videoExportSettings.resolution,
+      videoExportSettings.aspect,
       host.logicalOutputSize?.width || canvas.width,
       host.logicalOutputSize?.height || canvas.height
     );
+    const { width, height } =
+      format === "mp4" ? evenExportSize(resolvedSize.width, resolvedSize.height) : resolvedSize;
 
-    setVideoExportOpen(false);
+    setExportOpen(false);
     setVideoExportProgress({ progress: 0 });
 
     try {
@@ -3021,6 +3106,7 @@ export default function App() {
         duration,
         frameRate,
         bitrate,
+        format,
         onProgress: (progress) =>
           setVideoExportProgress({ progress }),
       });
@@ -3035,7 +3121,7 @@ export default function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = `${baseName}.webm`;
+      link.download = `${baseName}.${videoExportFileExtension(format, blob.type)}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -3963,9 +4049,11 @@ export default function App() {
     showNotice("Share link copied");
   }, [currentShader, dirty, showNotice]);
 
-  const openEmbedDialog = useCallback(() => {
-    setEmbedTab("code");
-    setEmbedOpen(true);
+  const openExportDialog = useCallback((tab = "image") => {
+    if (tab === "image" || tab === "video" || tab === "embed") {
+      setExportTab(tab);
+    }
+    setExportOpen(true);
   }, []);
 
   const embedUrl = currentShader
@@ -3973,7 +4061,7 @@ export default function App() {
     : window.location.href;
   const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
   const standaloneEmbedCode = useMemo(() => {
-    if (!embedOpen) return "";
+    if (!exportOpen) return "";
     if (kind === COMPOSITION_KIND) {
       return buildStandaloneEmbedCode({
         composition: serializeCompositionExport(
@@ -3988,9 +4076,11 @@ export default function App() {
       values,
       kind,
     });
-  }, [composition, embedOpen, kind, resolvedByKey, source, values]);
+  }, [composition, exportOpen, kind, resolvedByKey, source, values]);
   const embedCode =
-    embedTab === "code" ? standaloneEmbedCode : iframeEmbedCode;
+    videoExportSettings.embedFormat === "iframe"
+      ? iframeEmbedCode
+      : standaloneEmbedCode;
 
   const copyEmbedCode = useCallback(async () => {
     try {
@@ -4781,17 +4871,6 @@ export default function App() {
     if (!Number.isFinite(percent)) return;
     requestPreviewZoom(percent / 100);
   });
-  const exportMenuRef = useFigMenuChange((value) => {
-    if (value === "image") {
-      downloadPreviewImage().catch((downloadError) => {
-        setError(downloadError.message || String(downloadError));
-      });
-    } else if (value === "video") {
-      setVideoExportOpen(true);
-    } else if (value === "embed") {
-      openEmbedDialog();
-    }
-  });
 
   const shaderEditorHeader = (
           <fig-header class="shader-editor-header" borderless>
@@ -5036,29 +5115,18 @@ export default function App() {
                   </fig-button>
                 </fig-tooltip>
               )}
-            <fig-menu ref={exportMenuRef} position="top right">
-              <fig-tooltip text="Export">
-                <fig-button
-                  fig-menu-trigger=""
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Export preview"
-                  disabled={videoExportProgress ? "" : undefined}
-                >
-                  <ExportIcon />
-                </fig-button>
-              </fig-tooltip>
-              <fig-menu-item value="image">
-                Image
-              </fig-menu-item>
-              <fig-menu-item value="video">
-                Video…
-              </fig-menu-item>
-              <fig-menu-item value="embed">
-                Embed…
-              </fig-menu-item>
-            </fig-menu>
+            <fig-tooltip text="Export">
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label="Export"
+                disabled={videoExportProgress ? "" : undefined}
+                onClick={() => openExportDialog(exportTab)}
+              >
+                <ExportIcon />
+              </fig-button>
+            </fig-tooltip>
           </div>
   );
 
@@ -5483,104 +5551,51 @@ export default function App() {
       </div>
       )}
 
-      <dialog
-        is="fig-dialog"
-        ref={videoExportDialogRef}
-        class="video-export-dialog"
-        title="Export video"
-        modal=""
-        closedby="closerequest"
-        position="center center"
-        autoresize=""
-        onClose={() => setVideoExportOpen(false)}
-        onCancel={() => setVideoExportOpen(false)}
-      >
-        <fig-content>
-          <fig-field direction="horizontal" columns="thirds">
-            <label>Dimensions</label>
-            <fig-select
-              ref={videoDimensionsRef}
-              value={videoExportSettings.dimensions}
-              position="bottom right"
-              full=""
-              options={JSON.stringify(VIDEO_DIMENSION_OPTIONS)}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-          </fig-field>
-          <fig-field direction="horizontal" columns="thirds">
-            <label>Duration</label>
-            <fig-slider
-              value={videoExportSettings.duration}
-              min="1"
-              max="30"
-              step="1"
-              units="s"
-              full=""
-              onInput={(event) =>
-                setVideoExportSettings((settings) => ({
-                  ...settings,
-                  duration: Number(event.target.value ?? event.detail),
-                }))
-              }
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-          </fig-field>
-          <fig-field direction="horizontal" columns="thirds">
-            <label>Frame rate</label>
-            <fig-select
-              ref={videoFrameRateRef}
-              value={videoExportSettings.frameRate}
-              position="bottom right"
-              full=""
-              options={JSON.stringify([
-                { value: "24", label: "24 fps" },
-                { value: "30", label: "30 fps" },
-                { value: "60", label: "60 fps" },
-              ])}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-          </fig-field>
-          <fig-field direction="horizontal" columns="thirds">
-            <label>Bitrate</label>
-            <fig-select
-              ref={videoBitrateRef}
-              value={videoExportSettings.bitrate}
-              position="bottom right"
-              full=""
-              options={JSON.stringify([
-                { value: "4", label: "4 Mbps" },
-                { value: "8", label: "8 Mbps" },
-                { value: "16", label: "16 Mbps" },
-                { value: "32", label: "32 Mbps" },
-              ])}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-          </fig-field>
-        </fig-content>
-        <fig-footer>
-          <fig-button
-            type="button"
-            variant="primary"
-            onClick={() => {
-              exportPreviewVideo().catch((videoError) => {
-                setVideoExportProgress(null);
-                setError(videoError.message || String(videoError));
-              });
-            }}
-          >
-            Export
-          </fig-button>
-        </fig-footer>
-      </dialog>
-
-      <EmbedDialog
-        dialogRef={embedDialogRef}
-        tabsRef={embedTabsRef}
-        tab={embedTab}
-        code={embedCode}
-        onClose={() => setEmbedOpen(false)}
-        onDownload={downloadEmbedCode}
-        onCopy={copyEmbedCode}
+      <ExportDialog
+        dialogRef={exportDialogRef}
+        tabsRef={exportTabsRef}
+        tab={exportTab}
+        settings={videoExportSettings}
+        resolutionOptions={resolutionOptions}
+        opaqueContent={opaqueContent}
+        imageFormatRef={imageFormatRef}
+        imageResolutionRef={imageResolutionRef}
+        imageAspectRef={imageAspectRef}
+        videoFormatRef={videoFormatRef}
+        videoResolutionRef={videoResolutionRef}
+        videoAspectRef={videoAspectRef}
+        videoFrameRateRef={videoFrameRateRef}
+        videoBitrateRef={videoBitrateRef}
+        embedFormatRef={embedFormatRef}
+        embedCode={embedCode}
+        onClose={() => setExportOpen(false)}
+        onExportImage={() => {
+          downloadPreviewImage().catch((downloadError) => {
+            setError(downloadError.message || String(downloadError));
+          });
+        }}
+        onExportVideo={() => {
+          exportPreviewVideo().catch((videoError) => {
+            setVideoExportProgress(null);
+            setError(videoError.message || String(videoError));
+          });
+        }}
+        onDownloadEmbed={downloadEmbedCode}
+        onCopyEmbed={copyEmbedCode}
+        onDurationInput={(event) =>
+          setVideoExportSettings((settings) => ({
+            ...settings,
+            duration: Number(event.target.value ?? event.detail),
+          }))
+        }
+        onImageQualityInput={(event) =>
+          setVideoExportSettings((settings) => ({
+            ...settings,
+            imageQuality: resolveImageExportQuality(
+              event.target.value ?? event.detail
+            ),
+          }))
+        }
       />
 
       <DeleteShaderDialog

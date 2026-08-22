@@ -33,29 +33,41 @@ const ToastPlayground = showToastPlayground
 const PastedTextPlayground = showPastedTextPlayground
   ? lazy(() => import("./components/PastedTextPlayground.jsx"))
   : null;
+const Agentation = import.meta.env.DEV
+  ? lazy(() =>
+      import("agentation").then((mod) => ({ default: mod.Agentation }))
+    )
+  : null;
 
 createRoot(document.getElementById("root")).render(
   <StrictMode>
-    {showStreamingCodePlayground ? (
-      <Suspense fallback={null}>
-        <StreamingCodeBlockPlayground />
-      </Suspense>
-    ) : showChatComposerPlayground ? (
-      <Suspense fallback={null}>
-        <ChatComposerPlayground />
-      </Suspense>
-    ) : showToastPlayground ? (
-      <Suspense fallback={null}>
-        <ToastPlayground />
-      </Suspense>
-    ) : showPastedTextPlayground ? (
-      <Suspense fallback={null}>
-        <PastedTextPlayground />
-      </Suspense>
-    ) : (
-      <AuthProvider>
-        {isFigmaOAuthCallback() ? <FigmaOAuthCallback /> : <App />}
-      </AuthProvider>
-    )}
+    <>
+      {showStreamingCodePlayground ? (
+        <Suspense fallback={null}>
+          <StreamingCodeBlockPlayground />
+        </Suspense>
+      ) : showChatComposerPlayground ? (
+        <Suspense fallback={null}>
+          <ChatComposerPlayground />
+        </Suspense>
+      ) : showToastPlayground ? (
+        <Suspense fallback={null}>
+          <ToastPlayground />
+        </Suspense>
+      ) : showPastedTextPlayground ? (
+        <Suspense fallback={null}>
+          <PastedTextPlayground />
+        </Suspense>
+      ) : (
+        <AuthProvider>
+          {isFigmaOAuthCallback() ? <FigmaOAuthCallback /> : <App />}
+        </AuthProvider>
+      )}
+      {Agentation ? (
+        <Suspense fallback={null}>
+          <Agentation />
+        </Suspense>
+      ) : null}
+    </>
   </StrictMode>
 );

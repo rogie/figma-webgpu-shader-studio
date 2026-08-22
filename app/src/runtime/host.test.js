@@ -12,6 +12,21 @@ function makeHost() {
   return host;
 }
 
+test("export host can raise the dimension cap and lock 1x output", () => {
+  const host = new ShaderHost(
+    {
+      addEventListener() {},
+      removeEventListener() {},
+    },
+    {
+      maxDimension: 4096,
+      previewPixelRatioMode: "1x",
+    }
+  );
+  assert.equal(host.maxDimension, 4096);
+  assert.equal(host.previewPixelRatioMode, "1x");
+});
+
 test("play schedules RAF even when animation source inference is false", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   let rafCalls = 0;
@@ -862,4 +877,22 @@ test("composition presents increment presentedFrames once per preview frame", ()
 
   assert.equal(host._present(), "passthrough");
   assert.equal(host.presentedFrames, 1);
+});
+
+test("waitForPresentedFrame waits for submitted GPU work", async () => {
+  const host = makeHost();
+  let waited = 0;
+  host.device = {
+    queue: {
+      async onSubmittedWorkDone() {
+        waited += 1;
+      },
+    },
+  };
+  await host.waitForPresentedFrame();
+  assert.equal(waited, 1);
+
+  host.ready = false;
+  await host.waitForPresentedFrame();
+  assert.equal(waited, 1);
 });

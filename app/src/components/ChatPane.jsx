@@ -1245,9 +1245,9 @@ ${pendingPlan.content}
         {messages.length === 0 && (
           <div className="chat-empty">
             <p>
-              Iterate on <code>{fileName}</code>. Chat includes the current
-              module source and Figma shader authoring skills. History for this
-              shader is saved on this device.
+              Iterate on this shader. Chat includes the current module source
+              and Figma shader authoring skills. History for this shader is
+              saved on this device.
             </p>
             {!isSupabaseConfigured && (
               <p className="chat-error">

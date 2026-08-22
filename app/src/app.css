@@ -257,6 +257,11 @@ body,
       border-radius: var(--viewer-radius);
 
       .canvas-stage {
+        --checkerboard: repeating-conic-gradient(
+            rgba(0, 0, 0, 0.1) 0% 25%,
+            rgba(255, 255, 255, 0.1) 0% 50%
+          )
+          0 0 / 1.33332rem 1.33332rem;
         position: absolute;
         inset: 0;
         border-radius: var(--viewer-radius);
@@ -834,16 +839,11 @@ dialog[is="fig-toast"].publish-toast {
   }
 }
 
-dialog.video-export-dialog {
-  width: 280px;
-  max-width: calc(100vw - var(--spacer-6));
-}
+dialog.export-dialog {
+  width: 320px;
 
-dialog.embed-dialog {
-  width: min(440px, calc(100vw - var(--spacer-6)));
-
-  .embed-tabs {
-    margin-top: var(--spacer-2);
+  fig-header {
+    padding-left: 0;
   }
 
   fig-field {

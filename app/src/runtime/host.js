@@ -49,10 +49,17 @@ function formatShaderCompilationMessage(message) {
 }
 
 export class ShaderHost {
-  constructor(canvas, { onError, onStatus } = {}) {
+  constructor(
+    canvas,
+    { onError, onStatus, maxDimension, previewPixelRatioMode } = {}
+  ) {
     this.canvas = canvas;
     this.onError = onError || (() => {});
     this.onStatus = onStatus || (() => {});
+    this.maxDimension = Math.max(
+      1,
+      Math.round(Number(maxDimension) || MAX_DIM)
+    );
 
     this.device = null;
     this.context = null;
@@ -67,7 +74,10 @@ export class ShaderHost {
     this.effectVisible = true;
     this.active = true;
     this.previewZoom = 1;
-    this.previewPixelRatioMode = readPreviewPixelRatioMode();
+    this.previewPixelRatioMode =
+      previewPixelRatioMode === "1x" || previewPixelRatioMode === "2x"
+        ? previewPixelRatioMode
+        : readPreviewPixelRatioMode();
     this.logicalOutputSize = { width: 1, height: 1 };
     this.outputCssSize = null;
     this._zoomResizeTimer = 0;
@@ -399,7 +409,7 @@ export class ShaderHost {
     const size = cssSizeToDevicePixels(
       this.htmlCssSize.width,
       this.htmlCssSize.height,
-      MAX_DIM,
+      this.maxDimension,
       this._previewPixelRatio()
     );
     if (
@@ -439,7 +449,7 @@ export class ShaderHost {
     const size = cssSizeToDevicePixels(
       cssWidth,
       cssHeight,
-      MAX_DIM,
+      this.maxDimension,
       this._previewPixelRatio()
     );
     return this._setLogicalOutputSize(size.width, size.height, {
@@ -597,7 +607,7 @@ export class ShaderHost {
     if (!source) return;
     let w = width || source.width;
     let h = height || source.height;
-    const scale = Math.min(1, MAX_DIM / Math.max(w, h));
+    const scale = Math.min(1, this.maxDimension / Math.max(w, h));
     w = Math.max(1, Math.round(w * scale));
     h = Math.max(1, Math.round(h * scale));
 
@@ -613,8 +623,8 @@ export class ShaderHost {
   setVideoInput(video) {
     this._clearInputResources();
     this.video = video;
-    const w = Math.min(MAX_DIM, video.videoWidth || 1024);
-    const h = Math.min(MAX_DIM, video.videoHeight || 1024);
+    const w = Math.min(this.maxDimension, video.videoWidth || 1024);
+    const h = Math.min(this.maxDimension, video.videoHeight || 1024);
     const sizeChanged = this._ensureInputTexture(w, h);
     this._videoFrameDirty = true;
     this._uploadVideoFrame();
@@ -670,7 +680,7 @@ export class ShaderHost {
     const size = cssSizeToDevicePixels(
       cssWidth,
       cssHeight,
-      MAX_DIM,
+      this.maxDimension,
       this._previewPixelRatio()
     );
     const sizeChanged = this._ensureInputTexture(size.width, size.height, {
@@ -1578,6 +1588,15 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.frame.deltaTime = deltaTime;
     this.frame.frame = frameNumber;
     return this._present();
+  }
+
+  /**
+   * Wait until submitted GPU work is visible on the canvas. Video export uses
+   * this before capturing a VideoFrame from the WebGPU OffscreenCanvas.
+   */
+  async waitForPresentedFrame() {
+    if (!this.ready || !this.device) return;
+    await this.device.queue.onSubmittedWorkDone();
   }
 
   /**
