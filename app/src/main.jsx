@@ -21,6 +21,7 @@ const showStreamingCodePlayground = playground === "streaming-code";
 const showChatComposerPlayground = playground === "chat-composer";
 const showToastPlayground = playground === "toasts";
 const showPastedTextPlayground = playground === "pasted-text";
+const showFillUploadPlayground = playground === "fill-upload";
 const StreamingCodeBlockPlayground = showStreamingCodePlayground
   ? lazy(() => import("./components/StreamingCodeBlockPlayground.jsx"))
   : null;
@@ -32,6 +33,9 @@ const ToastPlayground = showToastPlayground
   : null;
 const PastedTextPlayground = showPastedTextPlayground
   ? lazy(() => import("./components/PastedTextPlayground.jsx"))
+  : null;
+const FillUploadPlayground = showFillUploadPlayground
+  ? lazy(() => import("./components/FillUploadPlayground.jsx"))
   : null;
 const Agentation = import.meta.env.DEV
   ? lazy(() =>
@@ -57,6 +61,10 @@ createRoot(document.getElementById("root")).render(
       ) : showPastedTextPlayground ? (
         <Suspense fallback={null}>
           <PastedTextPlayground />
+        </Suspense>
+      ) : showFillUploadPlayground ? (
+        <Suspense fallback={null}>
+          <FillUploadPlayground />
         </Suspense>
       ) : (
         <AuthProvider>

@@ -64,6 +64,7 @@ import defaultInputUrl from "./assets/default-input.png";
 import {
   defaultVectorUrl,
   defaultVideoUrl,
+  imageBitmapForInput,
   makeSampleBitmap,
   makeSampleVectorBitmap,
   makeSampleVideoBlob,
@@ -1833,7 +1834,7 @@ export default function App() {
         const bitmap =
           mimeType === "image/svg+xml"
             ? await rasterizeSvgBlob(blob)
-            : await createImageBitmap(blob);
+            : await imageBitmapForInput(blob, host.maxDimension);
         if (!isInputApplyCurrent(generation)) {
           bitmap.close?.();
           return false;
@@ -3507,11 +3508,10 @@ export default function App() {
   const openSettings = useCallback(() => setSettingsOpen(true), []);
 
   const onPreviewFile = useCallback(
-    (file) => {
-      pickFile(file).catch((dropError) =>
-        setError(dropError.message || String(dropError))
-      );
-    },
+    (file) =>
+      pickFile(file).catch((dropError) => {
+        setError(dropError.message || String(dropError));
+      }),
     [pickFile]
   );
 
@@ -5670,6 +5670,7 @@ export default function App() {
                 hostRef={hostRef}
                 previewZoom={previewZoom}
                 onPreviewZoomChange={requestPreviewZoom}
+                showFps={!isComposerView || compositionPlayable}
               />
             )}
             {isComposerView &&

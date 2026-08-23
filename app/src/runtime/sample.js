@@ -41,6 +41,89 @@ export async function rasterizeSvgBlob(blob, fallbackSize = VECTOR_RASTER_SIZE) 
   }
 }
 
+function targetBitmapSize(width, height, maxDimension) {
+  const maxSourceDimension = Math.max(width, height);
+  const scale =
+    maxSourceDimension > maxDimension ? maxDimension / maxSourceDimension : 1;
+  return {
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
+async function imageDecoderBitmap(blob, maxDimension) {
+  if (
+    typeof ImageDecoder !== "function" ||
+    !blob.type ||
+    !(await ImageDecoder.isTypeSupported(blob.type))
+  ) {
+    return null;
+  }
+  const data = await blob.arrayBuffer();
+  let decoder = new ImageDecoder({
+    data,
+    type: blob.type,
+    preferAnimation: false,
+  });
+  try {
+    await decoder.tracks.ready;
+    const track = decoder.tracks.selectedTrack;
+    const sourceWidth = Number(track?.codedWidth) || 0;
+    const sourceHeight = Number(track?.codedHeight) || 0;
+    if (!sourceWidth || !sourceHeight) return null;
+    const target = targetBitmapSize(
+      sourceWidth,
+      sourceHeight,
+      maxDimension
+    );
+    if (
+      target.width !== sourceWidth ||
+      target.height !== sourceHeight
+    ) {
+      decoder.close();
+      decoder = new ImageDecoder({
+        data,
+        type: blob.type,
+        preferAnimation: false,
+        desiredWidth: target.width,
+        desiredHeight: target.height,
+      });
+    }
+    const { image } = await decoder.decode({ frameIndex: 0 });
+    try {
+      return await createImageBitmap(image, {
+        resizeWidth: target.width,
+        resizeHeight: target.height,
+        resizeQuality: "high",
+      });
+    } finally {
+      image.close();
+    }
+  } finally {
+    decoder.close();
+  }
+}
+
+/** Decode static media near its final GPU texture size when the browser can. */
+export async function imageBitmapForInput(blob, maxDimension = 4096) {
+  const decoded = await imageDecoderBitmap(blob, maxDimension).catch(() => null);
+  if (decoded) return decoded;
+  const bitmap = await createImageBitmap(blob);
+  const target = targetBitmapSize(bitmap.width, bitmap.height, maxDimension);
+  if (target.width === bitmap.width && target.height === bitmap.height) {
+    return bitmap;
+  }
+  try {
+    return await createImageBitmap(bitmap, {
+      resizeWidth: target.width,
+      resizeHeight: target.height,
+      resizeQuality: "high",
+    });
+  } finally {
+    bitmap.close();
+  }
+}
+
 // Load the bundled photo so effect shaders have a useful photographic input
 // immediately. createImageBitmap preserves the source dimensions and alpha.
 export async function makeSampleBitmap() {

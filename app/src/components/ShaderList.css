@@ -4,6 +4,7 @@ fig-chooser.shader-list {
   --fig-chooser-inline-padding: var(--spacer-1);
   --fig-chooser-inline-margin: 0;
   width: 100%;
+  padding-bottom: var(--spacer-2);
   overflow-x: hidden;
   gap: 1px;
 

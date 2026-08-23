@@ -19,6 +19,35 @@ function clampZoom(zoom) {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom));
 }
 
+export function FillDropOverlay({ dropTarget = "input" }) {
+  return (
+    <div className="drop-overlay">
+      <svg
+        className="drop-overlay-border"
+        width="100%"
+        height="100%"
+        aria-hidden="true"
+      >
+        <rect />
+      </svg>
+      <strong>Drop image, SVG, or video</strong>
+      <span>
+        {dropTarget === "fill"
+          ? "Replace the composition fill"
+          : "Use it as the shader input"}
+      </span>
+    </div>
+  );
+}
+
+export function FillDropLoading() {
+  return (
+    <div className="drop-loading-overlay">
+      <fig-spinner aria-label="Loading fill" />
+    </div>
+  );
+}
+
 function Preview({
   canvasRef,
   props,
@@ -43,6 +72,11 @@ function Preview({
   const [fitSize, setFitSize] = useState({ width: 0, height: 0 });
   const [overlayBox, setOverlayBox] = useState(null);
   const [view, setView] = useState({ zoom: 1, x: 0, y: 0 });
+  const [dropPreviewUrl, setDropPreviewUrl] = useState("");
+  const [dropLoading, setDropLoading] = useState(false);
+  const dropPreviewUrlRef = useRef("");
+  const dropLoadingTimerRef = useRef(0);
+  const dropLoadIdRef = useRef(0);
   const onZoomChangeRef = useRef(onZoomChange);
   onZoomChangeRef.current = onZoomChange;
   const onStageSizeRef = useRef(onStageSize);
@@ -60,6 +94,18 @@ function Preview({
   useEffect(() => {
     onZoomChangeRef.current?.(view.zoom);
   }, [view.zoom]);
+
+  useEffect(
+    () => () => {
+      if (dropPreviewUrlRef.current) {
+        URL.revokeObjectURL(dropPreviewUrlRef.current);
+      }
+      if (dropLoadingTimerRef.current) {
+        window.clearTimeout(dropLoadingTimerRef.current);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     if (!zoomRequest || zoomRequest.id === lastZoomRequestId.current) return;
@@ -240,7 +286,39 @@ function Preview({
       );
       return;
     }
-    onPickFile(file);
+    let previewUrl = "";
+    if (mimeType.startsWith("image/")) {
+      if (dropPreviewUrlRef.current) {
+        URL.revokeObjectURL(dropPreviewUrlRef.current);
+      }
+      previewUrl = URL.createObjectURL(file);
+      dropPreviewUrlRef.current = previewUrl;
+      setDropPreviewUrl(previewUrl);
+    }
+    const loadId = ++dropLoadIdRef.current;
+    if (dropLoadingTimerRef.current) {
+      window.clearTimeout(dropLoadingTimerRef.current);
+    }
+    setDropLoading(false);
+    dropLoadingTimerRef.current = window.setTimeout(() => {
+      if (dropLoadIdRef.current === loadId) setDropLoading(true);
+    }, 200);
+    Promise.resolve()
+      .then(() => onPickFile?.(file))
+      .catch((error) => {
+        onDropError?.(error?.message || String(error));
+      })
+      .finally(() => {
+        if (dropLoadIdRef.current === loadId) {
+          window.clearTimeout(dropLoadingTimerRef.current);
+          dropLoadingTimerRef.current = 0;
+          setDropLoading(false);
+        }
+        if (!previewUrl || dropPreviewUrlRef.current !== previewUrl) return;
+        URL.revokeObjectURL(previewUrl);
+        dropPreviewUrlRef.current = "";
+        setDropPreviewUrl("");
+      });
   };
 
   return (
@@ -290,7 +368,16 @@ function Preview({
             </div>
           ) : null}
         </canvas>
+        {dropPreviewUrl ? (
+          <img
+            className="drop-preview-image"
+            src={dropPreviewUrl}
+            alt=""
+            decoding="async"
+          />
+        ) : null}
       </div>
+      {dropLoading ? <FillDropLoading /> : null}
       {overlayBox && (
         <div
           ref={attachPointerSurface}
@@ -314,17 +401,7 @@ function Preview({
           ) : null}
         </div>
       )}
-      {dragging && (
-        <div className="drop-overlay">
-          <fig-icon name="add" />
-          <strong>Drop image, SVG, or video</strong>
-          <span>
-            {dropTarget === "fill"
-              ? "Replace the composition fill"
-              : "Use it as the shader input"}
-          </span>
-        </div>
-      )}
+      {dragging && <FillDropOverlay dropTarget={dropTarget} />}
     </fig-preview>
   );
 }

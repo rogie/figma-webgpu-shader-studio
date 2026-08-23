@@ -13,6 +13,7 @@ function PreviewFps({
   hostRef,
   previewZoom = 1,
   onPreviewZoomChange,
+  showFps = true,
 }) {
   const [fps, setFps] = useState(0);
   const [pixelRatioMode, setPixelRatioMode] = useState(
@@ -123,13 +124,15 @@ function PreviewFps({
           dangerouslySetInnerHTML={opaqueContent}
         />
       </fig-tooltip>
-      <div
-        className="preview-fps"
-        aria-label={`Preview rendering at ${fps} frames per second`}
-      >
-        <strong>{fps}</strong>
-        <span>FPS</span>
-      </div>
+      {showFps ? (
+        <div
+          className="preview-fps"
+          aria-label={`Preview rendering at ${fps} frames per second`}
+        >
+          <strong>{fps}</strong>
+          <span>FPS</span>
+        </div>
+      ) : null}
     </div>
   );
 }
