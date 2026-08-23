@@ -557,25 +557,13 @@ body,
       }
 
       .preview-performance {
-        position: absolute;
-        top: var(--spacer-2);
-        left: 0;
-        right: 0;
-        width: max-content;
-        margin-inline: auto;
-        z-index: 5;
-        box-sizing: border-box;
-        height: 2.5rem;
-        padding: var(--spacer-2);
         display: flex;
         align-items: center;
-        gap: var(--spacer-2);
+        gap: 0;
         color: var(--figma-color-text);
-        background: var(--figma-color-bg);
-        border-radius: var(--radius-large);
-        box-shadow: var(--figma-elevation-200);
 
-        .preview-resolution {
+        .preview-resolution,
+        .preview-zoom {
           flex: 0 0 auto;
         }
 
@@ -589,6 +577,7 @@ body,
           gap: var(--spacer-1);
           pointer-events: none;
           font-variant-numeric: tabular-nums;
+          color: var(--figma-color-text-tertiary);
 
           strong {
             min-width: 2ch;
@@ -598,7 +587,6 @@ body,
           }
 
           span {
-            color: var(--figma-color-text-secondary);
             font-weight: var(--body-medium-strong-fontWeight);
             line-height: 1;
             letter-spacing: 0.06em;
@@ -622,17 +610,6 @@ body,
         background: var(--figma-color-bg);
         border-radius: var(--radius-large);
         box-shadow: var(--figma-elevation-200);
-
-        .tools-zoom {
-          min-width: 2.75rem;
-          font-variant-numeric: tabular-nums;
-        }
-
-        .tools-input-source {
-          --fig-select-trigger-width: 5.75rem;
-          width: 5.75rem;
-          min-width: 5.75rem;
-        }
       }
 
       .fatal {
@@ -954,10 +931,6 @@ dialog.delete-shader-dialog {
     flex: 0 0 auto;
   }
 
-  fig-header {
-    padding-right: var(--spacer-2);
-  }
-
   fig-content.shader-properties-panel-content {
     flex: 1;
     min-height: 0;
@@ -967,6 +940,19 @@ dialog.delete-shader-dialog {
     flex-direction: column;
     gap: 0;
     scrollbar-width: thin;
+  }
+
+  .properties-pane {
+    padding-block: var(--spacer-3);
+    padding-top: 0;
+    border-bottom: 1px solid var(--figma-color-border);
+    fig-header {
+      padding-right: var(--spacer-2);
+    }
+  }
+
+  .properties-pane:last-child {
+    border-bottom: none;
   }
 
   .vector-control {

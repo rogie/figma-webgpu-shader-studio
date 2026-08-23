@@ -49,7 +49,12 @@ export function useShaderRuntime() {
     }
     if (videoRef.current) {
       const video = videoRef.current;
+      const stream = video.srcObject;
+      if (stream && typeof stream.getTracks === "function") {
+        stream.getTracks().forEach((track) => track.stop());
+      }
       video.pause();
+      video.srcObject = null;
       video.removeAttribute("src");
       video.load();
       video.remove();

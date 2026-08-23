@@ -4,6 +4,7 @@ import {
   emptyComposition,
   mediaFillType,
   normalizeComposition,
+  sessionInputPlan,
 } from "../lib/composition.js";
 import { readInputSource } from "../lib/inputSourceStorage.js";
 import { mediaType } from "../lib/mediaFiles.js";
@@ -29,8 +30,10 @@ export function useShaderSession({
   setInputSource,
   clearObjectUrl,
   applyMediaBlob,
+  applyPaintFill,
   loadMediaForShader,
   reapplyPreferredInput,
+  effectPaintRef,
 }) {
   return useCallback(
     async ({
@@ -76,41 +79,37 @@ export function useShaderSession({
 
       const host = hostRef.current;
       if (!host?.ready) return;
-      if (nextKind === COMPOSITION_KIND) {
-        if (graph.fill.type === "shader") {
-          clearObjectUrl();
-          host.clearInput();
-          return;
-        }
-        if (media) {
-          await applyMediaBlob(media, mediaType(media));
-          return;
-        }
-        if (cloudShader?.input_path) {
-          await loadMediaForShader(cloudShader);
-          return;
-        }
-        await reapplyPreferredInput();
-        return;
-      }
-      if (nextKind !== "effect") {
+      const plan = sessionInputPlan({
+        kind: nextKind,
+        graph,
+        media,
+        cloudShader,
+        effectPaint: effectPaintRef?.current,
+      });
+      if (plan.action === "clear") {
         clearObjectUrl();
         host.clearInput();
         return;
       }
-      if (media) {
-        await applyMediaBlob(media, mediaType(media));
+      if (plan.action === "media") {
+        await applyMediaBlob(plan.media, mediaType(plan.media));
         return;
       }
-      if (cloudShader?.input_path) {
-        await loadMediaForShader(cloudShader);
+      if (plan.action === "download") {
+        await loadMediaForShader(plan.shader);
+        return;
+      }
+      if (plan.action === "paint") {
+        await applyPaintFill(plan.paint);
         return;
       }
       await reapplyPreferredInput();
     },
     [
       applyMediaBlob,
+      applyPaintFill,
       clearObjectUrl,
+      effectPaintRef,
       hostRef,
       inputSourceRef,
       loadMediaForShader,

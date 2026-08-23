@@ -118,24 +118,34 @@ test("video playback follows the shader play state", () => {
   }
 });
 
-test("reactivating a paused host does not start its video", () => {
-  const host = makeHost();
-  let plays = 0;
-  let pauses = 0;
-  host.active = false;
-  host.video = {
-    play() {
-      plays += 1;
-    },
-    pause() {
-      pauses += 1;
-    },
-  };
+test("reactivating a paused host resumes its video input", () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = () => 42;
+  globalThis.clearInterval = () => {};
+  try {
+    const host = makeHost();
+    let plays = 0;
+    let pauses = 0;
+    host.active = false;
+    host.video = {
+      play() {
+        plays += 1;
+      },
+      pause() {
+        pauses += 1;
+      },
+    };
 
-  host.setActive(true);
+    host.setActive(true);
 
-  assert.equal(plays, 0);
-  assert.equal(pauses, 1);
+    assert.equal(plays, 1);
+    assert.equal(pauses, 0);
+    assert.equal(host._videoPollId, 42);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
 });
 
 test("decoded video frames redraw while shader playback is paused", () => {

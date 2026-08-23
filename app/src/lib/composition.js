@@ -1,4 +1,5 @@
 import { inferFeatures } from "../runtime/params.js";
+import { isPaintFillType } from "./paintFill.js";
 
 export const COMPOSITION_KIND = "composition";
 export const COMPOSITION_FILL_ID = "fill";
@@ -33,11 +34,19 @@ export function resolvedLibraryKind(shader) {
   return libraryKind(shader?.kind);
 }
 
+export function emptyFill() {
+  return { type: "none", shaderId: null, values: {}, enabled: true };
+}
+
 export function emptyComposition() {
   return {
     fill: { type: "image", shaderId: null, values: {}, enabled: true },
     effects: [],
   };
+}
+
+export function hasCompositionFill(fill) {
+  return FILL_TYPES.includes(fill?.type);
 }
 
 export function compositionShaderKey(origin, id) {
@@ -115,17 +124,30 @@ export function readReferencedShader(
 }
 
 function normalizeFill(fill) {
-  const type = FILL_TYPES.includes(fill?.type) ? fill.type : "image";
+  const type =
+    fill?.type === "none"
+      ? "none"
+      : FILL_TYPES.includes(fill?.type)
+        ? fill.type
+        : "image";
   const parsed = parseCompositionShaderId(fill?.shaderId);
   const values =
     fill?.values && typeof fill.values === "object" && !Array.isArray(fill.values)
       ? fill.values
       : {};
+  const paint =
+    fill?.paint &&
+    typeof fill.paint === "object" &&
+    !Array.isArray(fill.paint) &&
+    typeof fill.paint.type === "string"
+      ? fill.paint
+      : null;
   return {
     type,
     shaderId: type === "shader" ? parsed?.key ?? null : null,
     values,
     enabled: fill?.enabled !== false,
+    ...(paint ? { paint } : {}),
   };
 }
 
@@ -328,6 +350,12 @@ export function isCompositionPlayable(graph, resolvedByKey = new Map()) {
   const normalized = normalizeComposition(graph);
   if (normalized.fill.enabled) {
     if (normalized.fill.type === "video") return true;
+    if (
+      normalized.fill.paint?.type === "video" ||
+      normalized.fill.paint?.type === "webcam"
+    ) {
+      return true;
+    }
     if (normalized.fill.type === "shader" && normalized.fill.shaderId) {
       const fill = resolvedByKey.get(normalized.fill.shaderId);
       if (fill && fill.kind !== COMPOSITION_KIND && resolvedFeatures(fill).isAnimated) {
@@ -480,6 +508,47 @@ export function mediaFillType(fillType) {
   return fillType === "video" || fillType === "html" || fillType === "image"
     ? fillType
     : null;
+}
+
+export function fillFromInputSource(inputSource) {
+  const type =
+    inputSource === "html" ? "html" : mediaFillType(inputSource) || "image";
+  return { type, shaderId: null, values: {}, enabled: true };
+}
+
+export function compositionPaintFill(graph) {
+  const fill = normalizeFill(graph?.fill);
+  if (fill.type === "shader" || fill.type === "html") return null;
+  return isPaintFillType(fill.paint?.type) ? fill.paint : null;
+}
+
+export function sessionInputPlan({
+  kind,
+  graph = null,
+  media = null,
+  cloudShader = null,
+  effectPaint = null,
+} = {}) {
+  if (kind === COMPOSITION_KIND) {
+    const normalized = normalizeComposition(graph);
+    if (normalized.fill.type === "shader") return { action: "clear" };
+    if (media) return { action: "media", media };
+    if (cloudShader?.input_path) {
+      return { action: "download", shader: cloudShader };
+    }
+    const paint = compositionPaintFill(normalized);
+    if (paint) return { action: "paint", paint };
+    return { action: "preferred" };
+  }
+  if (kind !== "effect") return { action: "clear" };
+  if (media) return { action: "media", media };
+  if (cloudShader?.input_path) {
+    return { action: "download", shader: cloudShader };
+  }
+  if (isPaintFillType(effectPaint?.type)) {
+    return { action: "paint", paint: effectPaint };
+  }
+  return { action: "preferred" };
 }
 
 export function fillTypeForDroppedMedia(mimeType) {

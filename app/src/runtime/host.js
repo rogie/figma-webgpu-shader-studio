@@ -629,13 +629,15 @@ export class ShaderHost {
     this._videoFrameDirty = true;
     this._uploadVideoFrame();
     this._rebindAfterInputChange(sizeChanged, { resetState: true });
-    if (this.active && this.running) {
-      this._watchVideoFrames();
-      Promise.resolve(video.play?.()).catch(() => {});
-      this._scheduleLoop();
-    } else {
+    if (!this.active) {
       video.pause?.();
+      return;
     }
+    // Keep decoding while the tab is visible even if shader playback is
+    // paused — video is the input clock, not the effect clock.
+    this._watchVideoFrames();
+    Promise.resolve(video.play?.()).catch(() => {});
+    if (this.running) this._scheduleLoop();
   }
 
   // Replace the contents of an existing image input without changing texture
@@ -1641,13 +1643,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
     if (this.video) {
       this._videoFrameDirty = true;
-      if (this.running) {
-        this._watchVideoFrames();
-        // play() can reject if interrupted; playback resumes on the next start.
-        Promise.resolve(this.video.play?.()).catch(() => {});
-      } else {
-        this.video.pause?.();
-      }
+      this._watchVideoFrames();
+      // play() can reject if interrupted; playback resumes on the next start.
+      Promise.resolve(this.video.play?.()).catch(() => {});
     }
     if (this.running) {
       this.lastTime = performance.now();

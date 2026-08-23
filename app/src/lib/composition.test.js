@@ -4,7 +4,10 @@ import {
   collectCompositionFeatures,
   compositionsReferencing,
   emptyComposition,
+  emptyFill,
+  fillFromInputSource,
   fillTypeForDroppedMedia,
+  hasCompositionFill,
   isCompositionPlayable,
   hasCompositionGraph,
   libraryKind,
@@ -21,7 +24,10 @@ import {
   compositionLayerName,
   compositionLayerShaderId,
   resolveReferencedShaderSource,
+  compositionPaintFill,
+  sessionInputPlan,
   COMPOSITION_FILL_ID,
+  COMPOSITION_KIND,
 } from "./composition.js";
 
 test("empty composition defaults to an image fill", () => {
@@ -29,6 +35,106 @@ test("empty composition defaults to an image fill", () => {
     fill: { type: "image", shaderId: null, values: {}, enabled: true },
     effects: [],
   });
+});
+
+test("cleared fills are none and do not count as a fill", () => {
+  assert.deepEqual(emptyFill(), {
+    type: "none",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  });
+  assert.equal(hasCompositionFill({ type: "image" }), true);
+  assert.equal(hasCompositionFill({ type: "shader" }), true);
+  assert.equal(hasCompositionFill({ type: "none" }), false);
+  assert.equal(normalizeComposition({ fill: { type: "none" } }).fill.type, "none");
+});
+
+test("preserves paint payloads on fills", () => {
+  const graph = normalizeComposition({
+    fill: {
+      type: "image",
+      paint: { type: "solid", color: "#FF0000", alpha: 0.8 },
+    },
+  });
+  assert.deepEqual(graph.fill.paint, {
+    type: "solid",
+    color: "#FF0000",
+    alpha: 0.8,
+  });
+  assert.equal(
+    normalizeComposition({ fill: { type: "image" } }).fill.paint,
+    undefined
+  );
+});
+
+test("reads paintable fills from compositions and ignores shader fills", () => {
+  assert.deepEqual(
+    compositionPaintFill({
+      fill: { type: "image", paint: { type: "gradient", gradient: { type: "linear" } } },
+    }),
+    { type: "gradient", gradient: { type: "linear" } }
+  );
+  assert.equal(
+    compositionPaintFill({
+      fill: { type: "shader", shaderId: "cloud:1", paint: { type: "solid", color: "#f00" } },
+    }),
+    null
+  );
+  assert.equal(compositionPaintFill(emptyComposition()), null);
+});
+
+test("session input plan prefers stored composition paints over the sample", () => {
+  const paint = { type: "solid", color: "#00FF00", alpha: 1 };
+  assert.deepEqual(
+    sessionInputPlan({
+      kind: COMPOSITION_KIND,
+      graph: { fill: { type: "image", paint } },
+    }),
+    { action: "paint", paint }
+  );
+  assert.deepEqual(
+    sessionInputPlan({
+      kind: COMPOSITION_KIND,
+      graph: { fill: { type: "shader", shaderId: "cloud:1", paint } },
+    }),
+    { action: "clear" }
+  );
+  assert.deepEqual(
+    sessionInputPlan({
+      kind: COMPOSITION_KIND,
+      graph: { fill: { type: "image", paint } },
+      media: { name: "drop.png" },
+    }),
+    { action: "media", media: { name: "drop.png" } }
+  );
+  assert.deepEqual(
+    sessionInputPlan({
+      kind: COMPOSITION_KIND,
+      graph: { fill: { type: "image", paint } },
+      cloudShader: { input_path: "inputs/a.png" },
+    }),
+    { action: "download", shader: { input_path: "inputs/a.png" } }
+  );
+  assert.deepEqual(sessionInputPlan({ kind: COMPOSITION_KIND }), {
+    action: "preferred",
+  });
+  assert.deepEqual(
+    sessionInputPlan({ kind: "effect", effectPaint: paint }),
+    { action: "paint", paint }
+  );
+  assert.deepEqual(sessionInputPlan({ kind: "fill" }), { action: "clear" });
+});
+
+test("maps preview input sources onto fill types", () => {
+  assert.deepEqual(fillFromInputSource("video"), {
+    type: "video",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  });
+  assert.equal(fillFromInputSource("html").type, "html");
+  assert.equal(fillFromInputSource("vector").type, "image");
 });
 
 test("normalizes fill types, shader keys, and effect cap", () => {
@@ -145,6 +251,26 @@ test("playable when video fill, animated fill, or enabled animated effect", () =
   assert.equal(
     isCompositionPlayable(
       { fill: { type: "video" }, effects: [] },
+      resolved
+    ),
+    true
+  );
+  assert.equal(
+    isCompositionPlayable(
+      {
+        fill: { type: "image", paint: { type: "video", video: { url: "/v.mp4" } } },
+        effects: [],
+      },
+      resolved
+    ),
+    true
+  );
+  assert.equal(
+    isCompositionPlayable(
+      {
+        fill: { type: "video", paint: { type: "webcam" } },
+        effects: [],
+      },
       resolved
     ),
     true

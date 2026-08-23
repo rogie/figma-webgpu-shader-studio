@@ -2,15 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   COMPOSITION_FILL_ID,
   compositionLayerName,
-  emptyComposition,
+  hasCompositionFill,
   MAX_COMPOSITION_EFFECTS,
   normalizeComposition,
   reorderCompositionEffects,
 } from "../lib/composition.js";
+import { graphTypeForPaint, isPaintFillType, resolvePaintFill } from "../lib/paintFill.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
-import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import { syncOverflowFade } from "../lib/overflowFade.js";
+import defaultInputUrl from "../assets/default-input.png";
+import { defaultVideoUrl } from "../runtime/sample.js";
 import ShaderPicker, {
   SHADER_PICKER_ANCHOR_IDS,
   SHADER_PICKER_TRIGGER_IDS,
@@ -18,7 +20,13 @@ import ShaderPicker, {
 import "./CompositionEditor.css";
 
 const opaqueContent = { __html: "" };
-const EMPTY_IMAGE_FILL_VALUE = JSON.stringify({ type: "image" });
+
+function imageFillValueFromUrl(url) {
+  return JSON.stringify({
+    type: "image",
+    image: { url, scaleMode: "fill" },
+  });
+}
 
 const FILL_TYPE_OPTIONS = [
   { value: "shader", label: "Shader fill" },
@@ -64,30 +72,34 @@ function PropertiesLayerRow({
           </fig-button>
         )}
       </div>
-      <fig-tooltip text={hideLabel}>
-        <fig-button
-          type="button"
-          variant="ghost"
-          icon="true"
-          disabled={readOnly ? "" : undefined}
-          aria-label={hideLabel}
-          onClick={onToggleVisible}
-        >
-          <fig-icon name={enabled ? "visible" : "hidden"} />
-        </fig-button>
-      </fig-tooltip>
-      <fig-tooltip text={removeLabel}>
-        <fig-button
-          type="button"
-          variant="ghost"
-          icon="true"
-          disabled={readOnly ? "" : undefined}
-          aria-label={removeLabel}
-          onClick={onRemove}
-        >
-          <fig-icon name="minus" />
-        </fig-button>
-      </fig-tooltip>
+      {onToggleVisible && (
+        <fig-tooltip text={hideLabel}>
+          <fig-button
+            type="button"
+            variant="ghost"
+            icon="true"
+            disabled={readOnly ? "" : undefined}
+            aria-label={hideLabel}
+            onClick={onToggleVisible}
+          >
+            <fig-icon name={enabled ? "visible" : "hidden"} />
+          </fig-button>
+        </fig-tooltip>
+      )}
+      {onRemove && (
+        <fig-tooltip text={removeLabel}>
+          <fig-button
+            type="button"
+            variant="ghost"
+            icon="true"
+            disabled={readOnly ? "" : undefined}
+            aria-label={removeLabel}
+            onClick={onRemove}
+          >
+            <fig-icon name="minus" />
+          </fig-button>
+        </fig-tooltip>
+      )}
     </div>
   );
 }
@@ -101,26 +113,65 @@ function ImageFillInput({ disabled = false, value, onChange }) {
     const handleValue = (event) => {
       const detail = event.detail;
       if (!detail || typeof detail !== "object") return;
-      onChange(detail);
+      if (detail.type && !isPaintFillType(detail.type)) return;
+      onChange(detail, event.type === "change");
+    };
+    const handleWebcamStream = (event) => {
+      if (!event.detail?.stream) return;
+      const detail =
+        typeof node.value === "string"
+          ? (() => {
+              try {
+                return JSON.parse(node.value);
+              } catch {
+                return null;
+              }
+            })()
+          : node.value;
+      if (detail?.type === "webcam") onChange(detail, false);
     };
     node.addEventListener("input", handleValue);
     node.addEventListener("change", handleValue);
+    node.addEventListener("webcamstream", handleWebcamStream);
     return () => {
       node.removeEventListener("input", handleValue);
       node.removeEventListener("change", handleValue);
+      node.removeEventListener("webcamstream", handleWebcamStream);
     };
   }, [onChange]);
 
   return (
     <fig-input-fill
       ref={ref}
-      mode="image"
-      alpha="false"
+      full=""
       value={value}
       disabled={disabled ? "" : undefined}
-      aria-label="Image fill"
+      webcam-mode="live"
+      default-video={defaultVideoUrl}
+      aria-label="Fill"
       dangerouslySetInnerHTML={opaqueContent}
     />
+  );
+}
+
+export function ExportPropertiesPane({ disabled = false, onExport }) {
+  return (
+    <div className="properties-pane">
+      <fig-header borderless="">
+        <h3>Export</h3>
+      </fig-header>
+      <fig-field>
+        <fig-button
+          type="button"
+          variant="secondary"
+          full=""
+          disabled={disabled ? "" : undefined}
+          onClick={() => onExport?.()}
+        >
+          Export
+        </fig-button>
+      </fig-field>
+    </div>
   );
 }
 
@@ -137,21 +188,31 @@ export default function CompositionEditor({
   onPropertiesLayerChange,
   onOpenShader,
   onResetLayer,
-  onMediaFill,
-  onImageFill,
+  onFill,
+  imageUrl = defaultInputUrl,
+  onExport,
+  exportDisabled = false,
+  fillOnly = false,
 }) {
   const propertiesPopupRef = useRef(null);
   const propertiesContentRef = useRef(null);
   const propertiesContentFadeRef = useOverflowFade(propertiesContentRef);
   const effectsReorderRef = useRef(null);
-  const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
   const propertiesLayerIdRef = useRef(null);
   propertiesLayerIdRef.current = propertiesLayerId;
-  const [imageFillValue, setImageFillValue] = useState(EMPTY_IMAGE_FILL_VALUE);
+  const [imageFillValue, setImageFillValue] = useState(() =>
+    graph?.fill?.paint
+      ? JSON.stringify(graph.fill.paint)
+      : imageFillValueFromUrl(imageUrl || defaultInputUrl)
+  );
   const [imageFillKey, setImageFillKey] = useState(0);
-  const lastImageFillUrlRef = useRef(null);
+  const lastImageFillUrlRef = useRef(imageUrl || defaultInputUrl);
+  const fillValueTypeRef = useRef(graph?.fill?.paint?.type || "image");
+  const lastPaintRef = useRef(
+    graph?.fill?.paint ? JSON.stringify(graph.fill.paint) : ""
+  );
   const normalized = useMemo(() => normalizeComposition(graph), [graph]);
 
   const update = useCallback(
@@ -162,41 +223,10 @@ export default function CompositionEditor({
     [onChange, readOnly]
   );
 
-  const setFillType = useCallback(
-    (type) => {
-      if (type === "shader") {
-        setEffectPickerOpen(false);
-        setFillPickerOpen(true);
-        return;
-      }
-      update({
-        ...normalized,
-        fill: {
-          type,
-          shaderId: null,
-          enabled: true,
-        },
-      });
-      onMediaFill?.(type);
-      if (type === "image") {
-        setImageFillValue(EMPTY_IMAGE_FILL_VALUE);
-        setImageFillKey((key) => key + 1);
-        lastImageFillUrlRef.current = null;
-      }
-    },
-    [normalized, onMediaFill, update]
-  );
-
   const shaderFillCards = useMemo(
     () => fillCards.filter((card) => card.kind === "fill"),
     [fillCards]
   );
-
-  const fillTypeMenuRef = useFigMenuChange((value) => {
-    if (FILL_TYPE_OPTIONS.some((option) => option.value === value)) {
-      setFillType(value);
-    }
-  });
 
   const propertiesLayerEnabled =
     propertiesLayerId === COMPOSITION_FILL_ID
@@ -270,30 +300,15 @@ export default function CompositionEditor({
     syncOverflowFade(propertiesContentRef.current);
   }, [layerControls, openPropertiesLayerId]);
 
+  const fillType = hasCompositionFill(normalized.fill)
+    ? normalized.fill.type
+    : "image";
   const effectPickerDisabled =
     readOnly || normalized.effects.length >= MAX_COMPOSITION_EFFECTS;
 
-  const onFillPickerOpenChange = useCallback((next) => {
-    if (next) setEffectPickerOpen(false);
-    setFillPickerOpen(next);
-  }, []);
-
   const onEffectPickerOpenChange = useCallback((next) => {
-    if (next) setFillPickerOpen(false);
     setEffectPickerOpen(next);
   }, []);
-
-  const selectFillShader = useCallback(
-    (key) => {
-      if (!shaderFillCards.some((card) => card.key === key)) return;
-      update({
-        ...normalized,
-        fill: { type: "shader", shaderId: key, enabled: true },
-      });
-      onSelectLayer?.(COMPOSITION_FILL_ID);
-    },
-    [normalized, onSelectLayer, shaderFillCards, update]
-  );
 
   const addEffect = useCallback(
     (key) => {
@@ -311,44 +326,58 @@ export default function CompositionEditor({
     [normalized, onSelectLayer, update]
   );
 
-  const removeFill = useCallback(() => {
-    if (propertiesLayerId === COMPOSITION_FILL_ID) {
-      setPropertiesLayerId(null);
-    }
-    update({
-      ...normalized,
-      fill: emptyComposition().fill,
-    });
-    onMediaFill?.("image");
-    setImageFillValue(EMPTY_IMAGE_FILL_VALUE);
-    setImageFillKey((key) => key + 1);
-    lastImageFillUrlRef.current = null;
-  }, [normalized, onMediaFill, propertiesLayerId, update]);
-
-  const applyImageFill = useCallback(
-    (detail) => {
-      if (detail?.type !== "image") return;
-      const url =
-        typeof detail.image?.url === "string" && detail.image.url
-          ? detail.image.url
-          : null;
-      if (url === lastImageFillUrlRef.current) return;
-      lastImageFillUrlRef.current = url;
-      if (!url) {
-        onMediaFill?.("image");
-        return;
+  const applyFillValue = useCallback(
+    (detail, persist = false) => {
+      if (!isPaintFillType(detail?.type)) return;
+      const next = resolvePaintFill(detail, {
+        defaultImageUrl: defaultInputUrl,
+        defaultVideoUrl,
+      });
+      fillValueTypeRef.current = next.type;
+      if (persist) {
+        const nextValue = JSON.stringify(next);
+        lastPaintRef.current = nextValue;
+        setImageFillValue(nextValue);
+        update({
+          ...normalized,
+          fill: {
+            ...normalized.fill,
+            type: graphTypeForPaint(next.type),
+            shaderId: null,
+            paint: next,
+          },
+        });
       }
-      onImageFill?.(url);
+      if (next.type === "image") {
+        const url =
+          typeof next.image?.url === "string" && next.image.url
+            ? next.image.url
+            : null;
+        if (url) lastImageFillUrlRef.current = url;
+      }
+      onFill?.(next);
     },
-    [onImageFill, onMediaFill]
+    [normalized, onFill, update]
   );
 
-  const toggleFillVisible = useCallback(() => {
-    update({
-      ...normalized,
-      fill: { ...normalized.fill, enabled: !normalized.fill.enabled },
-    });
-  }, [normalized, update]);
+  useEffect(() => {
+    const paint = normalized.fill.paint;
+    const next = paint ? JSON.stringify(paint) : "";
+    if (next === lastPaintRef.current) return;
+    lastPaintRef.current = next;
+    if (paint && isPaintFillType(paint.type)) {
+      fillValueTypeRef.current = paint.type;
+      setImageFillValue(next);
+    }
+  }, [normalized.fill.paint]);
+
+  useEffect(() => {
+    if (!imageUrl || imageUrl === lastImageFillUrlRef.current) return;
+    if (fillValueTypeRef.current !== "image") return;
+    lastImageFillUrlRef.current = imageUrl;
+    setImageFillValue(imageFillValueFromUrl(imageUrl));
+    setImageFillKey((key) => key + 1);
+  }, [imageUrl]);
 
   const removeEffect = useCallback(
     (effectId) => {
@@ -377,6 +406,7 @@ export default function CompositionEditor({
 
   const toggleLayerProperties = useCallback(
     (layerId) => {
+      if (fillOnly) return;
       const enabled =
         layerId === COMPOSITION_FILL_ID
           ? normalized.fill.enabled
@@ -390,7 +420,7 @@ export default function CompositionEditor({
       onSelectLayer?.(layerId);
       setPropertiesLayerId(layerId);
     },
-    [normalized, onSelectLayer]
+    [fillOnly, normalized, onSelectLayer]
   );
 
   const layerCards = useMemo(
@@ -419,142 +449,109 @@ export default function CompositionEditor({
     : "Properties";
 
   return (
-    <div className="composition-editor">
-      <fig-header id={SHADER_PICKER_ANCHOR_IDS.fill} borderless>
-        <h3>Fill</h3>
-        {!readOnly && (
-          <hstack>
-            <fig-menu
-              ref={fillTypeMenuRef}
-              class="composition-fill-type-menu"
-              position="bottom right"
-            >
-              <fig-tooltip text="Add fill">
+    <>
+      <div className="properties-pane">
+        <fig-header borderless>
+          <h3>Fill</h3>
+        </fig-header>
+        <PropertiesLayerRow
+          id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
+          name={
+            fillType === "shader"
+              ? compositionLayerName(
+                  normalized.fill.shaderId,
+                  resolvedByKey,
+                  layerCards,
+                  "Choose a shader fill"
+                )
+              : FILL_TYPE_OPTIONS.find((option) => option.value === fillType)
+                  ?.label ?? "Image"
+          }
+          expanded={propertiesLayerId === COMPOSITION_FILL_ID}
+          enabled={normalized.fill.enabled}
+          readOnly={readOnly}
+          noun="fill"
+          control={
+            fillType !== "shader" && fillType !== "html" ? (
+              <ImageFillInput
+                key={imageFillKey}
+                disabled={readOnly}
+                value={imageFillValue}
+                onChange={applyFillValue}
+              />
+            ) : null
+          }
+          onOpen={() => toggleLayerProperties(COMPOSITION_FILL_ID)}
+        />
+      </div>
+
+      {!fillOnly && <div className="properties-pane">
+        <fig-header id={SHADER_PICKER_ANCHOR_IDS.effect} borderless>
+          <h3>Effects</h3>
+          {!readOnly && (
+            <hstack>
+              <fig-tooltip text="Add shader effect">
                 <fig-button
-                  fig-menu-trigger=""
+                  id={SHADER_PICKER_TRIGGER_IDS.effect}
                   type="button"
                   variant="ghost"
                   icon="true"
-                  aria-label="Add fill"
+                  aria-label="Add shader effect"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  disabled={effectPickerDisabled ? "" : undefined}
                 >
                   <fig-icon name="add" />
                 </fig-button>
               </fig-tooltip>
-              {FILL_TYPE_OPTIONS.map((option) => (
-                <fig-menu-item
-                  key={option.value}
-                  value={option.value}
-                  selected={
-                    normalized.fill.type === option.value ? "" : undefined
-                  }
-                >
-                  {option.label}
-                </fig-menu-item>
-              ))}
-            </fig-menu>
-          </hstack>
+            </hstack>
+          )}
+        </fig-header>
+        {normalized.effects.length >= MAX_COMPOSITION_EFFECTS && (
+          <p className="composition-notice">
+            A composition can use up to {MAX_COMPOSITION_EFFECTS} effects.
+          </p>
         )}
-      </fig-header>
-      <PropertiesLayerRow
-        id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
-        name={
-          normalized.fill.type === "shader"
-            ? compositionLayerName(
-                normalized.fill.shaderId,
-                resolvedByKey,
-                layerCards,
-                "Choose a shader fill"
-              )
-            : FILL_TYPE_OPTIONS.find(
-                (option) => option.value === normalized.fill.type
-              )?.label ?? "Image"
-        }
-        expanded={propertiesLayerId === COMPOSITION_FILL_ID}
-        enabled={normalized.fill.enabled}
-        readOnly={readOnly}
-        noun="fill"
-        control={
-          normalized.fill.type === "image" ? (
-            <ImageFillInput
-              key={imageFillKey}
-              disabled={readOnly}
-              value={imageFillValue}
-              onChange={applyImageFill}
-            />
-          ) : null
-        }
-        onOpen={() => toggleLayerProperties(COMPOSITION_FILL_ID)}
-        onToggleVisible={toggleFillVisible}
-        onRemove={removeFill}
+        {normalized.effects.length === 0 ? (
+          <p className="composition-empty">No effects yet.</p>
+        ) : (
+          <fig-reorder
+            ref={effectsReorderRef}
+            class="composition-effect-list"
+            axis="vertical"
+            disabled={readOnly ? "" : undefined}
+            aria-label="Effects"
+          >
+            {normalized.effects.map((effect) => (
+              <PropertiesLayerRow
+                key={effect.id}
+                id={layerPropsAnchorId(effect.id)}
+                name={compositionLayerName(
+                  effect.shaderId,
+                  resolvedByKey,
+                  layerCards,
+                  "Shader effect"
+                )}
+                expanded={propertiesLayerId === effect.id}
+                enabled={effect.enabled}
+                readOnly={readOnly}
+                onOpen={() => toggleLayerProperties(effect.id)}
+                onToggleVisible={() => toggleEffectVisible(effect.id)}
+                onRemove={() => removeEffect(effect.id)}
+              />
+            ))}
+          </fig-reorder>
+        )}
+      </div>}
+
+      {!fillOnly && (
+      <ExportPropertiesPane
+        disabled={exportDisabled}
+        onExport={onExport}
       />
-
-      <fig-separator />
-
-      <fig-header id={SHADER_PICKER_ANCHOR_IDS.effect} borderless>
-        <h3>Effects</h3>
-        {!readOnly && (
-          <hstack>
-            <fig-tooltip text="Add shader effect">
-              <fig-button
-                id={SHADER_PICKER_TRIGGER_IDS.effect}
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label="Add shader effect"
-                aria-haspopup="dialog"
-                aria-expanded="false"
-                disabled={effectPickerDisabled ? "" : undefined}
-              >
-                <fig-icon name="add" />
-              </fig-button>
-            </fig-tooltip>
-          </hstack>
-        )}
-      </fig-header>
-      {normalized.effects.length >= MAX_COMPOSITION_EFFECTS && (
-        <p className="composition-notice">
-          A composition can use up to {MAX_COMPOSITION_EFFECTS} effects.
-        </p>
-      )}
-      {normalized.effects.length === 0 ? (
-        <p className="composition-empty">No effects yet.</p>
-      ) : (
-        <fig-reorder
-          ref={effectsReorderRef}
-          class="composition-effect-list"
-          axis="vertical"
-          disabled={readOnly ? "" : undefined}
-          aria-label="Effects"
-        >
-          {normalized.effects.map((effect) => (
-            <PropertiesLayerRow
-              key={effect.id}
-              id={layerPropsAnchorId(effect.id)}
-              name={compositionLayerName(
-                effect.shaderId,
-                resolvedByKey,
-                layerCards,
-                "Shader effect"
-              )}
-              expanded={propertiesLayerId === effect.id}
-              enabled={effect.enabled}
-              readOnly={readOnly}
-              onOpen={() => toggleLayerProperties(effect.id)}
-              onToggleVisible={() => toggleEffectVisible(effect.id)}
-              onRemove={() => removeEffect(effect.id)}
-            />
-          ))}
-        </fig-reorder>
       )}
 
-      <ShaderPicker
-        kind="fill"
-        cards={shaderFillCards}
-        open={fillPickerOpen}
-        disabled={readOnly}
-        onOpenChange={onFillPickerOpenChange}
-        onChoice={selectFillShader}
-      />
+      {!fillOnly && (
       <ShaderPicker
         kind="effect"
         cards={effectCards}
@@ -563,8 +560,9 @@ export default function CompositionEditor({
         onOpenChange={onEffectPickerOpenChange}
         onChoice={addEffect}
       />
+      )}
 
-      {portalToFigOverlay(
+      {!fillOnly && portalToFigOverlay(
         <dialog
           is="fig-popup"
           ref={propertiesPopupRef}
@@ -646,6 +644,6 @@ export default function CompositionEditor({
           </fig-content>
         </dialog>
       )}
-    </div>
+    </>
   );
 }

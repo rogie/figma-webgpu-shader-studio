@@ -169,6 +169,21 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - `fig-field` treats `fig-fill-picker` as a popup host so clicking the color
   swatch does not collapse a collapsible field.
 
+## 8.9.16 / 8.9.17 notes
+
+- `fig-input-fill` / `fig-fill-picker` now match the video and webcam contract this
+  app previously worked around:
+  - `default-video` fills an empty Video tab
+  - video swatches use `video.poster`, not `url(file.mp4)`
+  - webcam JSON is `{ type, webcam: { live, snapshot, deviceId, scaleMode, scale, opacity } }`
+  - live `MediaStream` is `webcamStream` / `webcamstream`, kept after dialog close
+- `CompositionEditor` sets `webcam-mode="live"` and `default-video` on
+  `fig-input-fill`, listens for `webcamstream`, and no longer stamps a JPEG onto
+  the inner swatch.
+- `App.jsx` clones `fig-input-fill.webcamStream` for the preview (falls back to
+  `getUserMedia` with `webcam.deviceId` on restore). Snapshot-only webcam
+  (`live: false`) still rasterizes.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

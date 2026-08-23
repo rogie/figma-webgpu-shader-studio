@@ -7,13 +7,28 @@ import {
 import { calculateFrameRate } from "../runtime/frameRate.js";
 
 const opaqueContent = { __html: "" };
+const ZOOM_PRESETS = [50, 100, 200];
 
-function PreviewFps({ hostRef, canvasTheme = "light", onCanvasThemeChange }) {
+function PreviewFps({
+  hostRef,
+  previewZoom = 1,
+  onPreviewZoomChange,
+}) {
   const [fps, setFps] = useState(0);
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
   );
   const resolutionControlRef = useRef(null);
+  const zoomControlRef = useRef(null);
+  const zoomPercent = Math.round(previewZoom * 100);
+  const zoomOptions = (
+    ZOOM_PRESETS.includes(zoomPercent)
+      ? ZOOM_PRESETS
+      : [...ZOOM_PRESETS, zoomPercent].sort((a, b) => a - b)
+  ).map((percent) => ({
+    value: String(percent),
+    label: `${percent}%`,
+  }));
 
   useEffect(() => {
     const control = resolutionControlRef.current;
@@ -29,6 +44,27 @@ function PreviewFps({ hostRef, canvasTheme = "light", onCanvasThemeChange }) {
     control.addEventListener("change", updateResolution);
     return () => control.removeEventListener("change", updateResolution);
   }, [hostRef]);
+
+  useEffect(() => {
+    const control = zoomControlRef.current;
+    if (!control) return undefined;
+    const updateZoom = (event) => {
+      // Ignore programmatic clamps when React syncs the live canvas zoom.
+      const isOpen =
+        control.hasAttribute("open") && control.getAttribute("open") !== "false";
+      if (!isOpen) return;
+      const detail = event.detail;
+      const value =
+        detail && typeof detail === "object" && "value" in detail
+          ? detail.value
+          : (detail ?? event.target.value);
+      const percent = Number(value);
+      if (!Number.isFinite(percent)) return;
+      onPreviewZoomChange?.(percent / 100);
+    };
+    control.addEventListener("change", updateZoom);
+    return () => control.removeEventListener("change", updateZoom);
+  }, [onPreviewZoomChange]);
 
   useEffect(
     () =>
@@ -60,33 +96,30 @@ function PreviewFps({ hostRef, canvasTheme = "light", onCanvasThemeChange }) {
 
   return (
     <div className="preview-performance">
-      <fig-tooltip
-        text={canvasTheme === "dark" ? "Use light canvas" : "Use dark canvas"}
-      >
-        <fig-button
-          variant="ghost"
-          icon="true"
-          aria-label={
-            canvasTheme === "dark" ? "Use light canvas" : "Use dark canvas"
-          }
-          onClick={() =>
-            onCanvasThemeChange?.(canvasTheme === "dark" ? "light" : "dark")
-          }
-        >
-          <fig-icon name={canvasTheme === "dark" ? "moon" : "sun"} />
-        </fig-button>
-      </fig-tooltip>
       <fig-tooltip text="Pixel ratio">
         <fig-select
           ref={resolutionControlRef}
           class="preview-resolution"
-          position="bottom left"
+          variant="ghost"
+          position="top left"
           value={pixelRatioMode}
           options={JSON.stringify([
             { value: "1x", label: "1x" },
             { value: "2x", label: "2x" },
           ])}
           aria-label="Preview resolution"
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-tooltip>
+      <fig-tooltip text="Zoom">
+        <fig-select
+          ref={zoomControlRef}
+          class="preview-zoom"
+          variant="ghost"
+          position="top left"
+          options={JSON.stringify(zoomOptions)}
+          value={String(zoomPercent)}
+          aria-label={`Zoom ${zoomPercent}%`}
           dangerouslySetInnerHTML={opaqueContent}
         />
       </fig-tooltip>

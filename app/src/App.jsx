@@ -7,12 +7,13 @@ import {
   useRef,
   useState,
 } from "react";
-import CompositionEditor from "./components/CompositionEditor.jsx";
+import CompositionEditor, {
+  ExportPropertiesPane,
+} from "./components/CompositionEditor.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import ExportDialog from "./components/ExportDialog.jsx";
-import ExportIcon from "./components/ExportIcon.jsx";
 import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
 import "./components/HomeNav.css";
@@ -59,7 +60,9 @@ import {
   supportsCopyElementImageToTexture,
   supportsHtmlInCanvas,
 } from "./runtime/htmlInCanvas.js";
+import defaultInputUrl from "./assets/default-input.png";
 import {
+  defaultVideoUrl,
   makeSampleBitmap,
   makeSampleVectorBitmap,
   makeSampleVideoBlob,
@@ -140,10 +143,12 @@ import {
 import {
   collectCompositionFeatures,
   compositionLayerShaderId,
+  compositionPaintFill,
   compositionStructureKey,
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
   emptyComposition,
+  fillFromInputSource,
   resolvedLibraryKind,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
@@ -158,6 +163,13 @@ import {
   promoteCompositionRefs,
   serializeCompositionExport,
 } from "./lib/composition.js";
+import {
+  isPaintFillType,
+  paintImageSource,
+  paintSize,
+  rasterizePaintFill,
+  resolvePaintFill,
+} from "./lib/paintFill.js";
 import {
   cloudChoiceId,
   cloudIdForDraft,
@@ -241,6 +253,95 @@ const FIGMA_SHADER_CATEGORIES = [
   { kind: "effect", label: "Shader effect" },
   { kind: "fill", label: "Shader fill" },
 ];
+const EFFECT_PREVIEW_LAYER_ID = "effect-preview";
+
+function effectFillPreviewKey(fill) {
+  return fill?.type === "shader" && fill.shaderId
+    ? `${fill.shaderId}:${fill.enabled !== false}`
+    : "";
+}
+
+function usesCompositionHost(sessionKind, fill) {
+  return (
+    sessionKind === COMPOSITION_KIND || Boolean(effectFillPreviewKey(fill))
+  );
+}
+
+function createHiddenVideoElement() {
+  const video = document.createElement("video");
+  video.muted = true;
+  video.defaultMuted = true;
+  video.loop = true;
+  video.playsInline = true;
+  video.preload = "auto";
+  video.setAttribute("playsinline", "");
+  video.setAttribute("webkit-playsinline", "");
+  video.setAttribute("muted", "");
+  Object.assign(video.style, {
+    position: "fixed",
+    left: "-9999px",
+    top: "0",
+    width: "1px",
+    height: "1px",
+    opacity: "0",
+    pointerEvents: "none",
+  });
+  document.body.appendChild(video);
+  return video;
+}
+
+function hasLiveWebcamStream(video) {
+  return isLiveMediaStream(video?.srcObject);
+}
+
+function isLiveMediaStream(stream) {
+  return Boolean(
+    stream &&
+      typeof stream.getVideoTracks === "function" &&
+      stream.getVideoTracks().some((track) => track.readyState === "live")
+  );
+}
+
+function webcamDeviceId(stream) {
+  return stream?.getVideoTracks?.()[0]?.getSettings?.().deviceId || "";
+}
+
+function readFillWebcamStream() {
+  for (const node of document.querySelectorAll("fig-input-fill")) {
+    if (isLiveMediaStream(node.webcamStream)) return node.webcamStream;
+  }
+  return null;
+}
+
+async function waitForVideoFrame(video, errorMessage) {
+  await new Promise((resolve, reject) => {
+    video.addEventListener("loadeddata", resolve, { once: true });
+    video.addEventListener(
+      "error",
+      () => reject(new Error(errorMessage)),
+      { once: true }
+    );
+  });
+  await video.play();
+  if (typeof video.requestVideoFrameCallback === "function") {
+    await new Promise((resolve) => {
+      video.requestVideoFrameCallback(() => resolve());
+    });
+    return;
+  }
+  if (video.videoWidth) return;
+  await new Promise((resolve) => {
+    const start = performance.now();
+    const tick = () => {
+      if (video.videoWidth > 0 || performance.now() - start > 2000) {
+        resolve();
+        return;
+      }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
 
 function groupByKind(
   cards,
@@ -369,6 +470,8 @@ export default function App() {
     () => getAppRoute().kind || INITIAL.kind,
   );
   const [composition, setComposition] = useState(null);
+  const [effectFill, setEffectFill] = useState(() => fillFromInputSource("image"));
+  const [inputImageUrl, setInputImageUrl] = useState(defaultInputUrl);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
   const [layerControlsEpoch, setLayerControlsEpoch] = useState(0);
@@ -539,7 +642,6 @@ export default function App() {
 
   const canvasRef = useRef(null);
   const htmlInputRef = useRef(null);
-  const inputSelectRef = useRef(null);
   const viewerRef = useRef(null);
   const sidebarRef = useRef(null);
   const chatPaneRef = useRef(null);
@@ -581,6 +683,8 @@ export default function App() {
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const compositionRef = useRef(composition);
+  const effectFillRef = useRef(effectFill);
+  const inputImageUrlRef = useRef(defaultInputUrl);
   const sessionKindRef = useRef(sessionKind);
   const selectedLayerIdRef = useRef(selectedLayerId);
   selectedLayerIdRef.current = selectedLayerId;
@@ -601,6 +705,8 @@ export default function App() {
   const liveShaderSourceRef = useRef(new Map());
   const [liveShaderRevision, setLiveShaderRevision] = useState(0);
   const previewParamsRafRef = useRef(0);
+  const paintFillRafRef = useRef(0);
+  const applyPaintFillRef = useRef(null);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
   const cloudWriteBackoffUntilRef = useRef(0);
@@ -623,6 +729,7 @@ export default function App() {
 
   sourceRef.current = source;
   compositionRef.current = composition;
+  effectFillRef.current = effectFill;
   sessionKindRef.current = sessionKind;
   propsRef.current = props;
   valuesRef.current = values;
@@ -650,6 +757,26 @@ export default function App() {
       persistInputSource(presetId, inputSource);
     }
   }, [kind, presetId, inputSource]);
+  useEffect(() => {
+    const fill = fillFromInputSource(inputSourceRef.current);
+    setEffectFill(fill);
+    effectFillRef.current = fill;
+    const prev = inputImageUrlRef.current;
+    if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
+    inputImageUrlRef.current = defaultInputUrl;
+    setInputImageUrl(defaultInputUrl);
+  }, [presetId]);
+  useEffect(() => {
+    if (kind !== "effect") return;
+    const type =
+      inputSource === "html" ? "html" : mediaFillType(inputSource);
+    if (!type) return;
+    setEffectFill((current) => {
+      if (current.type === "shader" || current.type === type) return current;
+      if (current.type === "none") return current;
+      return { ...current, type, shaderId: null };
+    });
+  }, [inputSource, kind]);
   const resolvedByKey = useMemo(
     () => new Map(Object.entries(resolvedShaders)),
     [resolvedShaders]
@@ -1092,7 +1219,7 @@ export default function App() {
   const setRuntimeValues = useCallback((next) => {
     valuesRef.current = next;
     setValues(next);
-    if (sessionKindRef.current === COMPOSITION_KIND) {
+    if (usesCompositionHost(sessionKindRef.current, effectFillRef.current)) {
       hostRef.current?.setCompositionLayerParams?.(
         selectedLayerIdRef.current,
         next
@@ -1374,6 +1501,8 @@ export default function App() {
         host.stop();
         setRunning(false);
       }
+      const paint = compositionPaintFill(graph);
+      if (paint) applyPaintFillRef.current?.(paint);
     },
     [drafts, hydrateCompositionRefs, rememberResolved, setRuntimeValues]
   );
@@ -1385,12 +1514,43 @@ export default function App() {
         compileCompositionRef.current?.();
         return;
       }
+      const fillKey = effectFillPreviewKey(effectFillRef.current);
+      if (sessionKindRef.current === "effect" && fillKey) {
+        if (
+          lastSuccessfulCompileRef.current.presetId ===
+            draftSessionRef.current.presetId &&
+          lastSuccessfulCompileRef.current.source === nextSource &&
+          lastSuccessfulCompileRef.current.effectFillKey === fillKey
+        ) {
+          return;
+        }
+        selectedLayerIdRef.current = EFFECT_PREVIEW_LAYER_ID;
+        lastSuccessfulCompileRef.current = {
+          presetId: draftSessionRef.current.presetId,
+          source: nextSource,
+          values: pendingValuesRef.current ?? valuesRef.current,
+          effectFillKey: fillKey,
+        };
+        compileCompositionRef.current?.({
+          fill: effectFillRef.current,
+          effects: [
+            {
+              id: EFFECT_PREVIEW_LAYER_ID,
+              shaderId: draftSessionRef.current.presetId,
+              values: pendingValuesRef.current ?? valuesRef.current,
+              enabled: true,
+            },
+          ],
+        });
+        return;
+      }
       const host = hostRef.current;
       if (!host?.ready) return;
       if (
         lastSuccessfulCompileRef.current.presetId ===
           draftSessionRef.current.presetId &&
-        lastSuccessfulCompileRef.current.source === nextSource
+        lastSuccessfulCompileRef.current.source === nextSource &&
+        !lastSuccessfulCompileRef.current.effectFillKey
       ) {
         return;
       }
@@ -1442,6 +1602,7 @@ export default function App() {
             presetId: draftSessionRef.current.presetId,
             source: nextSource,
             values: nextValues,
+            effectFillKey: "",
           };
           if (
             pendingAgentCheckpointRef.current?.presetId ===
@@ -1474,6 +1635,16 @@ export default function App() {
     [setRuntimeValues]
   );
   compileRef.current = compile;
+
+  const setImagePreviewUrl = useCallback((url) => {
+    const next = url || defaultInputUrl;
+    const prev = inputImageUrlRef.current;
+    if (prev && prev !== next && prev.startsWith("blob:")) {
+      URL.revokeObjectURL(prev);
+    }
+    inputImageUrlRef.current = next;
+    setInputImageUrl(next);
+  }, []);
 
   const applyMediaBlob = useCallback(
     async (blob, mimeType = blob.type, generation = null) => {
@@ -1578,11 +1749,95 @@ export default function App() {
         }
         host.setImageInput(bitmap);
         setInputSource("image");
+        setImagePreviewUrl(URL.createObjectURL(blob));
       }
       setPreviewRevision((revision) => revision + 1);
       return true;
     },
-    [clearObjectUrl, isInputApplyCurrent]
+    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl]
+  );
+
+  const applyWebcamFill = useCallback(
+    async (generation = null, detail = null) => {
+      const host = hostRef.current;
+      if (!host?.ready) return false;
+      if (!isInputApplyCurrent(generation)) return false;
+
+      const wantedDevice = detail?.webcam?.deviceId || "";
+      if (hasLiveWebcamStream(videoRef.current)) {
+        const currentDevice = webcamDeviceId(videoRef.current.srcObject);
+        if (!wantedDevice || wantedDevice === currentDevice) {
+          host.setVideoInput(videoRef.current);
+          setInputSource("video");
+          setPreviewRevision((revision) => revision + 1);
+          return true;
+        }
+      }
+
+      const pickerStream = readFillWebcamStream();
+      let stream = null;
+      let ownsStream = false;
+      if (pickerStream) {
+        stream =
+          typeof pickerStream.clone === "function"
+            ? pickerStream.clone()
+            : pickerStream;
+        ownsStream = stream !== pickerStream;
+      } else {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("Webcam is not available in this browser.");
+        }
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: wantedDevice
+              ? { deviceId: { exact: wantedDevice } }
+              : true,
+            audio: false,
+          });
+          ownsStream = true;
+        } catch (cameraError) {
+          if (cameraError.name === "NotAllowedError") {
+            throw new Error("Allow camera access to use a webcam fill.");
+          }
+          throw new Error(cameraError.message || "Could not start the webcam.");
+        }
+      }
+      if (!isInputApplyCurrent(generation)) {
+        if (ownsStream) stream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
+
+      clearObjectUrl();
+      const video = createHiddenVideoElement();
+      video.srcObject = stream;
+      try {
+        await waitForVideoFrame(video, "Failed to start the webcam.");
+      } catch (error) {
+        if (ownsStream) stream.getTracks().forEach((track) => track.stop());
+        video.srcObject = null;
+        video.remove();
+        throw error;
+      }
+      if (!isInputApplyCurrent(generation)) {
+        if (ownsStream) stream.getTracks().forEach((track) => track.stop());
+        video.srcObject = null;
+        video.remove();
+        return false;
+      }
+      if (!video.videoWidth || !video.videoHeight) {
+        if (ownsStream) stream.getTracks().forEach((track) => track.stop());
+        video.srcObject = null;
+        video.remove();
+        throw new Error("Webcam has no video frames yet.");
+      }
+
+      videoRef.current = video;
+      host.setVideoInput(video);
+      setInputSource("video");
+      setPreviewRevision((revision) => revision + 1);
+      return true;
+    },
+    [clearObjectUrl, isInputApplyCurrent, setInputSource]
   );
 
   const restoreSample = useCallback(
@@ -1598,10 +1853,11 @@ export default function App() {
       }
       host.setImageInput(bitmap);
       setInputSource("image");
+      setImagePreviewUrl(defaultInputUrl);
       setPreviewRevision((revision) => revision + 1);
       return true;
     },
-    [clearObjectUrl, isInputApplyCurrent]
+    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl]
   );
 
   const applyVectorSample = useCallback(
@@ -1705,14 +1961,8 @@ export default function App() {
     async (next) => {
       const host = hostRef.current;
 
-      const syncSelect = (value) => {
-        const select = inputSelectRef.current;
-        if (select && select.value !== value) select.value = value;
-      };
-
       // The host may still be initializing (slow WebGPU start, or a pane that
-      // just remounted). Remember the choice instead of dropping it, otherwise
-      // the select shows the new value while nothing ever loads.
+      // just remounted). Remember the choice instead of dropping it.
       if (!host?.ready) {
         // Supersede the bootstrap image load even if it has not started yet.
         inputApplyGenRef.current += 1;
@@ -1730,7 +1980,6 @@ export default function App() {
           !supportsCopyElementImageToTexture(host.device)
         ) {
           setError(HTML_IN_CANVAS_SETUP);
-          syncSelect(inputSourceRef.current);
           return;
         }
         ++inputApplyGenRef.current;
@@ -1744,8 +1993,6 @@ export default function App() {
       }
 
       const generation = ++inputApplyGenRef.current;
-      // Keep the controlled select in sync during async loads so React does
-      // not snap the value back to the previous source mid-switch.
       setInputSource(next);
       setError(null);
       // Whichever branch runs owns the overlay. A superseded load skips its own
@@ -1786,6 +2033,124 @@ export default function App() {
     ]
   );
 
+  const applyPaintFill = useCallback(
+    (detail) => {
+      if (!isPaintFillType(detail?.type)) return Promise.resolve(false);
+      const generation = ++inputApplyGenRef.current;
+      if (paintFillRafRef.current) {
+        cancelAnimationFrame(paintFillRafRef.current.id);
+        paintFillRafRef.current.resolve?.(false);
+      }
+      return new Promise((resolve) => {
+        const id = requestAnimationFrame(() => {
+          paintFillRafRef.current = 0;
+          (async () => {
+            const host = hostRef.current;
+            if (!host?.ready || !isInputApplyCurrent(generation)) {
+              resolve(false);
+              return;
+            }
+
+            if (detail.type === "webcam") {
+              const snapshotUrl = paintImageSource(detail).url;
+              const live = detail.webcam?.live !== false;
+              if (live || !snapshotUrl) {
+                await applyWebcamFill(generation, detail);
+                resolve(true);
+                return;
+              }
+            }
+
+            if (detail.type === "video") {
+              const resolved = resolvePaintFill(detail, { defaultVideoUrl });
+              const url =
+                typeof resolved.video?.url === "string" ? resolved.video.url : "";
+              const blob =
+                !url || url === defaultVideoUrl
+                  ? await makeSampleVideoBlob()
+                  : await fetch(url).then((response) => {
+                      if (!response.ok) {
+                        throw new Error("Could not load video fill.");
+                      }
+                      return response.blob();
+                    });
+              if (!isInputApplyCurrent(generation)) {
+                resolve(false);
+                return;
+              }
+              await applyMediaBlob(blob, blob.type || "video/mp4", generation);
+              resolve(true);
+              return;
+            }
+
+            const media = paintImageSource(detail);
+            if (detail.type === "image" && !media.url) {
+              await restoreSample(generation);
+              resolve(true);
+              return;
+            }
+
+            clearObjectUrl();
+            const { width, height } = paintSize(host);
+            const bitmap = await rasterizePaintFill(detail, width, height);
+            if (!isInputApplyCurrent(generation)) {
+              bitmap.close?.();
+              resolve(false);
+              return;
+            }
+            const canUpdate =
+              host.inputTexture &&
+              !host.video &&
+              host.inputTexture.width === width &&
+              host.inputTexture.height === height;
+            if (canUpdate && host.updateImageInput(bitmap)) {
+              if (!host.running) host.redraw();
+            } else {
+              host.setImageInput(bitmap);
+            }
+            setInputSource("image");
+            if (
+              detail.type === "image" &&
+              typeof media.url === "string" &&
+              media.url &&
+              !media.url.startsWith("data:")
+            ) {
+              setImagePreviewUrl(media.url);
+            }
+            setPreviewRevision((revision) => revision + 1);
+            resolve(true);
+          })().catch((paintError) => {
+            if (isInputApplyCurrent(generation)) {
+              setError(paintError.message || String(paintError));
+            }
+            resolve(false);
+          });
+        });
+        paintFillRafRef.current = { id, resolve };
+      });
+    },
+    [
+      applyMediaBlob,
+      applyWebcamFill,
+      isInputApplyCurrent,
+      restoreSample,
+      setImagePreviewUrl,
+      setInputSource,
+    ]
+  );
+  applyPaintFillRef.current = applyPaintFill;
+
+  useEffect(() => {
+    if (!runtimeReady || !hostRef.current?.ready) return;
+    const paint =
+      sessionKind === COMPOSITION_KIND
+        ? compositionPaintFill(compositionRef.current)
+        : sessionKind === "effect" && isPaintFillType(effectFillRef.current?.paint?.type)
+          ? effectFillRef.current.paint
+          : null;
+    if (paint) applyPaintFill(paint);
+  }, [applyPaintFill, presetId, runtimeReady, sessionKind]);
+
   // Apply an input choice that arrived before the host was ready.
   useEffect(() => {
     if (!runtimeReady || !hostRef.current?.ready) return;
@@ -1818,34 +2183,6 @@ export default function App() {
     }
   }, [inputSource, runtimeReady]);
 
-  useEffect(() => {
-    const select = inputSelectRef.current;
-    if (!select) return;
-    const onValue = (event) => {
-      const detail = event.detail;
-      const raw =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target.value);
-      const next = String(raw || "");
-      if (
-        next === "image" ||
-        next === "vector" ||
-        next === "video" ||
-        next === "html"
-      ) {
-        applyInputSource(next).catch((sourceError) =>
-          setError(sourceError.message || String(sourceError))
-        );
-      }
-    };
-    // fig-select emits both input and change; listen once to avoid stacked loads.
-    select.addEventListener("change", onValue);
-    return () => {
-      select.removeEventListener("change", onValue);
-    };
-  }, [applyInputSource, kind]);
-
   // When live-editing toggles effect ↔ fill, keep the input preference but
   // clear/reapply the host input as needed.
   const previousKindRef = useRef(kind);
@@ -1859,17 +2196,26 @@ export default function App() {
       return;
     }
     if (kind === COMPOSITION_KIND) {
-      const fillType = compositionRef.current?.fill?.type;
-      if (fillType === "shader") {
+      const fill = compositionRef.current?.fill;
+      if (fill?.type === "shader") {
         clearObjectUrl();
         hostRef.current.clearInput();
         return;
       }
+      const paint = compositionPaintFill(fill ? { fill } : null);
+      if (paint) {
+        applyPaintFill(paint);
+        return;
+      }
+    }
+    if (kind === "effect" && isPaintFillType(effectFillRef.current?.paint?.type)) {
+      applyPaintFill(effectFillRef.current.paint);
+      return;
     }
     reapplyPreferredInput().catch((inputError) =>
       setError(inputError.message || String(inputError))
     );
-  }, [kind, runtimeReady, clearObjectUrl, reapplyPreferredInput]);
+  }, [kind, runtimeReady, applyPaintFill, clearObjectUrl, reapplyPreferredInput]);
 
   useEffect(() => {
     if (viewMode !== "editor" || initedRef.current || !canvasRef.current) return;
@@ -1970,6 +2316,14 @@ export default function App() {
         return;
       }
       if (!shader.input_path) {
+        const paint =
+          shader.kind === COMPOSITION_KIND
+            ? compositionPaintFill(shader.composition)
+            : effectFillRef.current?.paint;
+        if (isPaintFillType(paint?.type)) {
+          applyPaintFill(paint);
+          return;
+        }
         await reapplyPreferredInput();
         return;
       }
@@ -1988,6 +2342,7 @@ export default function App() {
     },
     [
       applyMediaBlob,
+      applyPaintFill,
       clearObjectUrl,
       isInputApplyCurrent,
       reapplyPreferredInput,
@@ -2064,8 +2419,10 @@ export default function App() {
     setInputSource,
     clearObjectUrl,
     applyMediaBlob,
+    applyPaintFill,
     loadMediaForShader,
     reapplyPreferredInput,
+    effectPaintRef: effectFillRef,
   });
 
   const openDraft = useCallback(
@@ -2806,7 +3163,7 @@ export default function App() {
     previewParamsRafRef.current = requestAnimationFrame(() => {
       previewParamsRafRef.current = 0;
       const next = valuesRef.current;
-      if (sessionKindRef.current === COMPOSITION_KIND) {
+      if (usesCompositionHost(sessionKindRef.current, effectFillRef.current)) {
         hostRef.current?.setCompositionLayerParams?.(
           selectedLayerIdRef.current,
           next
@@ -4683,6 +5040,7 @@ export default function App() {
             <>
               <CompositionEditor
                 graph={composition}
+                imageUrl={inputImageUrl}
                 resolvedByKey={resolvedByKey}
                 fillCards={compositionFillCards}
                 effectCards={compositionEffectCards}
@@ -4704,43 +5062,15 @@ export default function App() {
                 onPropertiesLayerChange={setCompositionPropsLayerId}
                 onOpenShader={openHomeChoice}
                 onResetLayer={resetProperties}
-                onMediaFill={(type) => {
-                  applyInputSource(type)
-                    .then(() => {
-                      if (sessionKindRef.current === COMPOSITION_KIND) {
-                        compileComposition();
-                      }
-                    })
-                    .catch((sourceError) =>
-                      setError(sourceError.message || String(sourceError))
-                    );
-                }}
-                onImageFill={(url) => {
-                  fetch(url)
-                    .then((response) => {
-                      if (!response.ok) {
-                        throw new Error("Could not load image fill.");
-                      }
-                      return response.blob();
-                    })
-                    .then((blob) => {
-                      const type = blob.type || "image/png";
-                      if (!type.startsWith("image/")) {
-                        throw new Error("Choose an image fill.");
-                      }
-                      return pickFile(
-                        new File([blob], "image-fill", { type })
-                      );
-                    })
-                    .catch((sourceError) =>
-                      setError(sourceError.message || String(sourceError))
-                    );
-                }}
+                onExport={() => openExportDialog(exportTab)}
+                exportDisabled={Boolean(videoExportProgress)}
+                onFill={applyPaintFill}
               />
               {user && !protectedPreview && (
-                <>
-                <fig-separator />
-                <div className="sharing-controls">
+                <div className="sharing-controls properties-pane">
+                  <fig-header borderless>
+                    <h3>Visibility</h3>
+                  </fig-header>
                   <fig-field label="Public" direction="horizontal">
                     <fig-switch
                       checked={isPublic}
@@ -4757,75 +5087,108 @@ export default function App() {
                     />
                   </fig-field>
                 </div>
-                </>
               )}
             </>
           ) : (
-          <fig-group name={shaderName}>
-            <fig-header borderless>
-              <h3>{shaderName}</h3>
-              <hstack>
-                <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
-                  <fig-tooltip text="More">
+          <>
+            {kind === "effect" && (
+              <CompositionEditor
+                fillOnly
+                graph={{ fill: effectFill, effects: [] }}
+                imageUrl={inputImageUrl}
+                resolvedByKey={resolvedByKey}
+                fillCards={compositionFillCards}
+                nameCards={compositionNameCards}
+                readOnly={protectedPreview}
+                onChange={(next) => {
+                  const fill = normalizeComposition(next).fill;
+                  const previousKey = effectFillPreviewKey(
+                    effectFillRef.current
+                  );
+                  setEffectFill(fill);
+                  effectFillRef.current = fill;
+                  if (fill.type === "shader") {
+                    clearObjectUrl();
+                    hostRef.current?.clearInput();
+                  }
+                  if (previousKey || effectFillPreviewKey(fill)) {
+                    compile(source);
+                  }
+                }}
+                onFill={applyPaintFill}
+              />
+            )}
+            <div className="properties-pane">
+              <fig-header borderless="">
+                <h3>{kind === "fill" ? "Shader fill" : "Shader effect"}</h3>
+                <hstack>
+                  <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
+                    <fig-tooltip text="More">
+                      <fig-button
+                        fig-menu-trigger=""
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        aria-label="More property actions"
+                      >
+                        <fig-icon name="more" />
+                      </fig-button>
+                    </fig-tooltip>
+                    <fig-menu-item value="reset">
+                      Reset to default
+                    </fig-menu-item>
+                    <fig-menu-item
+                      value="save-defaults"
+                      disabled={protectedPreview ? "" : undefined}
+                    >
+                      Save as default
+                    </fig-menu-item>
+                  </fig-menu>
+                  <fig-tooltip
+                    text={effectVisible ? "Hide effect" : "Show effect"}
+                  >
                     <fig-button
-                      fig-menu-trigger=""
-                      type="button"
+                      type="toggle"
                       variant="ghost"
                       icon="true"
-                      aria-label="More property actions"
+                      selected={effectVisible}
+                      aria-label={
+                        effectVisible ? "Hide effect" : "Show effect"
+                      }
+                      onClick={() => {
+                        setEffectVisible((visible) => {
+                          const next = !visible;
+                          hostRef.current?.setActive(true);
+                          hostRef.current?.setEffectVisible?.(next);
+                          return next;
+                        });
+                      }}
                     >
-                      <fig-icon name="more" />
+                      <fig-icon
+                        name={effectVisible ? "visible" : "hidden"}
+                      />
                     </fig-button>
                   </fig-tooltip>
-                  <fig-menu-item value="reset">
-                    Reset to default
-                  </fig-menu-item>
-                  <fig-menu-item
-                    value="save-defaults"
-                    disabled={protectedPreview ? "" : undefined}
-                  >
-                    Save as default
-                  </fig-menu-item>
-                </fig-menu>
-                <fig-tooltip
-                  text={effectVisible ? "Hide effect" : "Show effect"}
-                >
-                  <fig-button
-                    type="toggle"
-                    variant="ghost"
-                    icon="true"
-                    selected={effectVisible}
-                    aria-label={
-                      effectVisible ? "Hide effect" : "Show effect"
-                    }
-                    onClick={() => {
-                      setEffectVisible((visible) => {
-                        const next = !visible;
-                        hostRef.current?.setActive(true);
-                        hostRef.current?.setEffectVisible?.(next);
-                        return next;
-                      });
-                    }}
-                  >
-                    <fig-icon
-                      name={effectVisible ? "visible" : "hidden"}
-                    />
-                  </fig-button>
-                </fig-tooltip>
-              </hstack>
-            </fig-header>
-            <Suspense fallback={null}>
-              <Controls
-                props={props}
-                values={values}
-                onChange={updateControl}
-                onInput={previewControl}
-              />
-            </Suspense>
+                </hstack>
+              </fig-header>
+              <Suspense fallback={null}>
+                <Controls
+                  props={props}
+                  values={values}
+                  onChange={updateControl}
+                  onInput={previewControl}
+                />
+              </Suspense>
+            </div>
+            <ExportPropertiesPane
+              disabled={Boolean(videoExportProgress)}
+              onExport={() => openExportDialog(exportTab)}
+            />
             {user && !protectedPreview && (
-              <>
-              <fig-separator />
-              <div className="sharing-controls">
+              <div className="sharing-controls properties-pane">
+                <fig-header borderless="">
+                  <h3>Visibility</h3>
+                </fig-header>
                 <fig-field label="Public" direction="horizontal">
                   <fig-switch
                     checked={isPublic}
@@ -4842,9 +5205,8 @@ export default function App() {
                   />
                 </fig-field>
               </div>
-              </>
             )}
-          </fig-group>
+          </>
           )}
       </fig-content>
     </aside>
@@ -4920,12 +5282,6 @@ export default function App() {
     unpublishShader,
     user,
   ]);
-  const zoomMenuRef = useFigMenuChange((value) => {
-    const percent = Number(value);
-    if (!Number.isFinite(percent)) return;
-    requestPreviewZoom(percent / 100);
-  });
-
   const shaderEditorHeader = (
           <fig-header class="shader-editor-header" borderless>
             <div
@@ -5081,13 +5437,6 @@ export default function App() {
           canvasTheme={canvasTheme}
         />
       )}
-      {!fatal && (
-        <PreviewFps
-          hostRef={hostRef}
-          canvasTheme={canvasTheme}
-          onCanvasThemeChange={setCanvasTheme}
-        />
-      )}
     </>
   );
 
@@ -5096,65 +5445,26 @@ export default function App() {
             className="tools background--light"
           >
             {(!isComposerView || compositionPlayable) && (
-            <fig-button
-              type="toggle"
-              variant="ghost"
-              icon="true"
-              selected={running}
-              aria-label={running ? "Pause" : "Play"}
-              onClick={togglePlay}
-            >
-              <fig-icon name={running ? "pause" : "play"} />
-            </fig-button>
-            )}
-            <fig-menu ref={zoomMenuRef} position="top center">
-              <fig-tooltip text="Zoom">
-                <fig-button
-                  fig-menu-trigger=""
-                  variant="ghost"
-                  class="tools-zoom"
-                  aria-label={`Zoom ${Math.round(previewZoom * 100)}%`}
-                >
-                  {Math.round(previewZoom * 100)}%
-                </fig-button>
-              </fig-tooltip>
-              <fig-menu-item value="50">
-                50%
-              </fig-menu-item>
-              <fig-menu-item value="100">
-                100%
-              </fig-menu-item>
-              <fig-menu-item value="200">
-                200%
-              </fig-menu-item>
-            </fig-menu>
-            {kind === "effect" && (
               <>
-                <fig-select
-                  ref={inputSelectRef}
-                  class="tools-input-source"
-                  position="top left"
-                  value={inputSource}
-                  options={JSON.stringify([
-                    { value: "image", label: "Image" },
-                    { value: "vector", label: "Vector" },
-                    { value: "video", label: "Video" },
-                    { value: "html", label: "HTML" },
-                  ])}
-                  aria-label="Input source"
-                  dangerouslySetInnerHTML={opaqueContent}
-                />
-                <fig-tooltip text="Upload input">
-                  <fig-button
-                    variant="ghost"
-                    icon="true"
-                    disabled={uploading || inputSource === "html"}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <fig-icon name="upload" />
-                  </fig-button>
-                </fig-tooltip>
+                <fig-button
+                  type="toggle"
+                  variant="ghost"
+                  icon="true"
+                  selected={running}
+                  aria-label={running ? "Pause" : "Play"}
+                  onClick={togglePlay}
+                >
+                  <fig-icon name={running ? "pause" : "play"} />
+                </fig-button>
+                <fig-separator direction="vertical" />
               </>
+            )}
+            {!fatal && (
+              <PreviewFps
+                hostRef={hostRef}
+                previewZoom={previewZoom}
+                onPreviewZoomChange={requestPreviewZoom}
+              />
             )}
             {isComposerView &&
               mediaFillType(composition?.fill?.type) && (
@@ -5169,16 +5479,25 @@ export default function App() {
                   </fig-button>
                 </fig-tooltip>
               )}
-            <fig-tooltip text="Export">
+            <fig-separator direction="vertical" />
+            <fig-tooltip
+              text={
+                canvasTheme === "dark" ? "Use light canvas" : "Use dark canvas"
+              }
+            >
               <fig-button
-                type="button"
                 variant="ghost"
                 icon="true"
-                aria-label="Export"
-                disabled={videoExportProgress ? "" : undefined}
-                onClick={() => openExportDialog(exportTab)}
+                aria-label={
+                  canvasTheme === "dark"
+                    ? "Use light canvas"
+                    : "Use dark canvas"
+                }
+                onClick={() =>
+                  setCanvasTheme(canvasTheme === "dark" ? "light" : "dark")
+                }
               >
-                <ExportIcon />
+                <fig-icon name={canvasTheme === "dark" ? "moon" : "sun"} />
               </fig-button>
             </fig-tooltip>
           </div>

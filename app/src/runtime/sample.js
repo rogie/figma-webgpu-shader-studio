@@ -1,5 +1,8 @@
 import defaultInputUrl from "../assets/default-input.png";
+import defaultVideoUrl from "../assets/default-input.mp4?url";
 import defaultVectorUrl from "../assets/default-input.svg";
+
+export { defaultVideoUrl };
 
 const VECTOR_RASTER_SIZE = 1024;
 const MAX_SVG_RASTER = 4096;
@@ -49,9 +52,6 @@ export async function makeSampleBitmap() {
 }
 
 export async function makeSampleVideoBlob() {
-  const { default: defaultVideoUrl } = await import(
-    "../assets/default-input.mp4?url"
-  );
   const response = await fetch(defaultVideoUrl);
   if (!response.ok) {
     throw new Error(`Unable to load default preview video (${response.status})`);
