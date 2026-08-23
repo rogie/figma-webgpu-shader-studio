@@ -62,6 +62,7 @@ import {
 } from "./runtime/htmlInCanvas.js";
 import defaultInputUrl from "./assets/default-input.png";
 import {
+  defaultVectorUrl,
   defaultVideoUrl,
   makeSampleBitmap,
   makeSampleVectorBitmap,
@@ -111,8 +112,14 @@ import {
 } from "./lib/draftStorage.js";
 import { writeInputSource as persistInputSource } from "./lib/inputSourceStorage.js";
 import {
+  persistableEffectFill,
+  readEffectFill,
+  rememberEffectFill,
+} from "./lib/effectFillStorage.js";
+import {
   blobToDataUrl,
   dataUrlToObjectUrl,
+  fileFromBlobUrl,
   mediaType,
   revokeObjectUrl as revokeThumbnailUrl,
 } from "./lib/mediaFiles.js";
@@ -149,6 +156,7 @@ import {
   COMPOSITION_KIND,
   emptyComposition,
   fillFromInputSource,
+  paintForInputSource,
   resolvedLibraryKind,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
@@ -164,6 +172,7 @@ import {
   serializeCompositionExport,
 } from "./lib/composition.js";
 import {
+  graphTypeForPaint,
   isPaintFillType,
   paintImageSource,
   paintSize,
@@ -177,7 +186,10 @@ import {
   isDraftId,
   shaderContentFingerprint,
 } from "./lib/shaderIdentity.js";
-import { shaderSaveQueue } from "./lib/shaderSaveQueue.js";
+import {
+  shaderSaveQueue,
+  withExclusiveShaderSave,
+} from "./lib/shaderSaveQueue.js";
 import {
   getFigmaShader,
   listAllFigmaShaders,
@@ -472,7 +484,9 @@ export default function App() {
     () => getAppRoute().kind || INITIAL.kind,
   );
   const [composition, setComposition] = useState(null);
-  const [effectFill, setEffectFill] = useState(() => fillFromInputSource("image"));
+  const [effectFill, setEffectFill] = useState(
+    () => readEffectFill(INITIAL.id) || fillFromInputSource("image")
+  );
   const [inputImageUrl, setInputImageUrl] = useState(defaultInputUrl);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
@@ -686,6 +700,8 @@ export default function App() {
   const sourceRef = useRef(source);
   const compositionRef = useRef(composition);
   const effectFillRef = useRef(effectFill);
+  const effectFillByPresetRef = useRef(new Map());
+  const sessionInputAppliedRef = useRef("");
   const inputImageUrlRef = useRef(defaultInputUrl);
   const sessionKindRef = useRef(sessionKind);
   const selectedLayerIdRef = useRef(selectedLayerId);
@@ -760,25 +776,63 @@ export default function App() {
     }
   }, [kind, presetId, inputSource]);
   useEffect(() => {
-    const fill = fillFromInputSource(inputSourceRef.current);
-    setEffectFill(fill);
-    effectFillRef.current = fill;
-    const prev = inputImageUrlRef.current;
-    if (prev && prev.startsWith("blob:")) URL.revokeObjectURL(prev);
-    inputImageUrlRef.current = defaultInputUrl;
-    setInputImageUrl(defaultInputUrl);
+    const paint = effectFillRef.current?.paint;
+    const paintUrl =
+      (paint?.type === "image" && paint.image?.url) ||
+      (paint?.type === "video" && paint.video?.url) ||
+      "";
+    const next = paintUrl || defaultInputUrl;
+    inputImageUrlRef.current = next;
+    setInputImageUrl(next);
   }, [presetId]);
   useEffect(() => {
     if (kind !== "effect") return;
-    const type =
-      inputSource === "html" ? "html" : mediaFillType(inputSource);
-    if (!type) return;
+    if (inputSource === "html") {
+      setEffectFill((current) =>
+        current.type === "html" ? current : fillFromInputSource("html")
+      );
+      return;
+    }
+    const paint = paintForInputSource(inputSource, {
+      image: defaultInputUrl,
+      vector: defaultVectorUrl,
+      video: defaultVideoUrl,
+    });
+    if (!paint) return;
     setEffectFill((current) => {
-      if (current.type === "shader" || current.type === type) return current;
-      if (current.type === "none") return current;
-      return { ...current, type, shaderId: null };
+      if (current.type === "shader") return current;
+      const next = {
+        ...fillFromInputSource(inputSource),
+        shaderId: current.shaderId ?? null,
+        values: current.values || {},
+        enabled: current.enabled !== false,
+        paint,
+      };
+      const currentUrl = current.paint?.image?.url || current.paint?.video?.url;
+      const nextUrl = paint.image?.url || paint.video?.url;
+      if (
+        current.type === next.type &&
+        current.paint?.type === paint.type &&
+        currentUrl === nextUrl
+      ) {
+        return current;
+      }
+      const customUrl =
+        typeof currentUrl === "string" &&
+        currentUrl &&
+        currentUrl !== defaultInputUrl &&
+        currentUrl !== defaultVectorUrl &&
+        currentUrl !== defaultVideoUrl;
+      if (customUrl && inputSource !== "vector" && current.type === next.type) {
+        return current;
+      }
+      return next;
     });
   }, [inputSource, kind]);
+  useEffect(() => {
+    if (sessionKind !== "effect" || !presetId) return;
+    rememberEffectFill(effectFillByPresetRef.current, presetId, effectFill);
+  }, [effectFill, presetId, sessionKind]);
   const resolvedByKey = useMemo(
     () => new Map(Object.entries(resolvedShaders)),
     [resolvedShaders]
@@ -958,7 +1012,9 @@ export default function App() {
           existing.isPublic === isPublic &&
           JSON.stringify(existing.values || {}) === JSON.stringify(values) &&
           JSON.stringify(existing.composition || null) ===
-            JSON.stringify(composition)
+            JSON.stringify(composition) &&
+          JSON.stringify(existing.effectFill || null) ===
+            JSON.stringify(effectFill)
         ) {
           return current;
         }
@@ -970,7 +1026,11 @@ export default function App() {
                 source,
                 kind: sessionKind,
                 values,
-                composition,
+                composition:
+                  sessionKind === "effect"
+                    ? { effectFill }
+                    : composition,
+                effectFill,
                 isPublic,
                 pendingMedia,
               }
@@ -981,6 +1041,7 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [
     composition,
+    effectFill,
     isPublic,
     pendingMedia,
     presetId,
@@ -1638,6 +1699,29 @@ export default function App() {
   );
   compileRef.current = compile;
 
+  const syncEffectFillFromCanvasInput = useCallback((paint) => {
+    if (sessionKindRef.current !== "effect") return;
+    if (!isPaintFillType(paint?.type)) return;
+    setEffectFill((current) => {
+      if (current?.type === "shader") return current;
+      const type = graphTypeForPaint(paint.type);
+      if (
+        current?.type === type &&
+        current?.paint?.type === paint.type &&
+        JSON.stringify(current.paint) === JSON.stringify(paint)
+      ) {
+        return current;
+      }
+      return {
+        type,
+        shaderId: current?.shaderId ?? null,
+        values: current?.values || {},
+        enabled: current?.enabled !== false,
+        paint,
+      };
+    });
+  }, []);
+
   const setImagePreviewUrl = useCallback((url) => {
     const next = url || defaultInputUrl;
     const prev = inputImageUrlRef.current;
@@ -1740,6 +1824,11 @@ export default function App() {
         videoRef.current = video;
         host.setVideoInput(video);
         setInputSource("video");
+        const videoPaint = {
+          type: "video",
+          video: { url, scaleMode: "fill" },
+        };
+        syncEffectFillFromCanvasInput(videoPaint);
       } else {
         const bitmap =
           mimeType === "image/svg+xml"
@@ -1751,12 +1840,17 @@ export default function App() {
         }
         host.setImageInput(bitmap);
         setInputSource("image");
-        setImagePreviewUrl(URL.createObjectURL(blob));
+        const previewUrl = URL.createObjectURL(blob);
+        setImagePreviewUrl(previewUrl);
+        syncEffectFillFromCanvasInput({
+          type: "image",
+          image: { url: previewUrl, scaleMode: "fill" },
+        });
       }
       setPreviewRevision((revision) => revision + 1);
       return true;
     },
-    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl]
+    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl, syncEffectFillFromCanvasInput]
   );
 
   const applyWebcamFill = useCallback(
@@ -1875,11 +1969,16 @@ export default function App() {
         return false;
       }
       host.setImageInput(bitmap);
-      setInputSource("vector");
+      setInputSource("image");
+      setImagePreviewUrl(defaultVectorUrl);
+      syncEffectFillFromCanvasInput({
+        type: "image",
+        image: { url: defaultVectorUrl, scaleMode: "fill" },
+      });
       setPreviewRevision((revision) => revision + 1);
       return true;
     },
-    [clearObjectUrl, isInputApplyCurrent]
+    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl, syncEffectFillFromCanvasInput]
   );
 
   // Re-apply the toolbar input preference when switching shaders.
@@ -1949,6 +2048,7 @@ export default function App() {
       }
       host.setImageInput(bitmap);
       setInputSource("image");
+      setImagePreviewUrl(defaultInputUrl);
       setPreviewRevision((revision) => revision + 1);
     } catch (inputError) {
       if (isInputApplyCurrent(generation)) {
@@ -1957,7 +2057,7 @@ export default function App() {
     } finally {
       if (isInputApplyCurrent(generation)) setUploading(false);
     }
-  }, [applyMediaBlob, applyVectorSample, clearObjectUrl, isInputApplyCurrent]);
+  }, [applyMediaBlob, applyVectorSample, clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl]);
 
   const applyInputSource = useCallback(
     async (next) => {
@@ -2081,6 +2181,16 @@ export default function App() {
                 return;
               }
               await applyMediaBlob(blob, blob.type || "video/mp4", generation);
+              if (url && url !== defaultVideoUrl && url.startsWith("blob:")) {
+                const file = await fileFromBlobUrl(url, "input.mp4");
+                if (file && isInputApplyCurrent(generation)) {
+                  if (file.size > MAX_MEDIA_BYTES) {
+                    setError("Input media must be 25 MB or smaller.");
+                  } else {
+                    setPendingMedia(file);
+                  }
+                }
+              }
               resolve(true);
               return;
             }
@@ -2118,6 +2228,16 @@ export default function App() {
               !media.url.startsWith("data:")
             ) {
               setImagePreviewUrl(media.url);
+              if (media.url.startsWith("blob:")) {
+                const file = await fileFromBlobUrl(media.url);
+                if (file && isInputApplyCurrent(generation)) {
+                  if (file.size > MAX_MEDIA_BYTES) {
+                    setError("Input media must be 25 MB or smaller.");
+                  } else {
+                    setPendingMedia(file);
+                  }
+                }
+              }
             }
             setPreviewRevision((revision) => revision + 1);
             resolve(true);
@@ -2138,20 +2258,10 @@ export default function App() {
       restoreSample,
       setImagePreviewUrl,
       setInputSource,
+      setPendingMedia,
     ]
   );
   applyPaintFillRef.current = applyPaintFill;
-
-  useEffect(() => {
-    if (!runtimeReady || !hostRef.current?.ready) return;
-    const paint =
-      sessionKind === COMPOSITION_KIND
-        ? compositionPaintFill(compositionRef.current)
-        : sessionKind === "effect" && isPaintFillType(effectFillRef.current?.paint?.type)
-          ? effectFillRef.current.paint
-          : null;
-    if (paint) applyPaintFill(paint);
-  }, [applyPaintFill, presetId, runtimeReady, sessionKind]);
 
   // Apply an input choice that arrived before the host was ready.
   useEffect(() => {
@@ -2331,6 +2441,17 @@ export default function App() {
       }
       const generation = ++inputApplyGenRef.current;
       setUploading(true);
+      const isVideo = String(shader.input_mime_type || "").startsWith("video/");
+      getAssetUrl(shader.input_path)
+        .then((url) => {
+          if (!url || !isInputApplyCurrent(generation)) return;
+          const paint = isVideo
+            ? { type: "video", video: { url, scaleMode: "fill" } }
+            : { type: "image", image: { url, scaleMode: "fill" } };
+          syncEffectFillFromCanvasInput(paint);
+          if (!isVideo) setImagePreviewUrl(url);
+        })
+        .catch(() => {});
       try {
         const blob = await downloadAsset(shader.input_path);
         await applyMediaBlob(
@@ -2348,8 +2469,38 @@ export default function App() {
       clearObjectUrl,
       isInputApplyCurrent,
       reapplyPreferredInput,
+      setImagePreviewUrl,
+      syncEffectFillFromCanvasInput,
     ]
   );
+
+  useEffect(() => {
+    if (!runtimeReady || !hostRef.current?.ready) return;
+    if (sessionInputAppliedRef.current === presetId) return;
+    sessionInputAppliedRef.current = presetId;
+    if (sessionKind === COMPOSITION_KIND) {
+      const paint = compositionPaintFill(compositionRef.current);
+      if (paint) applyPaintFill(paint);
+      return;
+    }
+    if (sessionKind === "effect" && currentShader?.input_path) {
+      loadMediaForShader(currentShader);
+      return;
+    }
+    const paint =
+      sessionKind === "effect" &&
+      isPaintFillType(effectFillRef.current?.paint?.type)
+        ? effectFillRef.current.paint
+        : null;
+    if (paint) applyPaintFill(paint);
+  }, [
+    applyPaintFill,
+    currentShader,
+    loadMediaForShader,
+    presetId,
+    runtimeReady,
+    sessionKind,
+  ]);
 
   const persistActiveDraft = useCallback(() => {
     const session = draftSessionRef.current;
@@ -2371,7 +2522,11 @@ export default function App() {
               source: session.source,
               kind: session.kind,
               values: session.values,
-              composition: session.composition,
+              composition:
+                session.kind === "effect"
+                  ? { effectFill: effectFillRef.current }
+                  : session.composition,
+              effectFill: effectFillRef.current,
               isPublic: session.isPublic,
               pendingMedia: session.pendingMedia,
             }
@@ -2425,6 +2580,11 @@ export default function App() {
     loadMediaForShader,
     reapplyPreferredInput,
     effectPaintRef: effectFillRef,
+    effectFillStoreRef: effectFillByPresetRef,
+    sessionRef: draftSessionRef,
+    setEffectFill,
+    inputApplyGenRef,
+    sessionInputAppliedRef,
   });
 
   const openDraft = useCallback(
@@ -2612,20 +2772,23 @@ export default function App() {
             ? existing
             : { ...existing, ...(await getShader(existing.id)) };
           saved = await shaderSaveQueue.enqueue(existing.id, async () => {
-            await saveShaderState({
-              shaderId: existing.id,
-              expectedStateRevision: current.state_revision,
-              source: sourceText,
-              kind: shaderKind,
-              parameterValues: {},
-              features: inferFeatures(sourceText),
-              checkpointKind: "manual",
-              summary: `Imported ${name} from Figma`,
+            const result = await withExclusiveShaderSave(existing.id, async () => {
+              await saveShaderState({
+                shaderId: existing.id,
+                expectedStateRevision: current.state_revision,
+                source: sourceText,
+                kind: shaderKind,
+                parameterValues: {},
+                features: inferFeatures(sourceText),
+                checkpointKind: "manual",
+                summary: `Imported ${name} from Figma`,
+              });
+              return updateShader(existing.id, {
+                name,
+                ...link,
+              });
             });
-            return updateShader(existing.id, {
-              name,
-              ...link,
-            });
+            return result.value;
           });
         } else {
           saved = await createShader({
@@ -2844,21 +3007,24 @@ export default function App() {
           let saved;
           if (existing) {
             saved = await shaderSaveQueue.enqueue(existing.id, async () => {
-              await saveShaderState({
-                shaderId: existing.id,
-                expectedStateRevision: existing.state_revision,
-                source: payload.source,
-                kind: payload.kind,
-                parameterValues: payload.parameter_values,
-                features: payload.features,
-                composition: payload.composition,
-                checkpointKind: "manual",
-                summary: "Migrated local draft",
+              const result = await withExclusiveShaderSave(existing.id, async () => {
+                await saveShaderState({
+                  shaderId: existing.id,
+                  expectedStateRevision: existing.state_revision,
+                  source: payload.source,
+                  kind: payload.kind,
+                  parameterValues: payload.parameter_values,
+                  features: payload.features,
+                  composition: payload.composition,
+                  checkpointKind: "manual",
+                  summary: "Migrated local draft",
+                });
+                return updateShader(existing.id, {
+                  name: payload.name,
+                  ...figmaShaderLink(editorActive ? session : draft),
+                });
               });
-              return updateShader(existing.id, {
-                name: payload.name,
-                ...figmaShaderLink(editorActive ? session : draft),
-              });
+              return result.value;
             });
           } else {
             saved = await createShader(payload);
@@ -3576,7 +3742,7 @@ export default function App() {
         shaderId &&
         background &&
         !checkpointKind &&
-        shaderSaveQueue.isBusy(shaderId)
+        (shaderSaveQueue.isBusyAny() || pendingMedia)
       ) {
         return currentShader ?? null;
       }
@@ -3652,7 +3818,11 @@ export default function App() {
                 new Map(Object.entries(resolvedShaders))
               )
             : inferFeatures(saveSource),
-          composition: isComposition ? graph : {},
+          composition: isComposition
+            ? graph
+            : sessionKindRef.current === "effect"
+              ? { effectFill: persistableEffectFill(effectFillRef.current) }
+              : {},
           is_public: publicFlag,
           ...figmaShaderLink(currentShader || draftLink),
         };
@@ -3725,20 +3895,26 @@ export default function App() {
         await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
 
         const assetChanges = {};
-        if (pendingMedia) {
+        let mediaToUpload = background ? null : pendingMedia;
+        if (!mediaToUpload && !background && sessionKindRef.current === "effect") {
+          const paint = effectFillRef.current?.paint;
+          const url = paint?.image?.url || paint?.video?.url || "";
+          mediaToUpload = await fileFromBlobUrl(url);
+        }
+        if (mediaToUpload) {
           const oldPath = isOwner ? currentShader?.input_path : null;
-          const inputMimeType = mediaType(pendingMedia);
+          const inputMimeType = mediaType(mediaToUpload);
           const inputPath = await uploadAsset({
             ownerId: user.id,
             shaderId: saved.id,
             role: "input",
-            blob: pendingMedia,
-            fileName: pendingMedia.name,
+            blob: mediaToUpload,
+            fileName: mediaToUpload.name,
             contentType: inputMimeType,
           });
           if (oldPath && oldPath !== inputPath) await removeAssets([oldPath]);
           assetChanges.input_path = inputPath;
-          assetChanges.input_name = pendingMedia.name;
+          assetChanges.input_name = mediaToUpload.name;
           assetChanges.input_mime_type = inputMimeType;
         }
 
@@ -3813,8 +3989,10 @@ export default function App() {
           JSON.stringify(latest.values) === saveSnapshot.values &&
           Boolean(latest.isPublic) === saveSnapshot.isPublic &&
           latest.pendingMedia === saveSnapshot.pendingMedia;
-        if (!background || unchanged) {
+        if (mediaToUpload || !background || unchanged) {
           setPendingMedia(null);
+        }
+        if (!background || unchanged) {
           setDirty(false);
         }
         if (isDraftId(presetId)) {
@@ -3880,7 +4058,12 @@ export default function App() {
       };
 
       if (shaderId) {
-        return shaderSaveQueue.enqueue(shaderId, runSave);
+        return shaderSaveQueue.enqueue(shaderId, async () => {
+          const result = await withExclusiveShaderSave(shaderId, runSave, {
+            ifAvailable: background && !checkpointKind,
+          });
+          return result.skipped ? currentShader ?? null : result.value;
+        });
       }
       return runSave();
     },
@@ -4146,11 +4329,19 @@ export default function App() {
             })) || expectedShader;
         }
 
-        const restored = await restoreShaderVersion({
-          shaderId: restoreShaderId,
-          versionId,
-          expectedStateRevision: expectedShader.state_revision,
-        });
+        const restored = await shaderSaveQueue.enqueue(
+          restoreShaderId,
+          async () => {
+            const result = await withExclusiveShaderSave(restoreShaderId, () =>
+              restoreShaderVersion({
+                shaderId: restoreShaderId,
+                versionId,
+                expectedStateRevision: expectedShader.state_revision,
+              })
+            );
+            return result.value;
+          }
+        );
         setCloudShaders((current) => [
           restored,
           ...current.filter((item) => item.id !== restored.id),
@@ -5041,6 +5232,7 @@ export default function App() {
           {isComposerView ? (
             <>
               <CompositionEditor
+                key={presetId}
                 graph={composition}
                 imageUrl={inputImageUrl}
                 resolvedByKey={resolvedByKey}
@@ -5105,6 +5297,7 @@ export default function App() {
           <>
             {kind === "effect" && (
               <CompositionEditor
+                key={presetId}
                 fillOnly
                 graph={{ fill: effectFill, effects: [] }}
                 imageUrl={inputImageUrl}
@@ -5119,6 +5312,7 @@ export default function App() {
                   );
                   setEffectFill(fill);
                   effectFillRef.current = fill;
+                  setDirty(true);
                   if (fill.type === "shader") {
                     clearObjectUrl();
                     hostRef.current?.clearInput();
@@ -5132,7 +5326,7 @@ export default function App() {
             )}
             <div className="properties-pane">
               <fig-header borderless="">
-                <h3>{kind === "fill" ? "Shader fill" : "Shader effect"}</h3>
+                <h3>{kind === "fill" ? "Shader fill" : "Effect properties"}</h3>
                 <hstack>
                   <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
                     <fig-tooltip text="More">

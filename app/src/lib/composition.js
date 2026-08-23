@@ -524,10 +524,35 @@ export function mediaFillType(fillType) {
     : null;
 }
 
+export function readEffectFillFromComposition(composition) {
+  const stored = composition?.effectFill;
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+    return null;
+  }
+  return normalizeComposition({ fill: stored }).fill;
+}
+
+export function effectFillComposition(fill) {
+  return { effectFill: normalizeComposition({ fill }).fill };
+}
+
 export function fillFromInputSource(inputSource) {
   const type =
     inputSource === "html" ? "html" : mediaFillType(inputSource) || "image";
   return { type, shaderId: null, values: {}, enabled: true };
+}
+
+export function paintForInputSource(inputSource, urls = {}) {
+  if (inputSource === "video" && urls.video) {
+    return { type: "video", video: { url: urls.video, scaleMode: "fill" } };
+  }
+  if (inputSource === "vector" && urls.vector) {
+    return { type: "image", image: { url: urls.vector, scaleMode: "fill" } };
+  }
+  if (urls.image) {
+    return { type: "image", image: { url: urls.image, scaleMode: "fill" } };
+  }
+  return null;
 }
 
 export function compositionPaintFill(graph) {
@@ -542,6 +567,7 @@ export function sessionInputPlan({
   media = null,
   cloudShader = null,
   effectPaint = null,
+  inputSource = null,
 } = {}) {
   if (kind === COMPOSITION_KIND) {
     const normalized = normalizeComposition(graph);
@@ -558,6 +584,9 @@ export function sessionInputPlan({
   if (media) return { action: "media", media };
   if (cloudShader?.input_path) {
     return { action: "download", shader: cloudShader };
+  }
+  if (inputSource === "html") {
+    return { action: "preferred" };
   }
   if (isPaintFillType(effectPaint?.type)) {
     return { action: "paint", paint: effectPaint };

@@ -65,6 +65,29 @@ function shaderFillControlValue(shaderId, thumbnailUrl) {
   return JSON.stringify(value);
 }
 
+function controlValueFromGraphFill(
+  fill,
+  { cards = [], imageUrl = defaultInputUrl } = {}
+) {
+  if (fill?.type === "shader") {
+    const card = findShaderFillCard(cards, fill.shaderId);
+    return shaderFillControlValue(fill.shaderId, card?.thumbnailUrl);
+  }
+  if (fill?.paint && isPaintFillType(fill.paint.type)) {
+    const paintUrl = fill.paint.image?.url || fill.paint.video?.url || "";
+    if (
+      fill.paint.type === "image" &&
+      paintUrl === defaultInputUrl &&
+      imageUrl &&
+      imageUrl !== defaultInputUrl
+    ) {
+      return imageFillValueFromUrl(imageUrl);
+    }
+    return JSON.stringify(fill.paint);
+  }
+  return imageFillValueFromUrl(imageUrl || defaultInputUrl);
+}
+
 function findShaderFillCard(cards, shaderId) {
   const aliases = new Set(compositionRefAliases(shaderId));
   return (cards || []).find((card) => aliases.has(card?.key)) ?? null;
@@ -388,10 +411,10 @@ function ImageFillInput({
   useLayoutEffect(() => {
     const node = ref.current;
     if (!node) return;
-    if (node.classList.contains("has-popup-open")) return;
-    if (node.getAttribute("value") === value) return;
-    // Use the property setter so propskit forwards the picker JSON
-    // (colorSpace, video.poster, custom swatchBackground) to the swatch.
+    const popupOpen = node.classList.contains("has-popup-open");
+    if (popupOpen) return;
+    // Always assign the property. Matching the attribute is not enough —
+    // propskit updates the swatch from the setter, not from React's attribute.
     node.value = value;
   }, [value]);
 
@@ -402,6 +425,7 @@ function ImageFillInput({
       direction="horizontal"
       size="large"
       mode={allowShader ? FILL_SHADER_MODES : FILL_PAINT_MODES}
+      value={value}
       disabled={disabled ? "" : undefined}
       webcam-mode="live"
       default-video={defaultVideoUrl}
@@ -461,16 +485,19 @@ export default function CompositionEditor({
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
   const propertiesLayerIdRef = useRef(null);
   propertiesLayerIdRef.current = propertiesLayerId;
-  const [imageFillValue, setImageFillValue] = useState(() => {
-    if (graph?.fill?.type === "shader") {
-      return shaderFillControlValue(graph.fill.shaderId);
-    }
-    return graph?.fill?.paint
-      ? JSON.stringify(graph.fill.paint)
-      : imageFillValueFromUrl(imageUrl || defaultInputUrl);
-  });
+  const [imageFillValue, setImageFillValue] = useState(() =>
+    controlValueFromGraphFill(graph?.fill, {
+      cards: fillCards,
+      imageUrl: imageUrl || defaultInputUrl,
+    })
+  );
   const [imageFillKey, setImageFillKey] = useState(0);
-  const lastImageFillUrlRef = useRef(imageUrl || defaultInputUrl);
+  const lastImageFillUrlRef = useRef(
+    (typeof graph?.fill?.paint?.image?.url === "string" &&
+      graph.fill.paint.image.url) ||
+      imageUrl ||
+      defaultInputUrl
+  );
   const fillValueTypeRef = useRef(graph?.fill?.paint?.type || "image");
   const lastPaintRef = useRef(
     graph?.fill?.paint ? JSON.stringify(graph.fill.paint) : ""
@@ -714,10 +741,18 @@ export default function CompositionEditor({
         defaultVideoUrl,
       });
       const typeChanged = fillValueTypeRef.current !== next.type;
+      const prevUrl =
+        normalized.fill.paint?.image?.url ||
+        normalized.fill.paint?.video?.url ||
+        "";
+      const nextUrl = next.image?.url || next.video?.url || "";
+      const urlChanged =
+        (next.type === "image" || next.type === "video") && prevUrl !== nextUrl;
+      const shouldPersist = persist || typeChanged || urlChanged || fillOnly;
       fillValueTypeRef.current = next.type;
       const nextValue = JSON.stringify(next);
       setImageFillValue(nextValue);
-      if (persist || typeChanged) {
+      if (shouldPersist) {
         lastPaintRef.current = nextValue;
         update({
           ...normalized,
@@ -738,7 +773,7 @@ export default function CompositionEditor({
       }
       onFill?.(next);
     },
-    [applyShaderFill, normalized, onFill, update]
+    [applyShaderFill, fillOnly, normalized, onFill, update]
   );
 
   const shaderFillCard = useMemo(
@@ -746,38 +781,52 @@ export default function CompositionEditor({
     [normalized.fill.shaderId, shaderFillCards]
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const next = controlValueFromGraphFill(normalized.fill, {
+      cards: shaderFillCards,
+      imageUrl: imageUrl || defaultInputUrl,
+    });
     if (normalized.fill.type === "shader") {
-      const next = shaderFillControlValue(
-        normalized.fill.shaderId,
-        shaderFillCard?.thumbnailUrl
-      );
       fillValueTypeRef.current = "shader";
+      lastPaintRef.current = "";
       setImageFillValue(next);
       return;
     }
-    const paint = normalized.fill.paint;
-    const next = paint ? JSON.stringify(paint) : "";
-    if (next === lastPaintRef.current) return;
-    lastPaintRef.current = next;
-    if (paint && isPaintFillType(paint.type)) {
-      fillValueTypeRef.current = paint.type;
-      setImageFillValue(next);
+    const paintType = isPaintFillType(normalized.fill.paint?.type)
+      ? normalized.fill.paint.type
+      : null;
+    if (
+      next === lastPaintRef.current &&
+      paintType &&
+      fillValueTypeRef.current === paintType
+    ) {
+      return;
     }
-  }, [
-    normalized.fill.paint,
-    normalized.fill.shaderId,
-    normalized.fill.type,
-    shaderFillCard,
-  ]);
+    lastPaintRef.current = normalized.fill.paint ? next : "";
+    fillValueTypeRef.current = paintType || normalized.fill.type;
+    setImageFillValue(next);
+  }, [imageUrl, normalized.fill, shaderFillCards]);
 
   useEffect(() => {
     if (!imageUrl || imageUrl === lastImageFillUrlRef.current) return;
     if (fillValueTypeRef.current !== "image") return;
+    const paintUrl =
+      normalized.fill.paint?.type === "image" &&
+      typeof normalized.fill.paint.image?.url === "string"
+        ? normalized.fill.paint.image.url
+        : "";
+    if (
+      paintUrl &&
+      imageUrl === defaultInputUrl &&
+      paintUrl !== defaultInputUrl
+    ) {
+      lastImageFillUrlRef.current = imageUrl;
+      return;
+    }
     lastImageFillUrlRef.current = imageUrl;
     setImageFillValue(imageFillValueFromUrl(imageUrl));
     setImageFillKey((key) => key + 1);
-  }, [imageUrl]);
+  }, [imageUrl, normalized.fill.paint]);
 
   const removeEffect = useCallback(
     (effectId) => {

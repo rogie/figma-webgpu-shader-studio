@@ -28,6 +28,7 @@ import {
   resolveReferencedShaderSource,
   compositionPaintFill,
   sessionInputPlan,
+  paintForInputSource,
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
 } from "./composition.js";
@@ -137,6 +138,24 @@ test("maps preview input sources onto fill types", () => {
   });
   assert.equal(fillFromInputSource("html").type, "html");
   assert.equal(fillFromInputSource("vector").type, "image");
+});
+
+test("maps vector input onto an image paint", () => {
+  assert.deepEqual(
+    paintForInputSource("vector", { vector: "/vector.svg", image: "/photo.png" }),
+    { type: "image", image: { url: "/vector.svg", scaleMode: "fill" } },
+  );
+  assert.deepEqual(
+    sessionInputPlan({
+      kind: "effect",
+      effectPaint: { type: "image", image: { url: "/vector.svg" } },
+      inputSource: "image",
+    }),
+    {
+      action: "paint",
+      paint: { type: "image", image: { url: "/vector.svg" } },
+    },
+  );
 });
 
 test("normalizes fill types, shader keys, and effect cap", () => {

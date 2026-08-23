@@ -9,8 +9,12 @@ export class SupabaseRequestTimeoutError extends Error {
   }
 }
 
+function requestUrl(input) {
+  return typeof input === "string" ? input : input?.url || "";
+}
+
 function requestContext(input) {
-  const url = typeof input === "string" ? input : input?.url || "";
+  const url = requestUrl(input);
   if (url.includes("/rest/v1/rpc/save_shader_state")) {
     return "while saving your shader";
   }
@@ -26,8 +30,30 @@ function requestContext(input) {
   return "while talking to the server";
 }
 
+export function isLockHoldingRequest(input) {
+  const url = requestUrl(input);
+  return (
+    url.includes("/rest/v1/rpc/save_shader_state") ||
+    url.includes("/rest/v1/rpc/restore_shader_version")
+  );
+}
+
 export function createSupabaseFetch(timeoutMs = SUPABASE_REQUEST_TIMEOUT_MS) {
   return async (input, init = {}) => {
+    // Aborting a lock-holding RPC drops the PostgREST connection before
+    // COMMIT. The shaders row stays locked in idle-in-transaction and the
+    // next save / library load waits on that lock until the pool fills.
+    if (isLockHoldingRequest(input)) {
+      try {
+        return await fetch(input, init);
+      } catch (error) {
+        if (error?.name === "AbortError") {
+          throw new SupabaseRequestTimeoutError(requestContext(input));
+        }
+        throw error;
+      }
+    }
+
     const controller = new AbortController();
     const timeoutId = globalThis.setTimeout(
       () => controller.abort(),

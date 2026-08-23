@@ -33,6 +33,26 @@ export function revokeObjectUrl(url) {
   }
 }
 
+export async function fileFromBlobUrl(url, fileName) {
+  if (typeof url !== "string" || !url.startsWith("blob:")) return null;
+  try {
+    const response = await fetch(url);
+    if (!response.ok) return null;
+    const blob = await response.blob();
+    const type = blob.type || "application/octet-stream";
+    const name =
+      fileName ||
+      (type === "image/svg+xml"
+        ? "input.svg"
+        : type.startsWith("video/")
+          ? "input.mp4"
+          : "input.png");
+    return new File([blob], name, { type });
+  } catch {
+    return null;
+  }
+}
+
 export function mediaType(file) {
   if (file.type?.startsWith("image/") || file.type?.startsWith("video/")) {
     return file.type;

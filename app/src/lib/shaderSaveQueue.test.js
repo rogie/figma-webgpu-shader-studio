@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createShaderSaveQueue } from "./shaderSaveQueue.js";
+import {
+  createShaderSaveQueue,
+  withExclusiveShaderSave,
+} from "./shaderSaveQueue.js";
 
 test("shaderSaveQueue runs tasks for the same shader sequentially", async () => {
   const queue = createShaderSaveQueue();
@@ -28,7 +31,7 @@ test("shaderSaveQueue runs tasks for the same shader sequentially", async () => 
   ]);
 });
 
-test("shaderSaveQueue keeps different shaders independent", async () => {
+test("shaderSaveQueue serializes different shaders onto one write lane", async () => {
   const queue = createShaderSaveQueue();
   const order = [];
 
@@ -37,13 +40,54 @@ test("shaderSaveQueue keeps different shaders independent", async () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
     order.push("a-end");
   });
-  queue.enqueue("shader-b", async () => {
+  const other = queue.enqueue("shader-b", async () => {
     order.push("b");
   });
 
   await slow;
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(order, ["a-start", "b", "a-end"]);
+  await other;
+  assert.deepEqual(order, ["a-start", "a-end", "b"]);
+});
+
+test("shaderSaveQueue isBusyAny covers queued and in-flight work", async () => {
+  const queue = createShaderSaveQueue();
+  let release = null;
+  const pending = queue.enqueue("shader-1", () =>
+    new Promise((resolve) => {
+      release = resolve;
+    })
+  );
+
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(queue.isBusyAny(), true);
+  assert.equal(queue.isBusy("shader-1"), true);
+
+  const queued = queue.enqueue("shader-2", async () => "ok");
+  assert.equal(queue.isBusyAny(), true);
+
+  release();
+  await pending;
+  assert.equal(await queued, "ok");
+  assert.equal(queue.isBusyAny(), false);
+});
+
+test("withExclusiveShaderSave skips when the cross-tab lock is taken", async () => {
+  const locks = {
+    async request(_name, options, callback) {
+      if (typeof options === "function") return options({});
+      if (options?.ifAvailable) return callback(null);
+      return callback({});
+    },
+  };
+
+  const skipped = await withExclusiveShaderSave("abc", async () => "ran", {
+    ifAvailable: true,
+    locks,
+  });
+  assert.deepEqual(skipped, { skipped: true, value: undefined });
+
+  const ran = await withExclusiveShaderSave("abc", async () => "ran", { locks });
+  assert.deepEqual(ran, { skipped: false, value: "ran" });
 });
 
 test("shaderSaveQueue continues after a failed task", async () => {

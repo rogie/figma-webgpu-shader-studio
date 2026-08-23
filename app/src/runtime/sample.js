@@ -2,7 +2,7 @@ import defaultInputUrl from "../assets/default-input.png";
 import defaultVideoUrl from "../assets/default-input.mp4?url";
 import defaultVectorUrl from "../assets/default-input.svg";
 
-export { defaultVideoUrl };
+export { defaultInputUrl, defaultVideoUrl, defaultVectorUrl };
 
 const VECTOR_RASTER_SIZE = 1024;
 const MAX_SVG_RASTER = 4096;

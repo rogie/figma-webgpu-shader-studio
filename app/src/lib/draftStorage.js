@@ -1,4 +1,9 @@
-import { emptyComposition, isLibraryKind, normalizeComposition } from "./composition.js";
+import {
+  emptyComposition,
+  isLibraryKind,
+  normalizeComposition,
+  readEffectFillFromComposition,
+} from "./composition.js";
 import { figmaShaderLink, isDraftId } from "./shaderIdentity.js";
 
 export const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
@@ -13,7 +18,17 @@ export function serializeDraft(draft, thumbnail = null) {
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
     ...(draft.kind === "composition"
       ? { composition: normalizeComposition(draft.composition) }
-      : {}),
+      : draft.kind === "effect" &&
+          (draft.effectFill || draft.composition?.effectFill)
+        ? {
+            composition: {
+              effectFill:
+                readEffectFillFromComposition({
+                  effectFill: draft.effectFill || draft.composition?.effectFill,
+                }) || draft.effectFill,
+            },
+          }
+        : {}),
     isPublic: Boolean(draft.isPublic),
     thumbnail: typeof thumbnail === "string" ? thumbnail : null,
     ...figmaShaderLink(draft),
@@ -48,7 +63,14 @@ export function readDrafts(storage = globalThis.localStorage) {
                 draft.composition || emptyComposition()
               ),
             }
-          : {}),
+          : draft.kind === "effect" && draft.composition?.effectFill
+            ? {
+                composition: {
+                  effectFill: readEffectFillFromComposition(draft.composition),
+                },
+                effectFill: readEffectFillFromComposition(draft.composition),
+              }
+            : {}),
         isPublic: Boolean(draft.isPublic),
         pendingMedia: null,
         thumbnail:

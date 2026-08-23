@@ -6,7 +6,8 @@ export function readInputSource(
 ) {
   try {
     const map = JSON.parse(storage?.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}");
-    return map[shaderId] || null;
+    const source = map[shaderId] || null;
+    return source === "vector" ? "image" : source;
   } catch {
     return null;
   }
@@ -19,7 +20,7 @@ export function writeInputSource(
 ) {
   try {
     const map = JSON.parse(storage?.getItem(INPUT_SOURCE_STORAGE_KEY) || "{}");
-    map[shaderId] = source;
+    map[shaderId] = source === "vector" ? "image" : source;
     storage?.setItem(INPUT_SOURCE_STORAGE_KEY, JSON.stringify(map));
   } catch {
     // Storage can be unavailable in private contexts; input choice is optional.

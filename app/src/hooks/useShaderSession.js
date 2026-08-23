@@ -2,12 +2,23 @@ import { useCallback } from "react";
 import {
   COMPOSITION_KIND,
   emptyComposition,
+  fillFromInputSource,
   mediaFillType,
   normalizeComposition,
+  readEffectFillFromComposition,
   sessionInputPlan,
 } from "../lib/composition.js";
+import {
+  rememberEffectFill,
+  resolveSessionEffectFill,
+} from "../lib/effectFillStorage.js";
 import { readInputSource } from "../lib/inputSourceStorage.js";
 import { mediaType } from "../lib/mediaFiles.js";
+import {
+  defaultInputUrl,
+  defaultVectorUrl,
+  defaultVideoUrl,
+} from "../runtime/sample.js";
 
 export function useShaderSession({
   persistActiveDraft,
@@ -34,6 +45,11 @@ export function useShaderSession({
   loadMediaForShader,
   reapplyPreferredInput,
   effectPaintRef,
+  effectFillStoreRef,
+  sessionRef,
+  setEffectFill,
+  inputApplyGenRef,
+  sessionInputAppliedRef,
 }) {
   return useCallback(
     async ({
@@ -51,6 +67,15 @@ export function useShaderSession({
       persistPrevious = true,
     }) => {
       if (persistPrevious) persistActiveDraft();
+      if (inputApplyGenRef) inputApplyGenRef.current += 1;
+      const previous = sessionRef?.current;
+      if (previous?.kind === "effect" && previous.presetId) {
+        rememberEffectFill(
+          effectFillStoreRef?.current,
+          previous.presetId,
+          effectPaintRef?.current,
+        );
+      }
       pendingValuesRef.current = nextValues;
       hostRef.current?.stop();
       setRunning(playPreferenceRef.current);
@@ -70,21 +95,50 @@ export function useShaderSession({
       setPendingMedia(media);
       setDirty(nextDirty);
 
+      let nextEffectFill = null;
+      const storedInputSource = readInputSource(sessionId);
+      if (nextKind === "effect") {
+        nextEffectFill = resolveSessionEffectFill({
+          sessionId,
+          store: effectFillStoreRef?.current,
+          fallbackSource: storedInputSource || "image",
+          documentFill: readEffectFillFromComposition(nextComposition),
+          sampleUrls: {
+            image: defaultInputUrl,
+            vector: defaultVectorUrl,
+            video: defaultVideoUrl,
+          },
+        });
+        setEffectFill?.(nextEffectFill);
+        if (effectPaintRef) effectPaintRef.current = nextEffectFill;
+      } else if (setEffectFill) {
+        nextEffectFill = fillFromInputSource("image");
+        setEffectFill(nextEffectFill);
+        if (effectPaintRef) effectPaintRef.current = nextEffectFill;
+      }
+
       const mediaTypeForSession =
         nextKind === COMPOSITION_KIND
           ? mediaFillType(graph.fill.type) || "image"
-          : readInputSource(sessionId) || "image";
+          : storedInputSource === "html" || storedInputSource === "video"
+            ? storedInputSource
+            : mediaFillType(nextEffectFill?.type) ||
+              storedInputSource ||
+              "image";
       setInputSource(mediaTypeForSession);
       inputSourceRef.current = mediaTypeForSession;
 
       const host = hostRef.current;
       if (!host?.ready) return;
+      if (sessionInputAppliedRef) sessionInputAppliedRef.current = sessionId;
+      const sessionPaint = nextEffectFill?.paint ?? effectPaintRef?.current?.paint;
       const plan = sessionInputPlan({
         kind: nextKind,
         graph,
         media,
         cloudShader,
-        effectPaint: effectPaintRef?.current,
+        effectPaint: sessionPaint,
+        inputSource: mediaTypeForSession,
       });
       if (plan.action === "clear") {
         clearObjectUrl();
@@ -109,8 +163,11 @@ export function useShaderSession({
       applyMediaBlob,
       applyPaintFill,
       clearObjectUrl,
+      effectFillStoreRef,
       effectPaintRef,
       hostRef,
+      sessionRef,
+      setEffectFill,
       inputSourceRef,
       loadMediaForShader,
       pendingValuesRef,
