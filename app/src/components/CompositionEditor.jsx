@@ -27,6 +27,7 @@ import ShaderPicker, {
 import "./CompositionEditor.css";
 
 const opaqueContent = { __html: "" };
+const FILL_PICKER_DIALOG_ANCHOR = "data-composition-fill-picker-anchor";
 const FILL_PAINT_MODES = "solid,gradient,image,video,webcam";
 const FILL_SHADER_MODES = `${FILL_PAINT_MODES},shader`;
 const FILL_TYPE_LABELS = {
@@ -88,6 +89,12 @@ function controlValueFromGraphFill(
   return imageFillValueFromUrl(imageUrl || defaultInputUrl);
 }
 
+function withoutVideoPoster(fill) {
+  if (fill?.type !== "video" || !fill.video?.poster) return fill;
+  const { poster: _poster, ...video } = fill.video;
+  return { ...fill, video };
+}
+
 function findShaderFillCard(cards, shaderId) {
   const aliases = new Set(compositionRefAliases(shaderId));
   return (cards || []).find((card) => aliases.has(card?.key)) ?? null;
@@ -102,6 +109,64 @@ function imageFillValueFromUrl(url) {
 
 function layerPropsAnchorId(layerId) {
   return `composition-layer-props-${layerId}`;
+}
+
+function OpenShaderButton({
+  shaderId,
+  noun = "shader",
+  disabled = false,
+  onOpen,
+}) {
+  if (!shaderId) return null;
+  const label = `Open ${noun}`;
+  return (
+    <fig-tooltip text={label}>
+      <fig-button
+        type="button"
+        variant="ghost"
+        icon="true"
+        disabled={disabled ? "" : undefined}
+        aria-label={label}
+        onClick={() => onOpen?.(shaderId)}
+      >
+        <fig-icon>
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+          >
+            <path
+              fillRule="evenodd"
+              clipRule="evenodd"
+              d="M13.5 6C13.2239 6 13 6.22386 13 6.5C13 6.77614 13.2239 7 13.5 7H16.2929L11.6465 11.6464C11.4512 11.8417 11.4512 12.1583 11.6465 12.3536C11.8418 12.5488 12.1583 12.5488 12.3536 12.3536L17 7.70711V10.5C17 10.7761 17.2239 11 17.5 11C17.7762 11 18 10.7761 18 10.5V7C18 6.44772 17.5523 6 17 6H13.5ZM10.8536 7.14645C11.0489 7.34171 11.0489 7.65829 10.8536 7.85355L6.70715 12L12 17.2929L16.1465 13.1464C16.3418 12.9512 16.6583 12.9512 16.8536 13.1464C17.0489 13.3417 17.0489 13.6583 16.8536 13.8536L12.7072 18C12.3166 18.3905 11.6835 18.3905 11.2929 18L6.00005 12.7071C5.60952 12.3166 5.60952 11.6834 6.00005 11.2929L10.1465 7.14645C10.3418 6.95118 10.6583 6.95118 10.8536 7.14645Z"
+              fill="currentColor"
+              fillOpacity="0.9"
+            />
+          </svg>
+        </fig-icon>
+      </fig-button>
+    </fig-tooltip>
+  );
+}
+
+function ResetPropertiesButton({ disabled = false, onReset }) {
+  if (disabled) return null;
+  return (
+    <fig-tooltip text="Reset properties">
+      <fig-button
+        type="button"
+        variant="ghost"
+        icon="true"
+        aria-label="Reset properties"
+        onClick={onReset}
+      >
+        <fig-icon name="reset" />
+      </fig-button>
+    </fig-tooltip>
+  );
 }
 
 function PropertiesLayerRow({
@@ -175,6 +240,8 @@ function ShaderFillMode({
   emptyLibrary = false,
   properties = null,
   onChoose,
+  onOpenShader,
+  onResetProperties,
 }) {
   const rootRef = useRef(null);
   const selectRef = useRef(null);
@@ -232,6 +299,8 @@ function ShaderFillMode({
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return undefined;
+    const dialog = root.closest("dialog");
+    dialog?.setAttribute(FILL_PICKER_DIALOG_ANCHOR, "");
     const stopFillEvents = (event) => {
       if (event.target === root) return;
       event.stopPropagation();
@@ -241,11 +310,12 @@ function ShaderFillMode({
     return () => {
       root.removeEventListener("input", stopFillEvents);
       root.removeEventListener("change", stopFillEvents);
+      dialog?.removeAttribute(FILL_PICKER_DIALOG_ANCHOR);
     };
   }, []);
 
   return (
-    <fig-content ref={rootRef} padding="none">
+    <fig-content ref={rootRef} style={{ paddingTop: 0 }}>
       <fig-header id={SHADER_PICKER_ANCHOR_IDS.fill} borderless="">
         <fig-select
           ref={selectRef}
@@ -259,8 +329,25 @@ function ShaderFillMode({
           aria-haspopup="dialog"
           dangerouslySetInnerHTML={opaqueContent}
         />
+        <hstack
+          style={{
+            marginLeft: "auto",
+            "--hstack-gap": "var(--spacer-1)",
+          }}
+        >
+          <OpenShaderButton
+            shaderId={shaderId}
+            noun="shader fill"
+            disabled={disabled}
+            onOpen={onOpenShader}
+          />
+          <ResetPropertiesButton
+            disabled={disabled}
+            onReset={onResetProperties}
+          />
+        </hstack>
       </fig-header>
-      <fig-field>
+      <fig-field style={{ paddingTop: 0 }}>
         <fig-preview fit="cover" full="" aspect-ratio="16 / 9">
           {thumbnailUrl ? (
             <img src={thumbnailUrl} alt={name || "Shader fill"} />
@@ -283,6 +370,8 @@ function ImageFillInput({
   shaderLibraryEmpty = false,
   properties = null,
   onChooseShader,
+  onOpenShader,
+  onResetProperties,
 }) {
   const ref = useRef(null);
   const [typeLabel, setTypeLabel] = useState(
@@ -298,6 +387,8 @@ function ImageFillInput({
     emptyLibrary: shaderLibraryEmpty,
     properties,
     onChoose: onChooseShader,
+    onOpenShader,
+    onResetProperties,
   });
   shaderModePropsRef.current = {
     name: shaderName,
@@ -307,6 +398,8 @@ function ImageFillInput({
     emptyLibrary: shaderLibraryEmpty,
     properties,
     onChoose: onChooseShader,
+    onOpenShader,
+    onResetProperties,
   };
 
   useEffect(() => {
@@ -373,10 +466,11 @@ function ImageFillInput({
 
     const onModeReady = (event) => {
       if (event.detail?.mode !== "shader" || !event.detail.container) return;
-      event.detail.container
+      const dialogContent = event.detail.container
         .closest("dialog")
-        ?.querySelector(":scope > fig-content")
-        ?.setAttribute("padding", "none");
+        ?.querySelector(":scope > fig-content");
+      dialogContent?.removeAttribute("padding");
+      if (dialogContent) dialogContent.style.paddingTop = "0";
       shaderModeRootRef.current?.unmount();
       shaderModeRootRef.current = createRoot(event.detail.container);
       renderMode();
@@ -396,6 +490,8 @@ function ImageFillInput({
   }, [
     disabled,
     onChooseShader,
+    onOpenShader,
+    onResetProperties,
     shaderId,
     shaderLibraryEmpty,
     shaderName,
@@ -736,10 +832,12 @@ export default function CompositionEditor({
         return;
       }
       if (!isPaintFillType(detail?.type)) return;
-      const next = resolvePaintFill(detail, {
-        defaultImageUrl: defaultInputUrl,
-        defaultVideoUrl,
-      });
+      const next = withoutVideoPoster(
+        resolvePaintFill(detail, {
+          defaultImageUrl: defaultInputUrl,
+          defaultVideoUrl,
+        })
+      );
       const typeChanged = fillValueTypeRef.current !== next.type;
       const prevUrl =
         normalized.fill.paint?.image?.url ||
@@ -951,6 +1049,8 @@ export default function CompositionEditor({
             shaderLibraryEmpty={shaderFillCards.length === 0}
             properties={fillProperties}
             onChooseShader={chooseFillShader}
+            onOpenShader={onOpenShader}
+            onResetProperties={onResetLayer}
           />
         ) : null}
       </div>
@@ -1027,7 +1127,7 @@ export default function CompositionEditor({
         disabled={readOnly}
         captureTrigger={false}
         triggerId={SHADER_PICKER_TRIGGER_IDS.fill}
-        anchor={`#${SHADER_PICKER_ANCHOR_IDS.fill}`}
+        anchor={`dialog[${FILL_PICKER_DIALOG_ANCHOR}]`}
         position="left"
         onOpenChange={onFillPickerOpenChange}
         onChoice={onFillShaderChoice}
@@ -1064,48 +1164,16 @@ export default function CompositionEditor({
             <h3>{propertiesTitle}</h3>
             <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
               {propertiesShaderId && (
-                <fig-tooltip text={`Open ${propertiesNoun}`}>
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label={`Open ${propertiesNoun}`}
-                    onClick={() => onOpenShader?.(propertiesShaderId)}
-                  >
-                    <fig-icon>
-                      <svg
-                        width="24"
-                        height="24"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        aria-hidden="true"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          clipRule="evenodd"
-                          d="M13.5 6C13.2239 6 13 6.22386 13 6.5C13 6.77614 13.2239 7 13.5 7H16.2929L11.6465 11.6464C11.4512 11.8417 11.4512 12.1583 11.6465 12.3536C11.8418 12.5488 12.1583 12.5488 12.3536 12.3536L17 7.70711V10.5C17 10.7761 17.2239 11 17.5 11C17.7762 11 18 10.7761 18 10.5V7C18 6.44772 17.5523 6 17 6H13.5ZM10.8536 7.14645C11.0489 7.34171 11.0489 7.65829 10.8536 7.85355L6.70715 12L12 17.2929L16.1465 13.1464C16.3418 12.9512 16.6583 12.9512 16.8536 13.1464C17.0489 13.3417 17.0489 13.6583 16.8536 13.8536L12.7072 18C12.3166 18.3905 11.6835 18.3905 11.2929 18L6.00005 12.7071C5.60952 12.3166 5.60952 11.6834 6.00005 11.2929L10.1465 7.14645C10.3418 6.95118 10.6583 6.95118 10.8536 7.14645Z"
-                          fill="currentColor"
-                          fillOpacity="0.9"
-                        />
-                      </svg>
-                    </fig-icon>
-                  </fig-button>
-                </fig-tooltip>
+                <OpenShaderButton
+                  shaderId={propertiesShaderId}
+                  noun={propertiesNoun}
+                  onOpen={onOpenShader}
+                />
               )}
-              {!readOnly && (
-                <fig-tooltip text="Reset properties">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Reset properties"
-                    onClick={() => onResetLayer?.()}
-                  >
-                    <fig-icon name="reset" />
-                  </fig-button>
-                </fig-tooltip>
-              )}
+              <ResetPropertiesButton
+                disabled={readOnly}
+                onReset={() => onResetLayer?.()}
+              />
               <fig-tooltip text="Close">
                 <fig-button
                   type="button"

@@ -232,6 +232,26 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - This app already uses `propskit-fill` in `CompositionEditor`; picker
   position and field outline pick up the fix with no extra wiring.
 
+## 8.9.22 / 8.9.23 notes
+
+- `fig-fill-picker` automatically captures a static poster for video fills,
+  including video URLs supplied through `value`.
+- 8.9.23 makes automatic poster capture internal-only instead of emitting an
+  `input` event. This prevents consumers from treating a derived thumbnail as
+  a user fill change and repeatedly reloading the video.
+- `CompositionEditor` strips generated posters from picker values before they
+  enter app state; its temporary poster-event comparison workaround is no
+  longer needed on 8.9.23.
+
+## 8.9.24 notes
+
+- Licensing changed without runtime API changes. Core `fig.js`, `fig-layer.js`,
+  core CSS, and polyfills remain MIT; `fig-editor.js`, `fig-lab.js`, and their
+  CSS are now under PolyForm Shield 1.0.0 (not OSI open source).
+- This app imports both editor and lab bundles. No code migration is required,
+  but distribution and competitive-use implications should be reviewed before
+  release.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

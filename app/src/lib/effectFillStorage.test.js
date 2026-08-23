@@ -52,6 +52,23 @@ test("persistableEffectFill strips ephemeral media urls", () => {
   assert.equal(stored.paint.image.scaleMode, "fit");
 });
 
+test("persistableEffectFill strips ephemeral video posters", () => {
+  const stored = persistableEffectFill({
+    type: "video",
+    paint: {
+      type: "video",
+      video: {
+        url: "https://cdn.example.com/input.mp4",
+        poster: "blob:http://localhost/poster",
+        scaleMode: "fill",
+      },
+    },
+  });
+  assert.equal(stored.paint.video.url, "https://cdn.example.com/input.mp4");
+  assert.equal(stored.paint.video.poster, undefined);
+  assert.equal(stored.paint.video.scaleMode, "fill");
+});
+
 test("write and read effect fills across id aliases", () => {
   const storage = memoryStorage();
   writeEffectFill(

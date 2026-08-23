@@ -52,10 +52,17 @@ export function persistableEffectFill(fill) {
     nextPaint.image = image;
     changed = true;
   }
-  if (nextPaint.video && isEphemeralUrl(nextPaint.video.url)) {
-    const { url: _url, ...video } = nextPaint.video;
+  if (nextPaint.video) {
+    const video = { ...nextPaint.video };
+    if (isEphemeralUrl(video.url)) {
+      delete video.url;
+      changed = true;
+    }
+    if (isEphemeralUrl(video.poster)) {
+      delete video.poster;
+      changed = true;
+    }
     nextPaint.video = video;
-    changed = true;
   }
   return changed ? { ...normalized, paint: nextPaint } : normalized;
 }
