@@ -14,11 +14,6 @@
   padding-inline: var(--spacer-3) var(--spacer-2);
 }
 
-.properties-layer-row-name {
-  min-width: 0;
-  width: 100%;
-}
-
 .properties-layer-row-label {
   display: block;
   flex: 1 1 auto;
@@ -30,12 +25,12 @@
   text-align: left;
 }
 
-.composition-empty,
 .composition-notice {
   color: var(--figma-color-text-secondary);
   font-size: var(--body-small-fontSize);
   margin: 0;
-  padding-block: var(--spacer-2);
+  padding-block: var(--spacer-2) 0;
+  padding-inline: var(--spacer-3);
 }
 
 dialog[is="fig-popup"].composition-layer-props {

@@ -11,6 +11,7 @@ export const SHADER_PICKER_ANCHOR_IDS = {
 };
 
 export const SHADER_PICKER_TRIGGER_IDS = {
+  fill: "composition-choose-fill-shader",
   effect: "composition-add-effect",
 };
 
@@ -39,6 +40,8 @@ export default function ShaderPicker({
   open = false,
   disabled = false,
   captureTrigger,
+  triggerId: triggerIdProp,
+  anchor,
   position,
   title,
   onOpenChange,
@@ -46,8 +49,8 @@ export default function ShaderPicker({
 }) {
   const type = pickerKind(kind);
   const copy = KIND_COPY[type];
-  const anchorId = SHADER_PICKER_ANCHOR_IDS[type];
-  const triggerId = SHADER_PICKER_TRIGGER_IDS[type];
+  const triggerId = triggerIdProp ?? SHADER_PICKER_TRIGGER_IDS[type];
+  const anchorSelector = anchor ?? `#${SHADER_PICKER_ANCHOR_IDS[type]}`;
   const interceptTrigger = captureTrigger ?? Boolean(triggerId);
   const popupPosition = position ?? "left";
   const popupRef = useRef(null);
@@ -173,7 +176,7 @@ export default function ShaderPicker({
       position={popupPosition}
       popover="manual"
       closedby="none"
-      anchor={`#${anchorId}`}
+      anchor={anchorSelector}
       onCancel={(event) => event.preventDefault()}
     >
       <fig-header class="shader-picker-search">

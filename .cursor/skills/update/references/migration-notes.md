@@ -184,6 +184,54 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   `getUserMedia` with `webcam.deviceId` on restore). Snapshot-only webcam
   (`live: false`) still rasterizes.
 
+## 8.9.18 notes
+
+- Patch-only around fill picker and media chrome. The fill picker hides the
+  gradient interpolation row and locks new gradient values to `srgb`. The fill
+  type select is `variant="ghost"`. Video preview now sets `poster` on
+  `fig-media`. `fig-icon` uses `contain: size` instead of `strict`.
+- This app already uses `default-video`, `webcam-mode="live"`, and
+  `webcamStream`. No new wiring required. Stored non-sRGB gradients still
+  rasterize in `paintFill.js`; newly picked gradients will be sRGB.
+
+## 8.9.19 notes
+
+- `fig-input-fill` now forwards custom `slot="mode-*"` children to the inner
+  picker, persists custom JSON, and uses image-style chrome (type label +
+  opacity). Empty webcam/custom swatches are blank instead of `#D9D9D9`.
+- Webcam camera switching no longer reuses a live stream when `deviceId` is
+  unknown or does not match the requested camera.
+- Fill-picker `overflow: visible` is limited to solid/gradient tabs so media
+  previews clip correctly.
+
+## 8.9.20 notes
+
+- Adds `<propskit-fill>`: labeled `fig-field` + `fig-fill-picker` swatch, same
+  chrome as `propskit-color`. Attributes include `value` (fill JSON), `default`,
+  `mode`, `alpha`, `webcam-mode`, `default-video`. Events are the fill object;
+  `webcamstream` is not re-emitted from the host.
+- `fig-input-fill` focus/hover outline is now suppressed so propskit can put
+  the ring on the field. Swatches paint with `background-image`. Media-control
+  play buttons stay visible inside `fig-tooltip`.
+- `CompositionEditor` uses `propskit-fill` (`size="large"` `direction="horizontal"`)
+  with a `slot="mode-shader"` child on the inner `fig-fill-picker` (not the
+  propskit host — propskit `replaceChildren`s its light DOM). Shader tab preview
+  is a `fig-image` thumbnail; live compile stays on the main canvas.
+- `App.jsx` reads `webcamStream` from `fig-fill-picker, fig-input-fill` because
+  `propskit-fill` does not re-emit `webcamstream`. `defineProperties` has no
+  fill type, so `Controls.jsx` has nothing to wire.
+
+## 8.9.21 notes
+
+- `propskit-color`, `propskit-fill`, and `propskit-gradient` set
+  `anchorElement` on the inner picker so the dialog anchors to the field, not
+  the swatch. Reopening an existing fill-picker dialog refreshes
+  `dialog.anchor`. `fig-input-gradient` gained the same `anchorElement` hook.
+- Focus chrome stays on the propskit field while the popup is open
+  (`has-popup-open`); inner swatches / pickers no longer draw their own ring.
+- This app already uses `propskit-fill` in `CompositionEditor`; picker
+  position and field outline pick up the fix with no extra wiring.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

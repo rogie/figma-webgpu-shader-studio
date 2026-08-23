@@ -99,6 +99,7 @@ rg -n "propskit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
 |------|--------------------------|---------------|
 | Properties panel scalars | `propskit-number`, `propskit-text`, `propskit-slider`, `propskit-switch`, `propskit-select`, `propskit-color` | `app/src/components/Controls.jsx` |
 | Properties panel gradients | `propskit-gradient` with `edit="picker"` | `app/src/components/Controls.jsx` |
+| Composition fill | `propskit-fill` + `fig-fill-picker` `mode-shader` slot | `app/src/components/CompositionEditor.jsx` |
 | Chat composer attachments | `fig-attachments` + `fig-attachment` inside `fig-ai-prompt` | `app/src/components/ChatPane.jsx`, `app/src/chat.css` |
 | Canvas/on-canvas controls | `fig-canvas-control` | `app/src/components/CanvasControlsOverlay.jsx`, `app/lib/canvasControls.js` |
 | Account/settings fields | `fig-field`, `propskit-*`, `fig-input-text` | `app/src/components/AccountMenu.jsx` |

@@ -15,6 +15,7 @@ Vite excludes FigUI3 from dependency prebundle in `app/vite.config.js` (`optimiz
 | Surface | Files | FigUI3 usage |
 |---------|-------|--------------|
 | Properties panel | `app/src/components/Controls.jsx` | propskit controls, gradient picker |
+| Composition fill | `app/src/components/CompositionEditor.jsx` | `propskit-fill` + `fig-fill-picker` `mode-shader` slot |
 | Chat | `app/src/components/ChatPane.jsx`, `app/src/chat.css` | `fig-ai-prompt`, `fig-attachments`, `fig-attachment`, `fig-chat-message`, `fig-select` |
 | Canvas controls | `app/src/components/CanvasControlsOverlay.jsx` | `fig-canvas-control` |
 | Shell / library | `app/src/App.jsx` | `fig-button`, `fig-menu`, `fig-dialog`, `fig-card`, `fig-preview`, etc. |

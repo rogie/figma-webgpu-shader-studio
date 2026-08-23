@@ -307,7 +307,9 @@ function webcamDeviceId(stream) {
 }
 
 function readFillWebcamStream() {
-  for (const node of document.querySelectorAll("fig-input-fill")) {
+  for (const node of document.querySelectorAll(
+    "fig-fill-picker, fig-input-fill"
+  )) {
     if (isLiveMediaStream(node.webcamStream)) return node.webcamStream;
   }
   return null;
@@ -5065,6 +5067,16 @@ export default function App() {
                 onExport={() => openExportDialog(exportTab)}
                 exportDisabled={Boolean(videoExportProgress)}
                 onFill={applyPaintFill}
+                onFillValuesPreview={(nextValues) => {
+                  hostRef.current?.setActive(true);
+                  hostRef.current?.setCompositionLayerParams?.(
+                    COMPOSITION_FILL_ID,
+                    nextValues
+                  );
+                  if (selectedLayerIdRef.current === COMPOSITION_FILL_ID) {
+                    valuesRef.current = nextValues;
+                  }
+                }}
               />
               {user && !protectedPreview && (
                 <div className="sharing-controls properties-pane">

@@ -951,6 +951,10 @@ dialog.delete-shader-dialog {
     }
   }
 
+  .properties-pane:has(> fig-header:only-child) {
+    padding-bottom: 0;
+  }
+
   .properties-pane:last-child {
     border-bottom: none;
   }

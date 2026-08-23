@@ -21,6 +21,28 @@ test("identifies paint fill types and graph mapping", () => {
   assert.equal(graphTypeForPaint("gradient"), "image");
   assert.equal(graphTypeForPaint("webcam"), "video");
   assert.equal(graphTypeForPaint("video"), "video");
+  assert.equal(graphTypeForPaint("shader"), "shader");
+});
+
+test("keeps the picker video shape including poster and colorSpace", () => {
+  const next = resolvePaintFill(
+    {
+      type: "video",
+      colorSpace: "srgb",
+      video: {
+        url: "/clip.mp4",
+        poster: "blob:poster",
+        scaleMode: "fit",
+        scale: 40,
+        opacity: 0.8,
+      },
+    },
+    { defaultVideoUrl: "/sample.mp4" }
+  );
+  assert.equal(next.colorSpace, "srgb");
+  assert.equal(next.video.poster, "blob:poster");
+  assert.equal(next.video.url, "/clip.mp4");
+  assert.equal(next.video.scaleMode, "fit");
 });
 
 test("fills in default video and image urls", () => {

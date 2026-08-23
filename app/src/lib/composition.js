@@ -144,11 +144,25 @@ function normalizeFill(fill) {
       : null;
   return {
     type,
-    shaderId: type === "shader" ? parsed?.key ?? null : null,
+    shaderId: parsed?.key ?? null,
     values,
     enabled: fill?.enabled !== false,
-    ...(paint ? { paint } : {}),
+    ...(type !== "shader" && paint ? { paint } : {}),
   };
+}
+
+export function firstFillShaderKey(cards = []) {
+  const card = (cards || []).find((item) => item?.key && item.kind !== "effect");
+  return card?.key ?? null;
+}
+
+export function resolveShaderFillKey(shaderId, cards = []) {
+  const aliases = new Set(compositionRefAliases(shaderId));
+  if (aliases.size) {
+    const match = (cards || []).find((item) => aliases.has(item?.key));
+    if (match?.key) return match.key;
+  }
+  return firstFillShaderKey(cards);
 }
 
 function normalizeEffect(effect) {

@@ -1,18 +1,25 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
 import {
   COMPOSITION_FILL_ID,
   compositionLayerName,
+  compositionRefAliases,
   hasCompositionFill,
   MAX_COMPOSITION_EFFECTS,
+  mergeLayerValues,
   normalizeComposition,
   reorderCompositionEffects,
+  resolveReferencedShaderSource,
+  resolveShaderFillKey,
 } from "../lib/composition.js";
 import { graphTypeForPaint, isPaintFillType, resolvePaintFill } from "../lib/paintFill.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import { syncOverflowFade } from "../lib/overflowFade.js";
+import { loadModule } from "../runtime/loader.js";
 import defaultInputUrl from "../assets/default-input.png";
 import { defaultVideoUrl } from "../runtime/sample.js";
+import Controls from "./Controls.jsx";
 import ShaderPicker, {
   SHADER_PICKER_ANCHOR_IDS,
   SHADER_PICKER_TRIGGER_IDS,
@@ -20,6 +27,48 @@ import ShaderPicker, {
 import "./CompositionEditor.css";
 
 const opaqueContent = { __html: "" };
+const FILL_PAINT_MODES = "solid,gradient,image,video,webcam";
+const FILL_SHADER_MODES = `${FILL_PAINT_MODES},shader`;
+const FILL_TYPE_LABELS = {
+  shader: "Shader",
+  solid: "Solid",
+  gradient: "Gradient",
+  image: "Image",
+  video: "Video",
+  webcam: "Webcam",
+};
+
+function fillTypeFromValue(value) {
+  if (!value) return null;
+  if (typeof value === "object") return value.type || null;
+  try {
+    return JSON.parse(value)?.type || null;
+  } catch {
+    return null;
+  }
+}
+
+function fillTypeLabel(type) {
+  return FILL_TYPE_LABELS[type] || "Fill";
+}
+
+function swatchBackgroundCss(url) {
+  if (!url) return "";
+  return `url("${String(url).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}")`;
+}
+
+function shaderFillControlValue(shaderId, thumbnailUrl) {
+  const value = { type: "shader", colorSpace: "srgb" };
+  if (shaderId) value.shaderId = shaderId;
+  const swatch = swatchBackgroundCss(thumbnailUrl);
+  if (swatch) value.swatchBackground = swatch;
+  return JSON.stringify(value);
+}
+
+function findShaderFillCard(cards, shaderId) {
+  const aliases = new Set(compositionRefAliases(shaderId));
+  return (cards || []).find((card) => aliases.has(card?.key)) ?? null;
+}
 
 function imageFillValueFromUrl(url) {
   return JSON.stringify({
@@ -27,13 +76,6 @@ function imageFillValueFromUrl(url) {
     image: { url, scaleMode: "fill" },
   });
 }
-
-const FILL_TYPE_OPTIONS = [
-  { value: "shader", label: "Shader fill" },
-  { value: "image", label: "Image" },
-  { value: "video", label: "Video" },
-  { value: "html", label: "HTML-in-canvas" },
-];
 
 function layerPropsAnchorId(layerId) {
   return `composition-layer-props-${layerId}`;
@@ -55,23 +97,21 @@ function PropertiesLayerRow({
   const removeLabel = `Remove ${noun}`;
   return (
     <div id={id} className="properties-layer-row" aria-label={name}>
-      <div className="properties-layer-row-name">
-        {control || (
-          <fig-button
-            type="button"
-            variant={expanded ? "ghost" : "secondary"}
-            full=""
-            title={name}
-            aria-haspopup="dialog"
-            aria-expanded={expanded ? "true" : "false"}
-            selected={expanded ? "" : undefined}
-            disabled={enabled ? undefined : ""}
-            onClick={onOpen}
-          >
-            <span className="properties-layer-row-label">{name}</span>
-          </fig-button>
-        )}
-      </div>
+      {control || (
+        <fig-button
+          type="button"
+          variant={expanded ? "ghost" : "secondary"}
+          full=""
+          title={name}
+          aria-haspopup="dialog"
+          aria-expanded={expanded ? "true" : "false"}
+          selected={expanded ? "" : undefined}
+          disabled={enabled ? undefined : ""}
+          onClick={onOpen}
+        >
+          <span className="properties-layer-row-label">{name}</span>
+        </fig-button>
+      )}
       {onToggleVisible && (
         <fig-tooltip text={hideLabel}>
           <fig-button
@@ -104,51 +144,268 @@ function PropertiesLayerRow({
   );
 }
 
-function ImageFillInput({ disabled = false, value, onChange }) {
+function ShaderFillMode({
+  name,
+  shaderId,
+  thumbnailUrl,
+  disabled = false,
+  emptyLibrary = false,
+  properties = null,
+  onChoose,
+}) {
+  const rootRef = useRef(null);
+  const selectRef = useRef(null);
+  const selectValue = shaderId || "none";
+  const selectLabel = emptyLibrary
+    ? "No shader fills in the library."
+    : name || "Choose a shader fill";
+  const selectOptions = JSON.stringify([
+    { value: selectValue, label: selectLabel },
+  ]);
+
+  useEffect(() => {
+    const select = selectRef.current;
+    if (!select) return undefined;
+
+    const openChooser = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+      if (select.open) select.open = false;
+      if (!disabled) onChoose?.();
+    };
+    const onKeydown = (event) => {
+      if (
+        event.key !== "ArrowDown" &&
+        event.key !== "Enter" &&
+        event.key !== " "
+      ) {
+        return;
+      }
+      openChooser(event);
+    };
+    const keepClosed = () => {
+      if (select.open) select.open = false;
+    };
+
+    const stopSelectValue = (event) => {
+      event.stopPropagation();
+    };
+    select.addEventListener("click", openChooser, true);
+    select.addEventListener("keydown", onKeydown, true);
+    select.addEventListener("input", stopSelectValue, true);
+    select.addEventListener("change", stopSelectValue, true);
+    const observer = new MutationObserver(keepClosed);
+    observer.observe(select, { attributes: true, attributeFilter: ["open"] });
+    return () => {
+      select.removeEventListener("click", openChooser, true);
+      select.removeEventListener("keydown", onKeydown, true);
+      select.removeEventListener("input", stopSelectValue, true);
+      select.removeEventListener("change", stopSelectValue, true);
+      observer.disconnect();
+    };
+  }, [disabled, onChoose, selectOptions]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return undefined;
+    const stopFillEvents = (event) => {
+      if (event.target === root) return;
+      event.stopPropagation();
+    };
+    root.addEventListener("input", stopFillEvents);
+    root.addEventListener("change", stopFillEvents);
+    return () => {
+      root.removeEventListener("input", stopFillEvents);
+      root.removeEventListener("change", stopFillEvents);
+    };
+  }, []);
+
+  return (
+    <fig-content ref={rootRef} padding="none">
+      <fig-header id={SHADER_PICKER_ANCHOR_IDS.fill} borderless="">
+        <fig-select
+          ref={selectRef}
+          id={SHADER_PICKER_TRIGGER_IDS.fill}
+          variant="ghost"
+          value={selectValue}
+          label={selectLabel}
+          options={selectOptions}
+          disabled={disabled ? "" : undefined}
+          aria-label="Choose shader fill"
+          aria-haspopup="dialog"
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-header>
+      <fig-field>
+        <fig-preview fit="cover" full="" aspect-ratio="16 / 9">
+          {thumbnailUrl ? (
+            <img src={thumbnailUrl} alt={name || "Shader fill"} />
+          ) : null}
+        </fig-preview>
+      </fig-field>
+      {properties}
+    </fig-content>
+  );
+}
+
+function ImageFillInput({
+  disabled = false,
+  value,
+  onChange,
+  allowShader = false,
+  shaderName = "",
+  shaderId = "",
+  shaderThumbnail = "",
+  shaderLibraryEmpty = false,
+  properties = null,
+  onChooseShader,
+}) {
   const ref = useRef(null);
+  const [typeLabel, setTypeLabel] = useState(
+    () => fillTypeLabel(fillTypeFromValue(value))
+  );
+  const shaderModeRootRef = useRef(null);
+  const shaderModeRenderRef = useRef(null);
+  const shaderModePropsRef = useRef({
+    name: shaderName,
+    shaderId,
+    thumbnailUrl: shaderThumbnail,
+    disabled,
+    emptyLibrary: shaderLibraryEmpty,
+    properties,
+    onChoose: onChooseShader,
+  });
+  shaderModePropsRef.current = {
+    name: shaderName,
+    shaderId,
+    thumbnailUrl: shaderThumbnail,
+    disabled,
+    emptyLibrary: shaderLibraryEmpty,
+    properties,
+    onChoose: onChooseShader,
+  };
 
   useEffect(() => {
     const node = ref.current;
     if (!node || !onChange) return undefined;
+    const picker = node.querySelector("fig-fill-picker") || node;
     const handleValue = (event) => {
       const detail = event.detail;
       if (!detail || typeof detail !== "object") return;
+      if (detail.type) setTypeLabel(fillTypeLabel(detail.type));
+      if (detail.type === "shader") {
+        if (!allowShader) return;
+        onChange(detail, true);
+        return;
+      }
       if (detail.type && !isPaintFillType(detail.type)) return;
       onChange(detail, event.type === "change");
     };
     const handleWebcamStream = (event) => {
       if (!event.detail?.stream) return;
       const detail =
-        typeof node.value === "string"
+        typeof picker.value === "string"
           ? (() => {
               try {
-                return JSON.parse(node.value);
+                return JSON.parse(picker.value);
               } catch {
                 return null;
               }
             })()
-          : node.value;
+          : picker.value;
       if (detail?.type === "webcam") onChange(detail, false);
     };
     node.addEventListener("input", handleValue);
     node.addEventListener("change", handleValue);
-    node.addEventListener("webcamstream", handleWebcamStream);
+    picker.addEventListener("webcamstream", handleWebcamStream);
     return () => {
       node.removeEventListener("input", handleValue);
       node.removeEventListener("change", handleValue);
-      node.removeEventListener("webcamstream", handleWebcamStream);
+      picker.removeEventListener("webcamstream", handleWebcamStream);
     };
-  }, [onChange]);
+  }, [allowShader, onChange]);
+
+  useLayoutEffect(() => {
+    const host = ref.current;
+    if (!host || !allowShader) return undefined;
+    const picker = host.querySelector("fig-fill-picker");
+    if (!picker) return undefined;
+
+    const slot = document.createElement("div");
+    slot.setAttribute("slot", "mode-shader");
+    slot.setAttribute("label", "Shader");
+    const swatch = swatchBackgroundCss(shaderModePropsRef.current.thumbnailUrl);
+    if (swatch) slot.setAttribute("swatch-background", swatch);
+    picker.appendChild(slot);
+
+    const renderMode = () => {
+      const props = shaderModePropsRef.current;
+      const nextSwatch = swatchBackgroundCss(props.thumbnailUrl);
+      if (nextSwatch) slot.setAttribute("swatch-background", nextSwatch);
+      else slot.removeAttribute("swatch-background");
+      shaderModeRootRef.current?.render(<ShaderFillMode {...props} />);
+    };
+    shaderModeRenderRef.current = renderMode;
+
+    const onModeReady = (event) => {
+      if (event.detail?.mode !== "shader" || !event.detail.container) return;
+      event.detail.container
+        .closest("dialog")
+        ?.querySelector(":scope > fig-content")
+        ?.setAttribute("padding", "none");
+      shaderModeRootRef.current?.unmount();
+      shaderModeRootRef.current = createRoot(event.detail.container);
+      renderMode();
+    };
+    host.addEventListener("modeready", onModeReady);
+    return () => {
+      host.removeEventListener("modeready", onModeReady);
+      shaderModeRootRef.current?.unmount();
+      shaderModeRootRef.current = null;
+      shaderModeRenderRef.current = null;
+      slot.remove();
+    };
+  }, [allowShader]);
+
+  useEffect(() => {
+    shaderModeRenderRef.current?.();
+  }, [
+    disabled,
+    onChooseShader,
+    shaderId,
+    shaderLibraryEmpty,
+    shaderName,
+    shaderThumbnail,
+    properties,
+  ]);
+
+  useEffect(() => {
+    const next = fillTypeFromValue(value);
+    if (next) setTypeLabel(fillTypeLabel(next));
+  }, [value]);
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+    if (node.classList.contains("has-popup-open")) return;
+    if (node.getAttribute("value") === value) return;
+    // Use the property setter so propskit forwards the picker JSON
+    // (colorSpace, video.poster, custom swatchBackground) to the swatch.
+    node.value = value;
+  }, [value]);
 
   return (
-    <fig-input-fill
+    <propskit-fill
       ref={ref}
-      full=""
-      value={value}
+      label={typeLabel}
+      direction="horizontal"
+      size="large"
+      mode={allowShader ? FILL_SHADER_MODES : FILL_PAINT_MODES}
       disabled={disabled ? "" : undefined}
       webcam-mode="live"
       default-video={defaultVideoUrl}
-      aria-label="Fill"
+      aria-label={typeLabel}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -189,6 +446,7 @@ export default function CompositionEditor({
   onOpenShader,
   onResetLayer,
   onFill,
+  onFillValuesPreview,
   imageUrl = defaultInputUrl,
   onExport,
   exportDisabled = false,
@@ -199,14 +457,18 @@ export default function CompositionEditor({
   const propertiesContentFadeRef = useOverflowFade(propertiesContentRef);
   const effectsReorderRef = useRef(null);
   const [effectPickerOpen, setEffectPickerOpen] = useState(false);
+  const [fillPickerOpen, setFillPickerOpen] = useState(false);
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
   const propertiesLayerIdRef = useRef(null);
   propertiesLayerIdRef.current = propertiesLayerId;
-  const [imageFillValue, setImageFillValue] = useState(() =>
-    graph?.fill?.paint
+  const [imageFillValue, setImageFillValue] = useState(() => {
+    if (graph?.fill?.type === "shader") {
+      return shaderFillControlValue(graph.fill.shaderId);
+    }
+    return graph?.fill?.paint
       ? JSON.stringify(graph.fill.paint)
-      : imageFillValueFromUrl(imageUrl || defaultInputUrl)
-  );
+      : imageFillValueFromUrl(imageUrl || defaultInputUrl);
+  });
   const [imageFillKey, setImageFillKey] = useState(0);
   const lastImageFillUrlRef = useRef(imageUrl || defaultInputUrl);
   const fillValueTypeRef = useRef(graph?.fill?.paint?.type || "image");
@@ -326,24 +588,143 @@ export default function CompositionEditor({
     [normalized, onSelectLayer, update]
   );
 
+  const applyShaderFill = useCallback(
+    (requestedId, persist = true) => {
+      const shaderId = resolveShaderFillKey(
+        requestedId ?? normalized.fill.shaderId,
+        shaderFillCards
+      );
+      fillValueTypeRef.current = "shader";
+      const card = findShaderFillCard(shaderFillCards, shaderId);
+      const nextValue = shaderFillControlValue(shaderId, card?.thumbnailUrl);
+      setImageFillValue(nextValue);
+      if (!shaderId || !persist) return;
+      const sameId = normalized.fill.shaderId === shaderId;
+      update({
+        ...normalized,
+        fill: {
+          type: "shader",
+          shaderId,
+          values: sameId ? normalized.fill.values : {},
+          enabled: normalized.fill.enabled,
+        },
+      });
+      onSelectLayer?.(COMPOSITION_FILL_ID);
+    },
+    [normalized, onSelectLayer, shaderFillCards, update]
+  );
+
+  const fillShaderSource = useMemo(() => {
+    if (normalized.fill.type !== "shader" || !normalized.fill.shaderId) {
+      return null;
+    }
+    const resolved = resolveReferencedShaderSource(normalized.fill.shaderId, {
+      resolvedByKey,
+    });
+    if (resolved) return resolved;
+    const card = findShaderFillCard(shaderFillCards, normalized.fill.shaderId);
+    return card?.draft?.source || card?.cloud?.source || null;
+  }, [
+    normalized.fill.shaderId,
+    normalized.fill.type,
+    resolvedByKey,
+    shaderFillCards,
+  ]);
+
+  const fillLayerProps = useMemo(() => {
+    if (normalized.fill.type !== "shader" || !fillShaderSource) return null;
+    try {
+      return loadModule(fillShaderSource).props || {};
+    } catch {
+      return null;
+    }
+  }, [fillShaderSource, normalized.fill.type]);
+
+  const fillLayerValues = useMemo(
+    () => mergeLayerValues(fillLayerProps || {}, normalized.fill.values),
+    [fillLayerProps, normalized.fill.values]
+  );
+
+  const onFillPropInput = useCallback(
+    (name, value) => {
+      if (readOnly) return;
+      onFillValuesPreview?.({
+        ...normalized.fill.values,
+        [name]: value,
+      });
+    },
+    [normalized.fill.values, onFillValuesPreview, readOnly]
+  );
+
+  const onFillPropChange = useCallback(
+    (name, value) => {
+      if (readOnly) return;
+      const nextValues = { ...normalized.fill.values, [name]: value };
+      onFillValuesPreview?.(nextValues);
+      update({
+        ...normalized,
+        fill: { ...normalized.fill, values: nextValues },
+      });
+    },
+    [normalized, onFillValuesPreview, readOnly, update]
+  );
+
+  const fillProperties = useMemo(() => {
+    if (normalized.fill.type !== "shader") return null;
+    if (!normalized.fill.shaderId) {
+      return (
+        <fig-field>
+          <p className="empty-state">Choose a shader fill to edit its properties.</p>
+        </fig-field>
+      );
+    }
+    if (!fillLayerProps) {
+      return (
+        <fig-field>
+          <p className="empty-state">This shader has no exposed properties.</p>
+        </fig-field>
+      );
+    }
+    return (
+      <Controls
+        props={fillLayerProps}
+        values={fillLayerValues}
+        onChange={onFillPropChange}
+        onInput={onFillPropInput}
+      />
+    );
+  }, [
+    fillLayerProps,
+    fillLayerValues,
+    normalized.fill.shaderId,
+    normalized.fill.type,
+    onFillPropChange,
+    onFillPropInput,
+  ]);
+
   const applyFillValue = useCallback(
     (detail, persist = false) => {
+      if (detail?.type === "shader") {
+        applyShaderFill(detail.shaderId, persist);
+        return;
+      }
       if (!isPaintFillType(detail?.type)) return;
       const next = resolvePaintFill(detail, {
         defaultImageUrl: defaultInputUrl,
         defaultVideoUrl,
       });
+      const typeChanged = fillValueTypeRef.current !== next.type;
       fillValueTypeRef.current = next.type;
-      if (persist) {
-        const nextValue = JSON.stringify(next);
+      const nextValue = JSON.stringify(next);
+      setImageFillValue(nextValue);
+      if (persist || typeChanged) {
         lastPaintRef.current = nextValue;
-        setImageFillValue(nextValue);
         update({
           ...normalized,
           fill: {
             ...normalized.fill,
             type: graphTypeForPaint(next.type),
-            shaderId: null,
+            shaderId: normalized.fill.shaderId,
             paint: next,
           },
         });
@@ -357,10 +738,24 @@ export default function CompositionEditor({
       }
       onFill?.(next);
     },
-    [normalized, onFill, update]
+    [applyShaderFill, normalized, onFill, update]
+  );
+
+  const shaderFillCard = useMemo(
+    () => findShaderFillCard(shaderFillCards, normalized.fill.shaderId),
+    [normalized.fill.shaderId, shaderFillCards]
   );
 
   useEffect(() => {
+    if (normalized.fill.type === "shader") {
+      const next = shaderFillControlValue(
+        normalized.fill.shaderId,
+        shaderFillCard?.thumbnailUrl
+      );
+      fillValueTypeRef.current = "shader";
+      setImageFillValue(next);
+      return;
+    }
     const paint = normalized.fill.paint;
     const next = paint ? JSON.stringify(paint) : "";
     if (next === lastPaintRef.current) return;
@@ -369,7 +764,12 @@ export default function CompositionEditor({
       fillValueTypeRef.current = paint.type;
       setImageFillValue(next);
     }
-  }, [normalized.fill.paint]);
+  }, [
+    normalized.fill.paint,
+    normalized.fill.shaderId,
+    normalized.fill.type,
+    shaderFillCard,
+  ]);
 
   useEffect(() => {
     if (!imageUrl || imageUrl === lastImageFillUrlRef.current) return;
@@ -428,6 +828,41 @@ export default function CompositionEditor({
       nameCards.length ? nameCards : [...shaderFillCards, ...effectCards],
     [effectCards, nameCards, shaderFillCards]
   );
+  const shaderFillName = compositionLayerName(
+    normalized.fill.shaderId,
+    resolvedByKey,
+    layerCards,
+    "Choose a shader fill"
+  );
+  const onFillPickerOpenChange = useCallback((next) => {
+    setFillPickerOpen(next);
+  }, []);
+  const chooseFillShader = useCallback(() => {
+    if (readOnly) return;
+    setFillPickerOpen(true);
+  }, [readOnly]);
+  const onFillShaderChoice = useCallback(
+    (key) => {
+      applyShaderFill(key, true);
+    },
+    [applyShaderFill]
+  );
+
+  useEffect(() => {
+    if (!fillPickerOpen) return undefined;
+    const dialog = document.querySelector("dialog.fig-fill-picker-dialog");
+    if (!dialog) return undefined;
+    const previous = dialog.getAttribute("closedby");
+    dialog.setAttribute("closedby", "none");
+    if ("closedBy" in dialog) dialog.closedBy = "none";
+    return () => {
+      if (previous == null) dialog.removeAttribute("closedby");
+      else dialog.setAttribute("closedby", previous);
+      if ("closedBy" in dialog) {
+        dialog.closedBy = previous == null ? "any" : previous;
+      }
+    };
+  }, [fillPickerOpen]);
   const propertiesNoun =
     propertiesLayerId === COMPOSITION_FILL_ID ? "fill" : "effect";
   const propertiesShaderId =
@@ -454,35 +889,21 @@ export default function CompositionEditor({
         <fig-header borderless>
           <h3>Fill</h3>
         </fig-header>
-        <PropertiesLayerRow
-          id={layerPropsAnchorId(COMPOSITION_FILL_ID)}
-          name={
-            fillType === "shader"
-              ? compositionLayerName(
-                  normalized.fill.shaderId,
-                  resolvedByKey,
-                  layerCards,
-                  "Choose a shader fill"
-                )
-              : FILL_TYPE_OPTIONS.find((option) => option.value === fillType)
-                  ?.label ?? "Image"
-          }
-          expanded={propertiesLayerId === COMPOSITION_FILL_ID}
-          enabled={normalized.fill.enabled}
-          readOnly={readOnly}
-          noun="fill"
-          control={
-            fillType !== "shader" && fillType !== "html" ? (
-              <ImageFillInput
-                key={imageFillKey}
-                disabled={readOnly}
-                value={imageFillValue}
-                onChange={applyFillValue}
-              />
-            ) : null
-          }
-          onOpen={() => toggleLayerProperties(COMPOSITION_FILL_ID)}
-        />
+        {fillType !== "html" ? (
+          <ImageFillInput
+            key={imageFillKey}
+            disabled={readOnly}
+            value={imageFillValue}
+            onChange={applyFillValue}
+            allowShader={!fillOnly}
+            shaderName={shaderFillName}
+            shaderId={normalized.fill.shaderId || ""}
+            shaderThumbnail={shaderFillCard?.thumbnailUrl || ""}
+            shaderLibraryEmpty={shaderFillCards.length === 0}
+            properties={fillProperties}
+            onChooseShader={chooseFillShader}
+          />
+        ) : null}
       </div>
 
       {!fillOnly && <div className="properties-pane">
@@ -512,9 +933,7 @@ export default function CompositionEditor({
             A composition can use up to {MAX_COMPOSITION_EFFECTS} effects.
           </p>
         )}
-        {normalized.effects.length === 0 ? (
-          <p className="composition-empty">No effects yet.</p>
-        ) : (
+        {normalized.effects.length > 0 && (
           <fig-reorder
             ref={effectsReorderRef}
             class="composition-effect-list"
@@ -548,6 +967,21 @@ export default function CompositionEditor({
       <ExportPropertiesPane
         disabled={exportDisabled}
         onExport={onExport}
+      />
+      )}
+
+      {!fillOnly && (
+      <ShaderPicker
+        kind="fill"
+        cards={shaderFillCards}
+        open={fillPickerOpen}
+        disabled={readOnly}
+        captureTrigger={false}
+        triggerId={SHADER_PICKER_TRIGGER_IDS.fill}
+        anchor={`#${SHADER_PICKER_ANCHOR_IDS.fill}`}
+        position="left"
+        onOpenChange={onFillPickerOpenChange}
+        onChoice={onFillShaderChoice}
       />
       )}
 

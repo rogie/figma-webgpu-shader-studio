@@ -7,6 +7,7 @@ import {
   emptyFill,
   fillFromInputSource,
   fillTypeForDroppedMedia,
+  firstFillShaderKey,
   hasCompositionFill,
   isCompositionPlayable,
   hasCompositionGraph,
@@ -17,6 +18,7 @@ import {
   readReferencedShader,
   reorderCompositionEffects,
   referencedShaderKeys,
+  resolveShaderFillKey,
   resolvedLibraryKind,
   serializeCompositionExport,
   unpublishedCompositionRefs,
@@ -645,4 +647,63 @@ test("referencedShaderKeys de-duplicates fill and effects", () => {
     }),
     ["cloud:a", "cloud:b"]
   );
+});
+
+test("keeps shaderId when a fill switches to paint", () => {
+  const graph = normalizeComposition({
+    fill: {
+      type: "image",
+      shaderId: "cloud:sphere",
+      values: { amount: 2 },
+      paint: { type: "solid", color: "#FF0000", alpha: 1 },
+    },
+  });
+  assert.equal(graph.fill.type, "image");
+  assert.equal(graph.fill.shaderId, "cloud:sphere");
+  assert.deepEqual(graph.fill.values, { amount: 2 });
+  assert.deepEqual(graph.fill.paint, {
+    type: "solid",
+    color: "#FF0000",
+    alpha: 1,
+  });
+  assert.deepEqual(referencedShaderKeys(graph), []);
+  assert.equal(compositionLayerShaderId(graph, COMPOSITION_FILL_ID), null);
+  assert.equal(compositionPaintFill(graph).type, "solid");
+  assert.equal(
+    isCompositionPlayable(
+      graph,
+      new Map([["cloud:sphere", { kind: "fill", source: "frame.time" }]])
+    ),
+    false
+  );
+});
+
+test("shader fills omit paint and stay referenced", () => {
+  const graph = normalizeComposition({
+    fill: {
+      type: "shader",
+      shaderId: "sphere",
+      paint: { type: "solid", color: "#FF0000" },
+    },
+  });
+  assert.equal(graph.fill.type, "shader");
+  assert.equal(graph.fill.shaderId, "cloud:sphere");
+  assert.equal(graph.fill.paint, undefined);
+  assert.deepEqual(referencedShaderKeys(graph), ["cloud:sphere"]);
+  assert.equal(compositionLayerShaderId(graph, COMPOSITION_FILL_ID), "cloud:sphere");
+});
+
+test("resolves the last shader fill or the first library card", () => {
+  const cards = [
+    { key: "cloud:first", kind: "fill" },
+    { key: "cloud:second", kind: "fill" },
+    { key: "cloud:grain", kind: "effect" },
+  ];
+  assert.equal(firstFillShaderKey(cards), "cloud:first");
+  assert.equal(firstFillShaderKey([]), null);
+  assert.equal(resolveShaderFillKey("cloud:second", cards), "cloud:second");
+  assert.equal(resolveShaderFillKey("second", cards), "cloud:second");
+  assert.equal(resolveShaderFillKey("cloud:missing", cards), "cloud:first");
+  assert.equal(resolveShaderFillKey(null, cards), "cloud:first");
+  assert.equal(resolveShaderFillKey("cloud:gone", []), null);
 });

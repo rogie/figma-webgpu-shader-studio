@@ -252,10 +252,12 @@ async function rasterizeInPage(page) {
 }
 
 async function applyFill(page, detail) {
-  await page.waitForSelector("fig-input-fill", { timeout: 20000 });
+  await page.waitForSelector("propskit-fill, fig-input-fill", { timeout: 20000 });
   await page.evaluate((value) => {
-    const node = document.querySelector("fig-input-fill");
-    if (!node) throw new Error("fig-input-fill missing");
+    const node =
+      document.querySelector("propskit-fill") ||
+      document.querySelector("fig-input-fill");
+    if (!node) throw new Error("fill control missing");
     node.value = value;
     node.dispatchEvent(
       new CustomEvent("input", { bubbles: true, detail: value })
@@ -268,7 +270,9 @@ async function applyFill(page, detail) {
 
 async function readFillValue(page) {
   return page.evaluate(() => {
-    const node = document.querySelector("fig-input-fill");
+    const node =
+      document.querySelector("propskit-fill") ||
+      document.querySelector("fig-input-fill");
     if (!node) return null;
     try {
       return typeof node.value === "string"
@@ -315,7 +319,7 @@ async function openSeededEditor(page, path) {
     { key: DRAFTS_KEY, drafts: [composerDraft, effectDraft] }
   );
   await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("fig-input-fill", { timeout: 25000 });
+  await page.waitForSelector("propskit-fill, fig-input-fill", { timeout: 25000 });
   await page.waitForSelector("canvas.preview-canvas", { timeout: 25000 });
   await page.waitForTimeout(1200);
 }
@@ -378,12 +382,24 @@ async function exerciseFills(page, label) {
   await applyFill(page, emptyVideo);
   await page.waitForTimeout(2000);
   const videoMeta = await page.evaluate(() => {
-    const node = document.querySelector("fig-input-fill");
+    const node =
+      document.querySelector("propskit-fill") ||
+      document.querySelector("fig-input-fill");
     const swatch = node?.querySelector("fig-swatch");
     const background = swatch?.getAttribute("background") || "";
+    const value =
+      typeof node?.value === "string"
+        ? (() => {
+            try {
+              return JSON.parse(node.value);
+            } catch {
+              return null;
+            }
+          })()
+        : node?.value;
     return {
-      type: node?.value?.type,
-      url: node?.value?.video?.url || null,
+      type: value?.type,
+      url: value?.video?.url || null,
       background: background.slice(0, 48),
       hasPoster: background.startsWith("url("),
     };
@@ -412,7 +428,22 @@ async function exerciseFills(page, label) {
     const video = document.querySelector("video");
     const stream = video?.srcObject;
     return {
-      fillType: document.querySelector("fig-input-fill")?.value?.type,
+      fillType: (() => {
+        const node =
+          document.querySelector("propskit-fill") ||
+          document.querySelector("fig-input-fill");
+        const value =
+          typeof node?.value === "string"
+            ? (() => {
+                try {
+                  return JSON.parse(node.value);
+                } catch {
+                  return null;
+                }
+              })()
+            : node?.value;
+        return value?.type;
+      })(),
       hasStream: Boolean(stream),
       liveTracks: stream?.getVideoTracks?.().some((track) => track.readyState === "live") || false,
       videoWidth: video?.videoWidth || 0,
