@@ -6375,7 +6375,7 @@ export default function App() {
                   <fig-icon name="back" />
                 </fig-button>
               </fig-tooltip>
-              <h2 className="app-title">Studio</h2>
+              <h2 className="app-title">Shader studio</h2>
               <div className="app-nav-header-actions">
                 <fig-menu
                   ref={newShaderMenuRef}

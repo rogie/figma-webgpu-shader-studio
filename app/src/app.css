@@ -75,10 +75,6 @@ body,
       gap: var(--spacer-1);
     }
 
-    .app-nav-back-button {
-      margin-left: calc(var(--spacer-2) * -1);
-    }
-
     .app-nav-header-actions {
       display: flex;
       flex-direction: row;
