@@ -157,6 +157,30 @@ function withoutVideoPoster(fill) {
   return { ...fill, video };
 }
 
+function videoSettingsKey(fill) {
+  if (fill?.type !== "video") return "";
+  return JSON.stringify({
+    type: "video",
+    colorSpace: fill.colorSpace || "srgb",
+    url: fill.video?.url || "",
+    scaleMode: fill.video?.scaleMode || "fill",
+    scale: fill.video?.scale ?? 50,
+    opacity: fill.video?.opacity ?? 1,
+  });
+}
+
+function webcamSettingsKey(fill) {
+  if (fill?.type !== "webcam") return "";
+  return JSON.stringify({
+    type: "webcam",
+    live: fill.webcam?.live !== false,
+    deviceId: fill.webcam?.deviceId || "",
+    scaleMode: fill.webcam?.scaleMode || fill.image?.scaleMode || "fill",
+    scale: fill.webcam?.scale ?? fill.image?.scale ?? 50,
+    opacity: fill.webcam?.opacity ?? fill.image?.opacity ?? 1,
+  });
+}
+
 function findShaderFillCard(cards, shaderId) {
   const aliases = new Set(compositionRefAliases(shaderId));
   return (cards || []).find((card) => aliases.has(card?.key)) ?? null;
@@ -790,7 +814,19 @@ function FillLayerEditor({
       const nextUrl = next.image?.url || next.video?.url || "";
       const urlChanged =
         (next.type === "image" || next.type === "video") && prevUrl !== nextUrl;
-      const shouldPersist = persist || typeChanged || urlChanged || fillOnly;
+      const unchangedVideo =
+        next.type === "video" &&
+        fill.paint?.type === "video" &&
+        videoSettingsKey(next) === videoSettingsKey(fill.paint);
+      const changedWebcam =
+        next.type === "webcam" &&
+        webcamSettingsKey(next) !== webcamSettingsKey(fill.paint);
+      const shouldPersist =
+        persist ||
+        typeChanged ||
+        urlChanged ||
+        changedWebcam ||
+        (fillOnly && !unchangedVideo);
       fillValueTypeRef.current = next.type;
       const nextValue = JSON.stringify(next);
       setControlValue(nextValue);
@@ -798,7 +834,9 @@ function FillLayerEditor({
       if (next.type === "image" && next.image?.url) {
         lastImageFillUrlRef.current = next.image.url;
       }
-      onApplyPaint?.(fill.id, next, shouldPersist);
+      if (!unchangedVideo) {
+        onApplyPaint?.(fill.id, next, shouldPersist);
+      }
     },
     [
       fill.id,

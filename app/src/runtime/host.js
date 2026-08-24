@@ -110,6 +110,9 @@ export class ShaderHost {
     this._compositorPipelines = new Map();
     this._compositorSampler = null;
     this._compositorBindLayout = null;
+    this._sourceFillPipelines = new Map();
+    this._sourceFillSampler = null;
+    this._sourceFillBindLayout = null;
     this._compositionSourceTimer = 0;
 
     this.frame = {
@@ -536,7 +539,11 @@ export class ShaderHost {
     for (const layer of this.compositionLayers || []) {
       this._destroyStateObject(layer.state);
       layer.state = {};
-      for (const key of ["fillTexture", "sourceTexture"]) {
+      for (const key of [
+        "fillTexture",
+        "sourceTexture",
+        "sourceFillUniform",
+      ]) {
         if (!layer[key]) continue;
         try {
           layer[key].destroy();
@@ -574,6 +581,9 @@ export class ShaderHost {
     this._compositorPipelines.clear();
     this._compositorSampler = null;
     this._compositorBindLayout = null;
+    this._sourceFillPipelines.clear();
+    this._sourceFillSampler = null;
+    this._sourceFillBindLayout = null;
   }
 
   _teardownState() {
@@ -1646,6 +1656,182 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     pass.end();
   }
 
+  _sourceFillTransform(layer, sourceSize, targetSize) {
+    const sourceRatio =
+      Math.max(1, sourceSize?.width || 1) /
+      Math.max(1, sourceSize?.height || 1);
+    const targetRatio =
+      Math.max(1, targetSize?.width || 1) /
+      Math.max(1, targetSize?.height || 1);
+    const mode = layer?.sourceScaleMode === "fit" ? "fit" : "cover";
+    let scaleX = 1;
+    let scaleY = 1;
+
+    if (mode === "fit") {
+      if (sourceRatio > targetRatio) scaleY = sourceRatio / targetRatio;
+      else scaleX = targetRatio / sourceRatio;
+    } else if (sourceRatio > targetRatio) {
+      scaleX = targetRatio / sourceRatio;
+    } else {
+      scaleY = sourceRatio / targetRatio;
+    }
+
+    const rawOpacity = Number(layer?.sourceOpacity);
+    const normalizedOpacity = Number.isFinite(rawOpacity)
+      ? rawOpacity > 1
+        ? rawOpacity / 100
+        : rawOpacity
+      : 1;
+    return {
+      scale: [scaleX, scaleY],
+      offset: [(1 - scaleX) / 2, (1 - scaleY) / 2],
+      opacity: Math.min(1, Math.max(0, normalizedOpacity)),
+    };
+  }
+
+  _ensureSourceFillPipeline(format) {
+    if (
+      this._sourceFillPipelines.has(format) &&
+      this._sourceFillSampler &&
+      this._sourceFillBindLayout
+    ) {
+      return this._sourceFillPipelines.get(format);
+    }
+    if (!this._sourceFillBindLayout) {
+      this._sourceFillBindLayout = this.device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" },
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            buffer: { type: "uniform", minBindingSize: 32 },
+          },
+        ],
+      });
+      this._sourceFillSampler = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+      });
+    }
+    const module = this.device.createShaderModule({
+      code: `
+struct VsOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+}
+
+struct SourceFillParams {
+  uvScale: vec2f,
+  uvOffset: vec2f,
+  opacityAndPadding: vec4f,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
+  var pos = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0),
+  );
+  var result: VsOut;
+  let p = pos[vi];
+  result.position = vec4f(p, 0.0, 1.0);
+  result.uv = vec2f(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+  return result;
+}
+
+@group(0) @binding(0) var linearSampler: sampler;
+@group(0) @binding(1) var sourceTexture: texture_2d<f32>;
+@group(0) @binding(2) var<uniform> params: SourceFillParams;
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4f {
+  let sourceUv = in.uv * params.uvScale + params.uvOffset;
+  let sampled = textureSample(sourceTexture, linearSampler, sourceUv);
+  let inside = all(sourceUv >= vec2f(0.0)) && all(sourceUv <= vec2f(1.0));
+  if (!inside) {
+    return vec4f(0.0);
+  }
+  return sampled * params.opacityAndPadding.x;
+}
+`,
+    });
+    const pipeline = this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this._sourceFillBindLayout],
+      }),
+      vertex: { module, entryPoint: "vs_main" },
+      fragment: {
+        module,
+        entryPoint: "fs_main",
+        targets: [{ format }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    this._sourceFillPipelines.set(format, pipeline);
+    return pipeline;
+  }
+
+  _encodeSourceFill(encoder, layer, sourceTexture, target) {
+    if (!layer.sourceFillUniform) {
+      layer.sourceFillUniform = this.device.createBuffer({
+        size: 32,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+    }
+    const transform = this._sourceFillTransform(
+      layer,
+      { width: sourceTexture.width, height: sourceTexture.height },
+      { width: target.width, height: target.height }
+    );
+    this.device.queue.writeBuffer(
+      layer.sourceFillUniform,
+      0,
+      new Float32Array([
+        ...transform.scale,
+        ...transform.offset,
+        transform.opacity,
+        0,
+        0,
+        0,
+      ])
+    );
+    const pipeline = this._ensureSourceFillPipeline(
+      target.format || this.format
+    );
+    const bindGroup = this.device.createBindGroup({
+      layout: this._sourceFillBindLayout,
+      entries: [
+        { binding: 0, resource: this._sourceFillSampler },
+        { binding: 1, resource: sourceTexture.createView() },
+        { binding: 2, resource: { buffer: layer.sourceFillUniform } },
+      ],
+    });
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: target.createView(),
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        },
+      ],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(3);
+    pass.end();
+  }
+
   _clearRenderTarget(target) {
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
@@ -1727,7 +1913,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
         // importable. Keep the previous texture and try again next present.
       }
     }
-    return { fillTexture, sourceTexture };
+    return { layer, fillTexture, sourceTexture };
   }
 
   _compositionSize(swapchain, fills) {
@@ -1790,13 +1976,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     let current = fillTextures.length ? fillTextures[0] : this.frame.input;
     if (fillTextures.length) {
       const encoder = this.device.createCommandEncoder();
-      for (const { fillTexture, sourceTexture } of sourceFills) {
-        this._encodeComposite(
-          encoder,
-          transparent,
-          sourceTexture,
-          fillTexture
-        );
+      for (const { layer, fillTexture, sourceTexture } of sourceFills) {
+        this._encodeSourceFill(encoder, layer, sourceTexture, fillTexture);
       }
       for (let index = 1; index < fillTextures.length; index += 1) {
         const target = this._ensureCompositorTexture(
@@ -1854,6 +2035,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       params: layer.params || {},
       fillTexture: null,
       sourceTexture: null,
+      sourceFillUniform: null,
       sourceUploaded: false,
     }));
     this.setupFn = (device, frame) => {

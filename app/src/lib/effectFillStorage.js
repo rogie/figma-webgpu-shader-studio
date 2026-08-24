@@ -25,11 +25,24 @@ function paintMediaUrl(fill) {
   return fill?.paint?.image?.url || fill?.paint?.video?.url || "";
 }
 
+function paintMediaAssetPath(fill) {
+  return (
+    fill?.paint?.image?.assetPath || fill?.paint?.video?.assetPath || ""
+  );
+}
+
 export function effectFillIsLive(fill) {
   if (fill?.type === "shader" && fill.shaderId) return true;
   const paint = fill?.paint;
   if (!paint || typeof paint !== "object") return false;
-  if (paint.type === "solid" || paint.type === "gradient") return true;
+  if (
+    paint.type === "solid" ||
+    paint.type === "gradient" ||
+    paint.type === "webcam"
+  ) {
+    return true;
+  }
+  if (paintMediaAssetPath(fill)) return true;
   const url = paintMediaUrl(fill);
   return typeof url === "string" && url.length > 0;
 }
@@ -38,7 +51,14 @@ export function effectFillIsDurable(fill) {
   if (fill?.type === "shader" && fill.shaderId) return true;
   const paint = fill?.paint;
   if (!paint || typeof paint !== "object") return false;
-  if (paint.type === "solid" || paint.type === "gradient") return true;
+  if (
+    paint.type === "solid" ||
+    paint.type === "gradient" ||
+    paint.type === "webcam"
+  ) {
+    return true;
+  }
+  if (paintMediaAssetPath(fill)) return true;
   const url = paintMediaUrl(fill);
   return typeof url === "string" && url.length > 0 && !isEphemeralUrl(url);
 }
@@ -58,14 +78,17 @@ function persistableNormalizedEffectFill(normalized) {
   if (!paint || typeof paint !== "object") return normalized;
   const nextPaint = { ...paint };
   let changed = false;
-  if (nextPaint.image && isEphemeralUrl(nextPaint.image.url)) {
+  if (
+    nextPaint.image &&
+    (nextPaint.image.assetPath || isEphemeralUrl(nextPaint.image.url))
+  ) {
     const { url: _url, ...image } = nextPaint.image;
     nextPaint.image = image;
     changed = true;
   }
   if (nextPaint.video) {
     const video = { ...nextPaint.video };
-    if (isEphemeralUrl(video.url)) {
+    if (video.assetPath || isEphemeralUrl(video.url)) {
       delete video.url;
       changed = true;
     }
@@ -240,6 +263,7 @@ export function resolveSessionEffectFills({
         ? [documentFill]
         : [],
   );
+  const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
   // Empty and missing are different states: an explicitly stored empty stack
   // means the user removed the final fill and must not trigger the sample
   // fallback on navigation or refresh.
@@ -252,7 +276,6 @@ export function resolveSessionEffectFills({
   ) {
     return [];
   }
-  const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
   const fallback = () => {
     if (fallbackSource === "vector") {
       const fill = fillFromInputSource("vector");

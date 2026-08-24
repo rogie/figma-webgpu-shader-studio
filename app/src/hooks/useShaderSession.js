@@ -160,6 +160,14 @@ export function useShaderSession({
       const host = hostRef.current;
       if (!host?.ready) return;
       if (sessionInputAppliedRef) sessionInputAppliedRef.current = sessionId;
+      // Effect fill stacks are rendered by the composition host. Loading the
+      // legacy row-level input asset here would replace the first persisted
+      // fill with a new blob URL and discard its per-layer asset path.
+      if (nextKind === "effect" && nextEffectFills.length) {
+        clearObjectUrl();
+        host.clearInput();
+        return;
+      }
       const sessionPaint =
         topmostEffectPaintFill?.paint ?? effectPaintRef?.current?.paint;
       const plan = sessionInputPlan({

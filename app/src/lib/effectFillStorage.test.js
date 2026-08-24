@@ -75,6 +75,66 @@ test("persistableEffectFill strips ephemeral video posters", () => {
   assert.equal(stored.paint.video.scaleMode, "fill");
 });
 
+test("persistableEffectFill keeps asset paths instead of expiring signed urls", () => {
+  const stored = persistableEffectFills([
+    {
+      type: "image",
+      paint: {
+        type: "image",
+        image: {
+          url: "https://storage.example.com/signed-photo",
+          assetPath: "owner/shader/fill-photo.png",
+          scaleMode: "fit",
+        },
+      },
+    },
+    {
+      type: "video",
+      paint: {
+        type: "video",
+        video: {
+          url: "https://storage.example.com/signed-video",
+          assetPath: "owner/shader/fill-video.mp4",
+          scaleMode: "fill",
+        },
+      },
+    },
+  ]);
+
+  assert.equal(stored[0].paint.image.url, undefined);
+  assert.equal(
+    stored[0].paint.image.assetPath,
+    "owner/shader/fill-photo.png",
+  );
+  assert.equal(stored[1].paint.video.url, undefined);
+  assert.equal(
+    stored[1].paint.video.assetPath,
+    "owner/shader/fill-video.mp4",
+  );
+});
+
+test("asset-backed media and live webcam intents are durable", () => {
+  const assetVideo = {
+    type: "video",
+    paint: {
+      type: "video",
+      video: { assetPath: "owner/shader/fill-video.mp4" },
+    },
+  };
+  const webcam = {
+    type: "video",
+    paint: {
+      type: "webcam",
+      webcam: { live: true, deviceId: "camera-1" },
+    },
+  };
+
+  assert.equal(effectFillIsLive(assetVideo), true);
+  assert.equal(effectFillIsDurable(assetVideo), true);
+  assert.equal(effectFillIsLive(webcam), true);
+  assert.equal(effectFillIsDurable(webcam), true);
+});
+
 test("persistableEffectFills strips ephemeral media independently across layers", () => {
   const stored = persistableEffectFills([
     {
@@ -320,6 +380,43 @@ test("resolveSessionEffectFills prefers an ordered document stack over a legacy 
     "document-top",
     "document-bottom",
   ]);
+});
+
+test("resolveSessionEffectFills restores asset-backed video and webcam document fills", () => {
+  const resolved = resolveSessionEffectFills({
+    sessionId: "cloud:media",
+    storage: memoryStorage(),
+    fallbackSource: "image",
+    sampleUrls: { image: "/photo.png" },
+    documentFills: [
+      {
+        id: "video",
+        type: "video",
+        paint: {
+          type: "video",
+          video: { assetPath: "owner/shader/fill-video.mp4" },
+        },
+      },
+      {
+        id: "webcam",
+        type: "video",
+        paint: {
+          type: "webcam",
+          webcam: { live: true, deviceId: "camera-1" },
+        },
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    resolved.map((fill) => fill.id),
+    ["video", "webcam"],
+  );
+  assert.equal(
+    resolved[0].paint.video.assetPath,
+    "owner/shader/fill-video.mp4",
+  );
+  assert.equal(resolved[1].paint.webcam.deviceId, "camera-1");
 });
 
 test("resolveSessionEffectFills keeps incomplete layers above durable stored fills", () => {

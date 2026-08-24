@@ -915,6 +915,7 @@ test("composition composites enabled fills bottom-to-top before ordered effects"
     return layer.fillTexture;
   };
   host._prepareSourceFill = (layer) => ({
+    layer,
     fillTexture: texture(`${layer.id}-fill`),
     sourceTexture: texture(`${layer.id}-source`),
   });
@@ -922,6 +923,9 @@ test("composition composites enabled fills bottom-to-top before ordered effects"
   host._ensureCompositionTexture = () => effectTexture;
   host._encodeComposite = (_encoder, base, overlay, target) => {
     calls.push(`composite:${base.id}+${overlay.id}->${target.id}`);
+  };
+  host._encodeSourceFill = (_encoder, layer, source, target) => {
+    calls.push(`source:${layer.id}:${source.id}->${target.id}`);
   };
   host.compositionLayers = [
     {
@@ -994,12 +998,40 @@ test("composition composites enabled fills bottom-to-top before ordered effects"
   assert.deepEqual(calls, [
     "render:bottom->bottom-fill",
     "render:top->top-fill",
-    "composite:transparent+media-source->media-fill",
+    "source:media:media-source->media-fill",
     "composite:bottom-fill+media-fill->ping-0",
     "composite:ping-0+top-fill->ping-1",
     "effect:a:ping-1->effect-0",
     "effect:b:effect-0->swapchain",
   ]);
+});
+
+test("source fill transforms preserve aspect ratio for cover and fit", () => {
+  const host = makeHost();
+  assert.deepEqual(
+    host._sourceFillTransform(
+      { sourceScaleMode: "fill", sourceOpacity: 0.75 },
+      { width: 400, height: 200 },
+      { width: 200, height: 400 }
+    ),
+    { scale: [0.25, 1], offset: [0.375, 0], opacity: 0.75 }
+  );
+  assert.deepEqual(
+    host._sourceFillTransform(
+      { sourceScaleMode: "fit", sourceOpacity: 50 },
+      { width: 400, height: 200 },
+      { width: 200, height: 400 }
+    ),
+    { scale: [1, 4], offset: [0, -1.5], opacity: 0.5 }
+  );
+  assert.deepEqual(
+    host._sourceFillTransform(
+      { sourceScaleMode: "crop" },
+      { width: 200, height: 400 },
+      { width: 400, height: 200 }
+    ),
+    { scale: [1, 0.25], offset: [0, 0.375], opacity: 1 }
+  );
 });
 
 test("source fills upload static images once and dynamic media every present", () => {
@@ -1089,6 +1121,7 @@ test("composition teardown destroys GPU resources without closing app sources", 
   };
   const fillTexture = resource("fill");
   const sourceTexture = resource("source");
+  const sourceFillUniform = resource("uniform");
   host.compositionLayers = [
     {
       id: "media",
@@ -1101,6 +1134,7 @@ test("composition teardown destroys GPU resources without closing app sources", 
       },
       fillTexture,
       sourceTexture,
+      sourceFillUniform,
     },
   ];
   host._compositionTextures = [resource("effect")];
@@ -1109,18 +1143,30 @@ test("composition teardown destroys GPU resources without closing app sources", 
   host._compositorPipelines.set("rgba8unorm", {});
   host._compositorSampler = {};
   host._compositorBindLayout = {};
+  host._sourceFillPipelines.set("rgba8unorm", {});
+  host._sourceFillSampler = {};
+  host._sourceFillBindLayout = {};
 
   host._teardownCompositionResources();
 
   assert.deepEqual(
     destroyed.sort(),
-    ["effect", "fill", "ping", "source", "state", "transparent"].sort()
+    [
+      "effect",
+      "fill",
+      "ping",
+      "source",
+      "state",
+      "transparent",
+      "uniform",
+    ].sort()
   );
   assert.equal(sourceCloses, 0);
   assert.deepEqual(host._compositionTextures, []);
   assert.deepEqual(host._compositorTextures, []);
   assert.equal(host._compositorTransparentTexture, null);
   assert.equal(host._compositorPipelines.size, 0);
+  assert.equal(host._sourceFillPipelines.size, 0);
 });
 
 test("dynamic composition source timer redraws while paused and cleans up", () => {

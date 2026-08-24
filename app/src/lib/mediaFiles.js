@@ -34,7 +34,12 @@ export function revokeObjectUrl(url) {
 }
 
 export async function fileFromBlobUrl(url, fileName) {
-  if (typeof url !== "string" || !url.startsWith("blob:")) return null;
+  if (
+    typeof url !== "string" ||
+    (!url.startsWith("blob:") && !url.startsWith("data:"))
+  ) {
+    return null;
+  }
   try {
     const response = await fetch(url);
     if (!response.ok) return null;

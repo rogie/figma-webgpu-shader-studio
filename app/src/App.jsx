@@ -297,7 +297,11 @@ function fillMediaUrl(fill) {
 function fillMediaEntries(fills = []) {
   return fills
     .map((fill) => ({ fill, url: fillMediaUrl(fill) }))
-    .filter(({ url }) => typeof url === "string" && url.startsWith("blob:"));
+    .filter(
+      ({ url }) =>
+        typeof url === "string" &&
+        (url.startsWith("blob:") || url.startsWith("data:"))
+    );
 }
 
 function withFillAssetPath(fill, assetPath) {
@@ -324,8 +328,73 @@ function withFillAssetPath(fill, assetPath) {
   return fill;
 }
 
+function fillMediaAssetPath(fill) {
+  return (
+    fill?.paint?.image?.assetPath || fill?.paint?.video?.assetPath || ""
+  );
+}
+
+function withFillAssetUrl(fill, urlsByPath) {
+  const paint = fill?.paint;
+  const assetPath = fillMediaAssetPath(fill);
+  const url = assetPath ? urlsByPath?.[assetPath] : "";
+  if (!paint || !url) return fill;
+  if (paint.type === "video") {
+    return {
+      ...fill,
+      paint: {
+        ...paint,
+        video: { ...(paint.video || {}), url },
+      },
+    };
+  }
+  if (paint.type === "image") {
+    return {
+      ...fill,
+      paint: {
+        ...paint,
+        image: { ...(paint.image || {}), url },
+      },
+    };
+  }
+  return fill;
+}
+
+async function hydrateCompositionMediaUrls(composition) {
+  if (!composition || typeof composition !== "object") return composition;
+  const groups = [
+    composition.fills,
+    composition.effectFills,
+    composition.fill ? [composition.fill] : null,
+    composition.effectFill ? [composition.effectFill] : null,
+  ].filter(Array.isArray);
+  const paths = groups.flat().map(fillMediaAssetPath).filter(Boolean);
+  if (!paths.length) return composition;
+  let urlsByPath;
+  try {
+    urlsByPath = await getAssetUrls(paths);
+  } catch {
+    return composition;
+  }
+  const hydrate = (fill) => withFillAssetUrl(fill, urlsByPath);
+  return {
+    ...composition,
+    ...(Array.isArray(composition.fills)
+      ? { fills: composition.fills.map(hydrate) }
+      : {}),
+    ...(Array.isArray(composition.effectFills)
+      ? { effectFills: composition.effectFills.map(hydrate) }
+      : {}),
+    ...(composition.fill ? { fill: hydrate(composition.fill) } : {}),
+    ...(composition.effectFill
+      ? { effectFill: hydrate(composition.effectFill) }
+      : {}),
+  };
+}
+
 function createHiddenVideoElement() {
   const video = document.createElement("video");
+  video.crossOrigin = "anonymous";
   video.muted = true;
   video.defaultMuted = true;
   video.loop = true;
@@ -785,6 +854,7 @@ export default function App() {
   const paintFillRafRef = useRef(0);
   const applyPaintFillRef = useRef(null);
   const compositionMediaSourcesRef = useRef([]);
+  const compositionWebcamStreamsRef = useRef(new Map());
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
   const cloudWriteBackoffUntilRef = useRef(0);
@@ -874,6 +944,9 @@ export default function App() {
     if (!paint) return;
     setEffectFill((current) => {
       if (current?.type === "shader") return current;
+      // Webcam is represented as the graph's video type, but its paint must
+      // remain webcam-specific so the saved device can be reacquired.
+      if (current?.paint?.type === "webcam") return current;
       const next = {
         ...fillFromInputSource(inputSource),
         shaderId: current?.shaderId ?? null,
@@ -1587,6 +1660,7 @@ export default function App() {
       if (compileGeneration !== compileGenerationRef.current) return;
       const map = new Map(Object.entries(resolved));
       const layers = [];
+      const activeWebcamFillIds = new Set();
       for (const source of compositionMediaSourcesRef.current) {
         source.pause?.();
         if ("srcObject" in source) source.srcObject = null;
@@ -1668,14 +1742,64 @@ export default function App() {
               enabled: true,
               source: video,
               sourceType: "video",
+              sourceScaleMode: resolvedPaint.video?.scaleMode || "fill",
+              sourceOpacity:
+                resolvedPaint.video?.opacity ?? resolvedPaint.opacity ?? 1,
               props: {},
               params: {},
             });
             continue;
           }
           if (fill.paint.type === "webcam" && fill.paint.webcam?.live !== false) {
-            const stream = readFillWebcamStream();
+            activeWebcamFillIds.add(fill.id);
+            const wantedDevice = fill.paint.webcam?.deviceId || "";
+            let cached = compositionWebcamStreamsRef.current.get(fill.id);
+            const cachedDevice = webcamDeviceId(cached?.stream);
+            if (
+              !isLiveMediaStream(cached?.stream) ||
+              (wantedDevice && cachedDevice && wantedDevice !== cachedDevice)
+            ) {
+              if (cached?.owned) {
+                cached.stream
+                  ?.getTracks?.()
+                  .forEach((track) => track.stop());
+              }
+              compositionWebcamStreamsRef.current.delete(fill.id);
+              cached = null;
+            }
+            let stream = cached?.stream || null;
+            if (!stream) {
+              const pickerStream = readFillWebcamStream();
+              const pickerDevice = webcamDeviceId(pickerStream);
+              if (
+                pickerStream &&
+                (!wantedDevice ||
+                  !pickerDevice ||
+                  pickerDevice === wantedDevice)
+              ) {
+                stream =
+                  typeof pickerStream.clone === "function"
+                    ? pickerStream.clone()
+                    : pickerStream;
+                cached = {
+                  stream,
+                  owned: stream !== pickerStream,
+                };
+              } else if (navigator.mediaDevices?.getUserMedia) {
+                stream = await navigator.mediaDevices.getUserMedia({
+                  video: wantedDevice
+                    ? { deviceId: { exact: wantedDevice } }
+                    : true,
+                  audio: false,
+                });
+                cached = { stream, owned: true };
+              }
+              if (stream) {
+                compositionWebcamStreamsRef.current.set(fill.id, cached);
+              }
+            }
             if (stream) {
+              const webcamSettings = paintImageSource(fill.paint);
               const video = createHiddenVideoElement();
               video.srcObject = stream;
               await waitForVideoFrame(video, "Could not load webcam fill.");
@@ -1691,6 +1815,8 @@ export default function App() {
                 enabled: true,
                 source: video,
                 sourceType: "webcam",
+                sourceScaleMode: webcamSettings.scaleMode || "fill",
+                sourceOpacity: webcamSettings.opacity ?? 1,
                 props: {},
                 params: {},
               });
@@ -1727,6 +1853,13 @@ export default function App() {
         } catch (paintError) {
           setError(paintError.message || String(paintError));
         }
+      }
+      for (const [fillId, cached] of compositionWebcamStreamsRef.current) {
+        if (activeWebcamFillIds.has(fillId)) continue;
+        if (cached?.owned) {
+          cached.stream?.getTracks?.().forEach((track) => track.stop());
+        }
+        compositionWebcamStreamsRef.current.delete(fillId);
       }
       for (const effect of graph.effects) {
         loadLayer(
@@ -2077,6 +2210,14 @@ export default function App() {
         if (!wantedDevice || wantedDevice === currentDevice) {
           host.setVideoInput(videoRef.current);
           setInputSource("video");
+          syncEffectFillFromCanvasInput({
+            type: "webcam",
+            webcam: {
+              ...(detail?.webcam || {}),
+              live: true,
+              ...(currentDevice ? { deviceId: currentDevice } : {}),
+            },
+          });
           setPreviewRevision((revision) => revision + 1);
           return true;
         }
@@ -2142,10 +2283,24 @@ export default function App() {
       videoRef.current = video;
       host.setVideoInput(video);
       setInputSource("video");
+      const activeDevice = webcamDeviceId(stream) || wantedDevice;
+      syncEffectFillFromCanvasInput({
+        type: "webcam",
+        webcam: {
+          ...(detail?.webcam || {}),
+          live: true,
+          ...(activeDevice ? { deviceId: activeDevice } : {}),
+        },
+      });
       setPreviewRevision((revision) => revision + 1);
       return true;
     },
-    [clearObjectUrl, isInputApplyCurrent, setInputSource]
+    [
+      clearObjectUrl,
+      isInputApplyCurrent,
+      setInputSource,
+      syncEffectFillFromCanvasInput,
+    ]
   );
 
   const restoreSample = useCallback(
@@ -2643,6 +2798,12 @@ export default function App() {
         source.remove?.();
       }
       compositionMediaSourcesRef.current = [];
+      for (const cached of compositionWebcamStreamsRef.current.values()) {
+        if (cached?.owned) {
+          cached.stream?.getTracks?.().forEach((track) => track.stop());
+        }
+      }
+      compositionWebcamStreamsRef.current.clear();
       clearObjectUrl();
     },
     [clearObjectUrl]
@@ -2709,6 +2870,11 @@ export default function App() {
     if (sessionKind === COMPOSITION_KIND) {
       const paint = compositionPaintFill(compositionRef.current);
       if (paint) applyPaintFill(paint);
+      return;
+    }
+    if (sessionKind === "effect" && effectFillsRef.current.length) {
+      // The composition host owns stacked effect fills, including their
+      // per-layer uploaded assets. Do not reapply the legacy row input.
       return;
     }
     if (sessionKind === "effect" && currentShader?.input_path) {
@@ -3094,6 +3260,9 @@ export default function App() {
       const fullShader = shader.source
         ? shader
         : { ...shader, ...(await getShader(shader.id)) };
+      const hydratedComposition = await hydrateCompositionMediaUrls(
+        fullShader.composition
+      );
       lastSavedFingerprintRef.current = shaderContentFingerprint({
         name: fullShader.name,
         source: fullShader.source,
@@ -3108,7 +3277,7 @@ export default function App() {
           name: fullShader.name,
           source: fullShader.source || "",
           kind: fullShader.kind,
-          composition: fullShader.composition,
+          composition: hydratedComposition,
           values: fullShader.parameter_values || {},
           public: fullShader.is_public,
           cloudShader: fullShader,
@@ -4074,6 +4243,7 @@ export default function App() {
             ? effectFillsRef.current
             : [];
         const persistedFills = persistableEffectFills(liveFills);
+        const stackedMedia = background ? [] : fillMediaEntries(liveFills);
         const graphForSave = isComposition
           ? normalizeComposition({ ...graph, fills: persistedFills })
           : null;
@@ -4132,8 +4302,8 @@ export default function App() {
         }
 
         let saved;
+        let checkpointSummary = options.checkpointSummary || null;
         if (isOwner && currentShader) {
-          let checkpointSummary = options.checkpointSummary || null;
           if (checkpointKind && !checkpointSummary) {
             const metadata = shaderVersions.length
               ? shaderVersions
@@ -4151,8 +4321,8 @@ export default function App() {
             parameterValues: payload.parameter_values,
             features: payload.features,
             composition: payload.composition,
-            checkpointKind,
-            summary: checkpointSummary,
+            checkpointKind: stackedMedia.length ? null : checkpointKind,
+            summary: stackedMedia.length ? null : checkpointSummary,
           });
           const metadataPayload = {
             name: payload.name,
@@ -4169,7 +4339,6 @@ export default function App() {
         await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
 
         const assetChanges = {};
-        const stackedMedia = background ? [] : fillMediaEntries(liveFills);
         let durableFills = persistedFills;
         if (stackedMedia.length) {
           for (const { fill, url } of stackedMedia) {
@@ -4214,8 +4383,8 @@ export default function App() {
             parameterValues: payload.parameter_values,
             features: payload.features,
             composition: durableComposition,
-            checkpointKind: null,
-            summary: null,
+            checkpointKind,
+            summary: checkpointSummary,
           });
           if (isComposition) {
             const localGraph = normalizeComposition({
