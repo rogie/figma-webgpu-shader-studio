@@ -26,6 +26,7 @@ function paintMediaUrl(fill) {
 }
 
 export function effectFillIsLive(fill) {
+  if (fill?.type === "shader" && fill.shaderId) return true;
   const paint = fill?.paint;
   if (!paint || typeof paint !== "object") return false;
   if (paint.type === "solid" || paint.type === "gradient") return true;
@@ -34,6 +35,7 @@ export function effectFillIsLive(fill) {
 }
 
 export function effectFillIsDurable(fill) {
+  if (fill?.type === "shader" && fill.shaderId) return true;
   const paint = fill?.paint;
   if (!paint || typeof paint !== "object") return false;
   if (paint.type === "solid" || paint.type === "gradient") return true;
@@ -41,8 +43,17 @@ export function effectFillIsDurable(fill) {
   return typeof url === "string" && url.length > 0 && !isEphemeralUrl(url);
 }
 
-export function persistableEffectFill(fill) {
-  const normalized = normalizeComposition({ fill }).fill;
+function normalizeEffectFills(fills) {
+  if (Array.isArray(fills)) {
+    return normalizeComposition({ fills }).fills;
+  }
+  if (fills && typeof fills === "object") {
+    return normalizeComposition({ fill: fills }).fills;
+  }
+  return [];
+}
+
+function persistableNormalizedEffectFill(normalized) {
   const paint = normalized.paint;
   if (!paint || typeof paint !== "object") return normalized;
   const nextPaint = { ...paint };
@@ -67,6 +78,14 @@ export function persistableEffectFill(fill) {
   return changed ? { ...normalized, paint: nextPaint } : normalized;
 }
 
+export function persistableEffectFills(fills) {
+  return normalizeEffectFills(fills).map(persistableNormalizedEffectFill);
+}
+
+export function persistableEffectFill(fill) {
+  return persistableEffectFills(fill ? [fill] : [])[0] || null;
+}
+
 function readFillMap(storage) {
   try {
     const parsed = JSON.parse(storage?.getItem(EFFECT_FILL_STORAGE_KEY) || "{}");
@@ -78,27 +97,34 @@ function readFillMap(storage) {
   }
 }
 
-export function readEffectFill(shaderId, storage = globalThis.localStorage) {
-  if (!shaderId) return null;
+export function readEffectFills(shaderId, storage = globalThis.localStorage) {
+  if (!shaderId) return [];
   const map = readFillMap(storage);
   for (const key of effectFillStorageKeys(shaderId)) {
     const stored = map[key];
+    if (Array.isArray(stored)) {
+      return normalizeEffectFills(stored);
+    }
     if (stored && typeof stored === "object") {
-      return normalizeComposition({ fill: stored }).fill;
+      return normalizeEffectFills(stored);
     }
   }
-  return null;
+  return [];
 }
 
-export function writeEffectFill(
+export function readEffectFill(shaderId, storage = globalThis.localStorage) {
+  return readEffectFills(shaderId, storage)[0] || null;
+}
+
+export function writeEffectFills(
   shaderId,
-  fill,
+  fills,
   storage = globalThis.localStorage,
 ) {
   if (!shaderId) return;
   try {
     const map = readFillMap(storage);
-    const stored = persistableEffectFill(fill);
+    const stored = persistableEffectFills(fills);
     for (const key of effectFillStorageKeys(shaderId)) {
       map[key] = stored;
     }
@@ -108,17 +134,49 @@ export function writeEffectFill(
   }
 }
 
-export function lookupEffectFill(
+export function writeEffectFill(
+  shaderId,
+  fill,
+  storage = globalThis.localStorage,
+) {
+  writeEffectFills(shaderId, fill ? [fill] : [], storage);
+}
+
+export function lookupEffectFills(
   store,
   shaderId,
   storage = globalThis.localStorage,
 ) {
   if (store && shaderId) {
     for (const key of effectFillStorageKeys(shaderId)) {
-      if (store.has(key)) return store.get(key);
+      if (store.has(key)) return normalizeEffectFills(store.get(key));
     }
   }
-  return readEffectFill(shaderId, storage);
+  return readEffectFills(shaderId, storage);
+}
+
+export function lookupEffectFill(
+  store,
+  shaderId,
+  storage = globalThis.localStorage,
+) {
+  return lookupEffectFills(store, shaderId, storage)[0] || null;
+}
+
+export function rememberEffectFills(
+  store,
+  shaderId,
+  fills,
+  storage = globalThis.localStorage,
+) {
+  if (!shaderId) return;
+  const normalized = normalizeEffectFills(fills);
+  if (store) {
+    for (const key of effectFillStorageKeys(shaderId)) {
+      store.set(key, normalized);
+    }
+  }
+  writeEffectFills(shaderId, normalized, storage);
 }
 
 export function rememberEffectFill(
@@ -127,59 +185,80 @@ export function rememberEffectFill(
   fill,
   storage = globalThis.localStorage,
 ) {
-  if (!shaderId || !fill) return;
-  const normalized = normalizeComposition({ fill }).fill;
-  if (store) {
-    for (const key of effectFillStorageKeys(shaderId)) {
-      store.set(key, normalized);
-    }
-  }
-  writeEffectFill(shaderId, normalized, storage);
+  if (!fill) return;
+  rememberEffectFills(store, shaderId, [fill], storage);
 }
 
-export function resolveSessionEffectFill({
+function effectFillStackIsLive(fills) {
+  return fills.some(effectFillIsLive);
+}
+
+function effectFillStackIsDurable(fills) {
+  return fills.some(effectFillIsDurable);
+}
+
+function isLegacyDefaultSample(fills, sampleUrls) {
+  if (fills.length !== 1 || !sampleUrls.image) return false;
+  const fill = fills[0];
+  return (
+    fill?.paint?.type === "image" &&
+    fill.paint.image?.url === sampleUrls.image
+  );
+}
+
+export function resolveSessionEffectFills({
   sessionId,
   store = null,
   fallbackSource = "image",
   storage = globalThis.localStorage,
   sampleUrls = {},
+  documentFills = null,
   documentFill = null,
 } = {}) {
-  let memoryFill = null;
+  let memoryFills = [];
   if (store && sessionId) {
     for (const key of effectFillStorageKeys(sessionId)) {
       if (store.has(key)) {
-        memoryFill = store.get(key);
+        memoryFills = normalizeEffectFills(store.get(key));
         break;
       }
     }
   }
-  const stored = readEffectFill(sessionId, storage);
-  const paintUrl = stored?.paint?.image?.url || stored?.paint?.video?.url || "";
-  const storedDefaultPhoto =
-    typeof paintUrl === "string" &&
-    sampleUrls.image &&
-    paintUrl === sampleUrls.image;
+  const storedFills = readEffectFills(sessionId, storage);
+  const resolvedDocumentFills = normalizeEffectFills(
+    Array.isArray(documentFills)
+      ? documentFills
+      : documentFill
+        ? [documentFill]
+        : [],
+  );
+  const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
   const fallback = () => {
     if (fallbackSource === "vector") {
       const fill = fillFromInputSource("vector");
       const paint = paintForInputSource("vector", sampleUrls);
-      return paint ? { ...fill, paint } : fill;
+      return [normalizeEffectFills([paint ? { ...fill, paint } : fill])[0]];
     }
     const fill = fillFromInputSource(fallbackSource);
     const paint = paintForInputSource(fallbackSource, sampleUrls);
-    return paint ? { ...fill, paint } : fill;
+    return [normalizeEffectFills([paint ? { ...fill, paint } : fill])[0]];
   };
-  if (effectFillIsLive(memoryFill)) return memoryFill;
+  if (effectFillStackIsLive(memoryFills)) return memoryFills;
   if (
-    effectFillIsDurable(documentFill) &&
-    (!effectFillIsDurable(stored) || storedDefaultPhoto)
+    effectFillStackIsDurable(resolvedDocumentFills) &&
+    (!effectFillStackIsDurable(storedFills) || storedDefaultPhoto)
   ) {
-    return normalizeComposition({ fill: documentFill }).fill;
+    return resolvedDocumentFills;
   }
-  if (effectFillIsDurable(stored) && !storedDefaultPhoto) return stored;
-  if (effectFillIsDurable(documentFill)) {
-    return normalizeComposition({ fill: documentFill }).fill;
+  if (effectFillStackIsDurable(storedFills) && !storedDefaultPhoto) {
+    return storedFills;
+  }
+  if (effectFillStackIsDurable(resolvedDocumentFills)) {
+    return resolvedDocumentFills;
   }
   return fallback();
+}
+
+export function resolveSessionEffectFill(options = {}) {
+  return resolveSessionEffectFills(options)[0] || null;
 }

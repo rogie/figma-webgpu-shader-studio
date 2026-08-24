@@ -889,6 +889,283 @@ test("composition presents increment presentedFrames once per preview frame", ()
   assert.equal(host.presentedFrames, 1);
 });
 
+test("composition composites enabled fills bottom-to-top before ordered effects", () => {
+  const host = makeHost();
+  const calls = [];
+  const texture = (id) => ({
+    id,
+    width: 8,
+    height: 8,
+    format: "rgba8unorm",
+    createView: () => ({ id: `${id}-view` }),
+  });
+  const swapchain = texture("swapchain");
+  const transparent = texture("transparent");
+  const ping = [texture("ping-0"), texture("ping-1")];
+  const effectTexture = texture("effect-0");
+  host.context = { getCurrentTexture: () => swapchain };
+  host.device = {
+    createCommandEncoder: () => ({ finish: () => "commands" }),
+    queue: { submit() {} },
+  };
+  host.logicalOutputSize = { width: 8, height: 8 };
+  host._ensureTransparentTexture = () => transparent;
+  host._ensureLayerTexture = (layer) => {
+    layer.fillTexture ||= texture(`${layer.id}-fill`);
+    return layer.fillTexture;
+  };
+  host._prepareSourceFill = (layer) => ({
+    fillTexture: texture(`${layer.id}-fill`),
+    sourceTexture: texture(`${layer.id}-source`),
+  });
+  host._ensureCompositorTexture = (index) => ping[index];
+  host._ensureCompositionTexture = () => effectTexture;
+  host._encodeComposite = (_encoder, base, overlay, target) => {
+    calls.push(`composite:${base.id}+${overlay.id}->${target.id}`);
+  };
+  host.compositionLayers = [
+    {
+      id: "bottom",
+      role: "fill",
+      enabled: true,
+      state: {},
+      render(_device, frame) {
+        assert.equal(frame.input, null);
+        calls.push(`render:bottom->${frame.output.id}`);
+      },
+    },
+    {
+      id: "media",
+      role: "fill",
+      enabled: true,
+      source: { width: 8, height: 8 },
+      sourceType: "image",
+      state: {},
+    },
+    {
+      id: "disabled-fill",
+      role: "fill",
+      enabled: false,
+      state: {},
+      render() {
+        assert.fail("disabled fill rendered");
+      },
+    },
+    {
+      id: "top",
+      role: "fill",
+      enabled: true,
+      state: {},
+      render(_device, frame) {
+        assert.equal(frame.input, null);
+        calls.push(`render:top->${frame.output.id}`);
+      },
+    },
+    {
+      id: "effect-a",
+      role: "effect",
+      enabled: true,
+      state: {},
+      render(_device, frame) {
+        calls.push(`effect:a:${frame.input.id}->${frame.output.id}`);
+      },
+    },
+    {
+      id: "disabled-effect",
+      role: "effect",
+      enabled: false,
+      state: {},
+      render() {
+        assert.fail("disabled effect rendered");
+      },
+    },
+    {
+      id: "effect-b",
+      role: "effect",
+      enabled: true,
+      state: {},
+      render(_device, frame) {
+        calls.push(`effect:b:${frame.input.id}->${frame.output.id}`);
+      },
+    },
+  ];
+
+  assert.equal(host._presentComposition(), swapchain);
+  assert.deepEqual(calls, [
+    "render:bottom->bottom-fill",
+    "render:top->top-fill",
+    "composite:transparent+media-source->media-fill",
+    "composite:bottom-fill+media-fill->ping-0",
+    "composite:ping-0+top-fill->ping-1",
+    "effect:a:ping-1->effect-0",
+    "effect:b:effect-0->swapchain",
+  ]);
+});
+
+test("source fills upload static images once and dynamic media every present", () => {
+  const host = makeHost();
+  const copies = [];
+  const texture = (width, height) => ({ width, height, format: host.format });
+  host.device = {
+    queue: {
+      copyExternalImageToTexture(source, destination, size) {
+        copies.push({ source, destination, size });
+      },
+    },
+  };
+  host._ensureLayerTexture = (layer, key, width, height) => {
+    layer[key] ||= texture(width, height);
+    return layer[key];
+  };
+  const image = {
+    id: "image",
+    role: "fill",
+    sourceType: "image",
+    source: { width: 320, height: 180 },
+    sourceUploaded: false,
+  };
+  const video = {
+    id: "video",
+    role: "fill",
+    sourceType: "video",
+    source: { videoWidth: 320, videoHeight: 180, readyState: 2 },
+    sourceUploaded: false,
+  };
+
+  host._prepareSourceFill(image, 640, 360);
+  host._prepareSourceFill(image, 640, 360);
+  host._prepareSourceFill(video, 640, 360);
+  host._prepareSourceFill(video, 640, 360);
+
+  assert.equal(copies.length, 3);
+  assert.equal(copies[0].source.source, image.source);
+  assert.equal(copies[1].source.source, video.source);
+  assert.equal(copies[2].source.source, video.source);
+  assert.deepEqual(copies.map((copy) => copy.size), [
+    [320, 180],
+    [320, 180],
+    [320, 180],
+  ]);
+});
+
+test("source fill dimensions seed an otherwise unsized composition", () => {
+  const host = makeHost();
+  host.isFill = false;
+  host.logicalOutputSize = { width: 1, height: 1 };
+  host.compositionLayers = [
+    {
+      id: "image",
+      role: "fill",
+      enabled: true,
+      sourceType: "image",
+      source: { width: 640, height: 360 },
+    },
+  ];
+  let outputSize = null;
+  host._setLogicalOutputSize = (width, height) => {
+    outputSize = { width, height };
+    return true;
+  };
+
+  assert.equal(host._syncOutputSizeForMode(), true);
+  assert.deepEqual(outputSize, { width: 640, height: 360 });
+});
+
+test("composition teardown destroys GPU resources without closing app sources", () => {
+  const host = makeHost();
+  const destroyed = [];
+  const resource = (id) => ({
+    destroy() {
+      destroyed.push(id);
+    },
+  });
+  let sourceCloses = 0;
+  const source = {
+    width: 8,
+    height: 8,
+    close() {
+      sourceCloses += 1;
+    },
+  };
+  const fillTexture = resource("fill");
+  const sourceTexture = resource("source");
+  host.compositionLayers = [
+    {
+      id: "media",
+      role: "fill",
+      source,
+      sourceType: "image",
+      state: {
+        cachedFill: fillTexture,
+        owned: resource("state"),
+      },
+      fillTexture,
+      sourceTexture,
+    },
+  ];
+  host._compositionTextures = [resource("effect")];
+  host._compositorTextures = [resource("ping")];
+  host._compositorTransparentTexture = resource("transparent");
+  host._compositorPipelines.set("rgba8unorm", {});
+  host._compositorSampler = {};
+  host._compositorBindLayout = {};
+
+  host._teardownCompositionResources();
+
+  assert.deepEqual(
+    destroyed.sort(),
+    ["effect", "fill", "ping", "source", "state", "transparent"].sort()
+  );
+  assert.equal(sourceCloses, 0);
+  assert.deepEqual(host._compositionTextures, []);
+  assert.deepEqual(host._compositorTextures, []);
+  assert.equal(host._compositorTransparentTexture, null);
+  assert.equal(host._compositorPipelines.size, 0);
+});
+
+test("dynamic composition source timer redraws while paused and cleans up", () => {
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  let callback = null;
+  let cleared = 0;
+  globalThis.setInterval = (next) => {
+    callback = next;
+    return 73;
+  };
+  globalThis.clearInterval = (id) => {
+    cleared = id;
+  };
+  try {
+    const host = makeHost();
+    host.compositionLayers = [
+      {
+        id: "webcam",
+        role: "fill",
+        enabled: true,
+        source: { videoWidth: 8, videoHeight: 8 },
+        sourceType: "webcam",
+        state: {},
+      },
+    ];
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+
+    host._syncCompositionSourceTimer();
+    assert.equal(host._compositionSourceTimer, 73);
+    callback();
+    assert.equal(redraws, 1);
+
+    host.destroy();
+    assert.equal(cleared, 73);
+    assert.equal(host._compositionSourceTimer, 0);
+  } finally {
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  }
+});
+
 test("waitForPresentedFrame waits for submitted GPU work", async () => {
   const host = makeHost();
   let waited = 0;

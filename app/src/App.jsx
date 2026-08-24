@@ -113,9 +113,10 @@ import {
 } from "./lib/draftStorage.js";
 import { writeInputSource as persistInputSource } from "./lib/inputSourceStorage.js";
 import {
-  persistableEffectFill,
+  persistableEffectFills,
   readEffectFill,
-  rememberEffectFill,
+  readEffectFills,
+  rememberEffectFills,
 } from "./lib/effectFillStorage.js";
 import {
   blobToDataUrl,
@@ -196,6 +197,7 @@ import {
   listAllFigmaShaders,
 } from "./services/figmaShaders.js";
 import { useFigMenuChange } from "./hooks/useFigMenuChange.js";
+import { useOverflowFade } from "./hooks/useOverflowFade.js";
 import { usePanelLayout } from "./hooks/usePanelLayout.js";
 import { useShaderPersistence } from "./hooks/useShaderPersistence.js";
 import { useShaderRuntime } from "./hooks/useShaderRuntime.js";
@@ -268,16 +270,58 @@ const FIGMA_SHADER_CATEGORIES = [
 ];
 const EFFECT_PREVIEW_LAYER_ID = "effect-preview";
 
-function effectFillPreviewKey(fill) {
-  return fill?.type === "shader" && fill.shaderId
-    ? `${fill.shaderId}:${fill.enabled !== false}`
-    : "";
+function effectFillPreviewKey(fills) {
+  const normalized = normalizeComposition(
+    Array.isArray(fills) ? { fills } : { fill: fills }
+  );
+  return normalized.fills
+    .map((fill) =>
+      fill.type === "shader" && fill.shaderId
+        ? `${fill.id}:${fill.shaderId}:${fill.enabled !== false}`
+        : `${fill.id}:${fill.type}:${fill.enabled !== false}`
+    )
+    .join("|");
 }
 
-function usesCompositionHost(sessionKind, fill) {
-  return (
-    sessionKind === COMPOSITION_KIND || Boolean(effectFillPreviewKey(fill))
-  );
+function usesCompositionHost(sessionKind, fills) {
+  if (sessionKind === COMPOSITION_KIND) return true;
+  // Only effect sessions layer their fills through the composition host. A
+  // standalone shader fill is the whole output, so it runs as a plain module.
+  return sessionKind === "effect" && Boolean(effectFillPreviewKey(fills));
+}
+
+function fillMediaUrl(fill) {
+  return fill?.paint?.image?.url || fill?.paint?.video?.url || "";
+}
+
+function fillMediaEntries(fills = []) {
+  return fills
+    .map((fill) => ({ fill, url: fillMediaUrl(fill) }))
+    .filter(({ url }) => typeof url === "string" && url.startsWith("blob:"));
+}
+
+function withFillAssetPath(fill, assetPath) {
+  const paint = fill?.paint;
+  if (!paint || !assetPath) return fill;
+  if (paint.type === "video") {
+    return {
+      ...fill,
+      paint: {
+        ...paint,
+        video: { ...(paint.video || {}), assetPath },
+      },
+    };
+  }
+  if (paint.type === "image") {
+    return {
+      ...fill,
+      paint: {
+        ...paint,
+        image: { ...(paint.image || {}), assetPath },
+      },
+    };
+  }
+  return fill;
 }
 
 function createHiddenVideoElement() {
@@ -405,11 +449,13 @@ function groupLibraryCards(cards) {
 
 function compositionWithLayerValues(graph, layerId, values) {
   const normalized = normalizeComposition(graph);
-  if (layerId === COMPOSITION_FILL_ID) {
-    return {
+  if (normalized.fills.some((fill) => fill.id === layerId)) {
+    return normalizeComposition({
       ...normalized,
-      fill: { ...normalized.fill, values: values || {} },
-    };
+      fills: normalized.fills.map((fill) =>
+        fill.id === layerId ? { ...fill, values: values || {} } : fill
+      ),
+    });
   }
   return {
     ...normalized,
@@ -488,6 +534,14 @@ export default function App() {
   const [effectFill, setEffectFill] = useState(
     () => readEffectFill(INITIAL.id) || fillFromInputSource("image")
   );
+  const [effectFills, setEffectFills] = useState(() => {
+    const stored = readEffectFills(INITIAL.id);
+    return stored.length
+      ? stored
+      : normalizeComposition({
+          fill: readEffectFill(INITIAL.id) || fillFromInputSource("image"),
+        }).fills;
+  });
   const [inputImageUrl, setInputImageUrl] = useState(defaultInputUrl);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
@@ -693,6 +747,7 @@ export default function App() {
   const figmaImportChooserRef = useRef(null);
   const figmaImportKindRef = useRef(null);
   const propertiesPanelRef = useRef(null);
+  const propertiesPanelContentFadeRef = useOverflowFade();
   const visualizerRef = useRef(null);
   const lastSuccessfulCompileRef = useRef({
     presetId: INITIAL.id,
@@ -703,6 +758,7 @@ export default function App() {
   const sourceRef = useRef(source);
   const compositionRef = useRef(composition);
   const effectFillRef = useRef(effectFill);
+  const effectFillsRef = useRef(effectFills);
   const effectFillByPresetRef = useRef(new Map());
   const sessionInputAppliedRef = useRef("");
   const inputImageUrlRef = useRef(defaultInputUrl);
@@ -728,6 +784,7 @@ export default function App() {
   const previewParamsRafRef = useRef(0);
   const paintFillRafRef = useRef(0);
   const applyPaintFillRef = useRef(null);
+  const compositionMediaSourcesRef = useRef([]);
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
   const cloudWriteBackoffUntilRef = useRef(0);
@@ -745,12 +802,14 @@ export default function App() {
     pendingMedia,
     kind: sessionKind,
     composition,
+    effectFills,
     ...activeFigmaLink,
   });
 
   sourceRef.current = source;
   compositionRef.current = composition;
   effectFillRef.current = effectFill;
+  effectFillsRef.current = effectFills;
   sessionKindRef.current = sessionKind;
   propsRef.current = props;
   valuesRef.current = values;
@@ -763,6 +822,7 @@ export default function App() {
     pendingMedia,
     kind: sessionKind,
     composition,
+    effectFills,
     ...activeFigmaLink,
   };
   const kind = useMemo(
@@ -772,6 +832,13 @@ export default function App() {
         : detectKind(source),
     [sessionKind, source]
   );
+  const propertiesPanelTitle =
+    sessionKind === COMPOSITION_KIND
+      ? "Composition"
+      : sessionKind === "fill"
+        ? "Shader fill"
+        : "Shader effect";
+  const isShaderFillPanel = sessionKind === "fill";
   const isComposerView = routeKind === COMPOSITION_KIND;
   useEffect(() => {
     if (presetId && kind !== COMPOSITION_KIND) {
@@ -833,9 +900,29 @@ export default function App() {
     });
   }, [inputSource, kind]);
   useEffect(() => {
+    if (sessionKind !== "effect" || !effectFill) return;
+    setEffectFills((current) => {
+      const normalized = normalizeComposition({ fills: current });
+      const first = normalized.fills[0];
+      if (
+        first &&
+        JSON.stringify({ ...first, id: undefined }) ===
+          JSON.stringify({ ...effectFill, id: undefined })
+      ) {
+        return current;
+      }
+      return normalizeComposition({
+        fills: [
+          { ...effectFill, id: first?.id || effectFill.id || COMPOSITION_FILL_ID },
+          ...normalized.fills.slice(1),
+        ],
+      }).fills;
+    });
+  }, [effectFill, sessionKind]);
+  useEffect(() => {
     if (sessionKind !== "effect" || !presetId) return;
-    rememberEffectFill(effectFillByPresetRef.current, presetId, effectFill);
-  }, [effectFill, presetId, sessionKind]);
+    rememberEffectFills(effectFillByPresetRef.current, presetId, effectFills);
+  }, [effectFills, presetId, sessionKind]);
   const resolvedByKey = useMemo(
     () => new Map(Object.entries(resolvedShaders)),
     [resolvedShaders]
@@ -1016,8 +1103,8 @@ export default function App() {
           JSON.stringify(existing.values || {}) === JSON.stringify(values) &&
           JSON.stringify(existing.composition || null) ===
             JSON.stringify(composition) &&
-          JSON.stringify(existing.effectFill || null) ===
-            JSON.stringify(effectFill)
+          JSON.stringify(existing.effectFills || null) ===
+            JSON.stringify(effectFills)
         ) {
           return current;
         }
@@ -1031,9 +1118,10 @@ export default function App() {
                 values,
                 composition:
                   sessionKind === "effect"
-                    ? { effectFill }
+                    ? { effectFills, effectFill: effectFills[0] || null }
                     : composition,
-                effectFill,
+                effectFills,
+                effectFill: effectFills[0] || null,
                 isPublic,
                 pendingMedia,
               }
@@ -1045,6 +1133,7 @@ export default function App() {
   }, [
     composition,
     effectFill,
+    effectFills,
     isPublic,
     pendingMedia,
     presetId,
@@ -1069,7 +1158,14 @@ export default function App() {
                   source: session.source,
                   kind: session.kind,
                   values: session.values,
-                  composition: session.composition,
+                  composition:
+                    session.kind === "effect"
+                      ? {
+                          effectFills: session.effectFills || [],
+                          effectFill: session.effectFills?.[0] || null,
+                        }
+                      : session.composition,
+                  effectFills: session.effectFills,
                   isPublic: session.isPublic,
                   pendingMedia: null,
                 }
@@ -1082,7 +1178,14 @@ export default function App() {
               kind: session.kind || detectKind(session.source),
               source: session.source,
               values: session.values,
-              composition: session.composition,
+              composition:
+                session.kind === "effect"
+                  ? {
+                      effectFills: session.effectFills || [],
+                      effectFill: session.effectFills?.[0] || null,
+                    }
+                  : session.composition,
+              effectFills: session.effectFills,
               isPublic: session.isPublic,
               pendingMedia: null,
               thumbnail: null,
@@ -1285,7 +1388,7 @@ export default function App() {
   const setRuntimeValues = useCallback((next) => {
     valuesRef.current = next;
     setValues(next);
-    if (usesCompositionHost(sessionKindRef.current, effectFillRef.current)) {
+    if (usesCompositionHost(sessionKindRef.current, effectFillsRef.current)) {
       hostRef.current?.setCompositionLayerParams?.(
         selectedLayerIdRef.current,
         next
@@ -1480,6 +1583,13 @@ export default function App() {
       if (compileGeneration !== compileGenerationRef.current) return;
       const map = new Map(Object.entries(resolved));
       const layers = [];
+      for (const source of compositionMediaSourcesRef.current) {
+        source.pause?.();
+        if ("srcObject" in source) source.srcObject = null;
+        source.close?.();
+        source.remove?.();
+      }
+      compositionMediaSourcesRef.current = [];
       const loadLayer = (id, role, shaderId, values, enabled = true) => {
         const source = resolveReferencedShaderSource(shaderId, {
           session: draftSessionRef.current,
@@ -1510,14 +1620,109 @@ export default function App() {
           ]);
         }
       };
-      if (graph.fill.type === "shader" && graph.fill.shaderId) {
-        loadLayer(
-          COMPOSITION_FILL_ID,
-          "fill",
-          graph.fill.shaderId,
-          graph.fill.values,
-          graph.fill.enabled
-        );
+      for (const fill of graph.fills.slice().reverse()) {
+        if (!fill.enabled) continue;
+        if (fill.type === "shader" && fill.shaderId) {
+          loadLayer(
+            fill.id,
+            "fill",
+            fill.shaderId,
+            fill.values,
+            true
+          );
+          continue;
+        }
+        if (!isPaintFillType(fill.paint?.type)) continue;
+        try {
+          if (fill.paint.type === "video") {
+            const assetUrl =
+              !fill.paint.video?.url && fill.paint.video?.assetPath
+                ? await getAssetUrl(fill.paint.video.assetPath)
+                : "";
+            const resolvedPaint = resolvePaintFill(
+              assetUrl
+                ? {
+                    ...fill.paint,
+                    video: { ...fill.paint.video, url: assetUrl },
+                  }
+                : fill.paint,
+              {
+              defaultVideoUrl,
+              }
+            );
+            const video = createHiddenVideoElement();
+            video.src = resolvedPaint.video?.url || defaultVideoUrl;
+            await waitForVideoFrame(video, "Could not load video fill.");
+            if (compileGeneration !== compileGenerationRef.current) {
+              video.remove();
+              return;
+            }
+            compositionMediaSourcesRef.current.push(video);
+            layers.push({
+              id: fill.id,
+              role: "fill",
+              enabled: true,
+              source: video,
+              sourceType: "video",
+              props: {},
+              params: {},
+            });
+            continue;
+          }
+          if (fill.paint.type === "webcam" && fill.paint.webcam?.live !== false) {
+            const stream = readFillWebcamStream();
+            if (stream) {
+              const video = createHiddenVideoElement();
+              video.srcObject = stream;
+              await waitForVideoFrame(video, "Could not load webcam fill.");
+              if (compileGeneration !== compileGenerationRef.current) {
+                video.srcObject = null;
+                video.remove();
+                return;
+              }
+              compositionMediaSourcesRef.current.push(video);
+              layers.push({
+                id: fill.id,
+                role: "fill",
+                enabled: true,
+                source: video,
+                sourceType: "webcam",
+                props: {},
+                params: {},
+              });
+              continue;
+            }
+          }
+          const { width, height } = paintSize(host);
+          const assetPath = fill.paint.image?.assetPath;
+          const assetUrl =
+            !fill.paint.image?.url && assetPath
+              ? await getAssetUrl(assetPath)
+              : "";
+          const paint = assetUrl
+            ? {
+                ...fill.paint,
+                image: { ...fill.paint.image, url: assetUrl },
+              }
+            : fill.paint;
+          const bitmap = await rasterizePaintFill(paint, width, height);
+          if (compileGeneration !== compileGenerationRef.current) {
+            bitmap.close?.();
+            return;
+          }
+          compositionMediaSourcesRef.current.push(bitmap);
+          layers.push({
+            id: fill.id,
+            role: "fill",
+            enabled: true,
+            source: bitmap,
+            sourceType: "image",
+            props: {},
+            params: {},
+          });
+        } catch (paintError) {
+          setError(paintError.message || String(paintError));
+        }
       }
       for (const effect of graph.effects) {
         loadLayer(
@@ -1530,7 +1735,7 @@ export default function App() {
       }
       const features = collectCompositionFeatures(graph, map);
       const ok = await host.setComposition(layers, {
-        isFill: graph.fill.type === "shader",
+        isFill: layers.some((layer) => layer.role === "fill"),
         isAnimated: features.isAnimated,
         usesMouse: features.usesMouse,
         supportsRenderScale: false,
@@ -1546,7 +1751,9 @@ export default function App() {
         return;
       }
       const selected =
-        layers.find((layer) => layer.id === selectedLayerIdRef.current) ||
+        (sessionKindRef.current === "effect"
+          ? layers.find((layer) => layer.id === EFFECT_PREVIEW_LAYER_ID)
+          : layers.find((layer) => layer.id === selectedLayerIdRef.current)) ||
         layers[0] ||
         null;
       if (selected) {
@@ -1567,8 +1774,6 @@ export default function App() {
         host.stop();
         setRunning(false);
       }
-      const paint = compositionPaintFill(graph);
-      if (paint) applyPaintFillRef.current?.(paint);
     },
     [drafts, hydrateCompositionRefs, rememberResolved, setRuntimeValues]
   );
@@ -1580,7 +1785,7 @@ export default function App() {
         compileCompositionRef.current?.();
         return;
       }
-      const fillKey = effectFillPreviewKey(effectFillRef.current);
+      const fillKey = effectFillPreviewKey(effectFillsRef.current);
       if (sessionKindRef.current === "effect" && fillKey) {
         if (
           lastSuccessfulCompileRef.current.presetId ===
@@ -1598,7 +1803,7 @@ export default function App() {
           effectFillKey: fillKey,
         };
         compileCompositionRef.current?.({
-          fill: effectFillRef.current,
+          fills: effectFillsRef.current,
           effects: [
             {
               id: EFFECT_PREVIEW_LAYER_ID,
@@ -2277,6 +2482,12 @@ export default function App() {
     );
   }, [applyInputSource, runtimeReady]);
 
+  // A remounted host starts visible, so re-apply the toggle the panel shows.
+  useEffect(() => {
+    if (!runtimeReady) return;
+    hostRef.current?.setEffectVisible?.(effectVisible);
+  }, [effectVisible, runtimeReady]);
+
   // Bind HTML-in-Canvas input after the canvas child mounts.
   useEffect(() => {
     if (inputSource !== "html" || !runtimeReady) return;
@@ -2410,6 +2621,9 @@ export default function App() {
     composition && sessionKind === COMPOSITION_KIND
       ? compositionStructureKey(composition)
       : "",
+    sessionKind === "effect"
+      ? compositionStructureKey({ fills: effectFills, effects: [] })
+      : "",
     sessionKind === COMPOSITION_KIND ? liveShaderRevision : 0,
     presetId,
     runtimeReady,
@@ -2418,6 +2632,13 @@ export default function App() {
   useEffect(
     () => () => {
       window.clearTimeout(thumbnailPreviewTimerRef.current);
+      for (const source of compositionMediaSourcesRef.current) {
+        source.pause?.();
+        if ("srcObject" in source) source.srcObject = null;
+        source.close?.();
+        source.remove?.();
+      }
+      compositionMediaSourcesRef.current = [];
       clearObjectUrl();
     },
     [clearObjectUrl]
@@ -2527,9 +2748,13 @@ export default function App() {
               values: session.values,
               composition:
                 session.kind === "effect"
-                  ? { effectFill: effectFillRef.current }
+                  ? {
+                      effectFills: effectFillsRef.current,
+                      effectFill: effectFillsRef.current[0] || null,
+                    }
                   : session.composition,
-              effectFill: effectFillRef.current,
+              effectFills: effectFillsRef.current,
+              effectFill: effectFillsRef.current[0] || null,
               isPublic: session.isPublic,
               pendingMedia: session.pendingMedia,
             }
@@ -2583,9 +2808,11 @@ export default function App() {
     loadMediaForShader,
     reapplyPreferredInput,
     effectPaintRef: effectFillRef,
+    effectFillsRef,
     effectFillStoreRef: effectFillByPresetRef,
     sessionRef: draftSessionRef,
     setEffectFill,
+    setEffectFills,
     inputApplyGenRef,
     sessionInputAppliedRef,
   });
@@ -3357,7 +3584,7 @@ export default function App() {
     previewParamsRafRef.current = requestAnimationFrame(() => {
       previewParamsRafRef.current = 0;
       const next = valuesRef.current;
-      if (usesCompositionHost(sessionKindRef.current, effectFillRef.current)) {
+      if (usesCompositionHost(sessionKindRef.current, effectFillsRef.current)) {
         hostRef.current?.setCompositionLayerParams?.(
           selectedLayerIdRef.current,
           next
@@ -3767,7 +3994,13 @@ export default function App() {
         shaderId &&
         background &&
         !checkpointKind &&
-        (shaderSaveQueue.isBusyAny() || pendingMedia)
+        (shaderSaveQueue.isBusyAny() ||
+          pendingMedia ||
+          fillMediaEntries(
+            sessionKindRef.current === COMPOSITION_KIND
+              ? normalizeComposition(compositionRef.current).fills
+              : effectFillsRef.current
+          ).length > 0)
       ) {
         return currentShader ?? null;
       }
@@ -3831,6 +4064,15 @@ export default function App() {
             );
           }
         }
+        const liveFills = isComposition
+          ? graph.fills
+          : sessionKindRef.current === "effect"
+            ? effectFillsRef.current
+            : [];
+        const persistedFills = persistableEffectFills(liveFills);
+        const graphForSave = isComposition
+          ? normalizeComposition({ ...graph, fills: persistedFills })
+          : null;
         const payload = {
           owner_id: user.id,
           name: shaderName.trim() || "Untitled Shader",
@@ -3844,9 +4086,12 @@ export default function App() {
               )
             : inferFeatures(saveSource),
           composition: isComposition
-            ? graph
+            ? graphForSave
             : sessionKindRef.current === "effect"
-              ? { effectFill: persistableEffectFill(effectFillRef.current) }
+              ? {
+                  effectFills: persistedFills,
+                  effectFill: persistedFills[0] || null,
+                }
               : {},
           is_public: publicFlag,
           ...figmaShaderLink(currentShader || draftLink),
@@ -3920,9 +4165,87 @@ export default function App() {
         await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
 
         const assetChanges = {};
+        const stackedMedia = background ? [] : fillMediaEntries(liveFills);
+        let durableFills = persistedFills;
+        if (stackedMedia.length) {
+          for (const { fill, url } of stackedMedia) {
+            const file = await fileFromBlobUrl(url);
+            if (!file) continue;
+            if (file.size > MAX_MEDIA_BYTES) {
+              throw new Error("Input media must be 25 MB or smaller.");
+            }
+            const contentType = mediaType(file);
+            const roleId = String(fill.id || "fill").replace(
+              /[^a-zA-Z0-9_-]/g,
+              "-"
+            );
+            const assetPath = await uploadAsset({
+              ownerId: user.id,
+              shaderId: saved.id,
+              role: `fill-${roleId}`,
+              blob: file,
+              fileName: file.name,
+              contentType,
+            });
+            durableFills = durableFills.map((item) =>
+              item.id === fill.id ? withFillAssetPath(item, assetPath) : item
+            );
+            if (!assetChanges.input_path) {
+              assetChanges.input_path = assetPath;
+              assetChanges.input_name = file.name;
+              assetChanges.input_mime_type = contentType;
+            }
+          }
+          const durableComposition = isComposition
+            ? normalizeComposition({ ...graph, fills: durableFills })
+            : {
+                effectFills: durableFills,
+                effectFill: durableFills[0] || null,
+              };
+          saved = await saveShaderState({
+            shaderId: saved.id,
+            expectedStateRevision: saved.state_revision,
+            source: payload.source,
+            kind: payload.kind,
+            parameterValues: payload.parameter_values,
+            features: payload.features,
+            composition: durableComposition,
+            checkpointKind: null,
+            summary: null,
+          });
+          if (isComposition) {
+            const localGraph = normalizeComposition({
+              ...graph,
+              fills: liveFills.map((fill) => {
+                const durable = durableFills.find((item) => item.id === fill.id);
+                const assetPath =
+                  durable?.paint?.image?.assetPath ||
+                  durable?.paint?.video?.assetPath;
+                return withFillAssetPath(fill, assetPath);
+              }),
+            });
+            compositionRef.current = localGraph;
+            setComposition(localGraph);
+          } else if (sessionKindRef.current === "effect") {
+            const localFills = liveFills.map((fill) => {
+              const durable = durableFills.find((item) => item.id === fill.id);
+              const assetPath =
+                durable?.paint?.image?.assetPath ||
+                durable?.paint?.video?.assetPath;
+              return withFillAssetPath(fill, assetPath);
+            });
+            effectFillsRef.current = localFills;
+            setEffectFills(localFills);
+            effectFillRef.current = localFills[0] || null;
+            setEffectFill(localFills[0] || fillFromInputSource("image"));
+          }
+        }
         let mediaToUpload = background ? null : pendingMedia;
+        if (stackedMedia.length) mediaToUpload = null;
         if (!mediaToUpload && !background && sessionKindRef.current === "effect") {
-          const paint = effectFillRef.current?.paint;
+          const paint = effectFillsRef.current.find((fill) =>
+            isPaintFillType(fill.paint?.type)
+          )?.paint;
           const url = paint?.image?.url || paint?.video?.url || "";
           mediaToUpload = await fileFromBlobUrl(url);
         }
@@ -5060,13 +5383,9 @@ export default function App() {
       const graph = normalizeComposition(next);
       compositionRef.current = graph;
       setComposition(graph);
-      if (graph.fill.type === "shader") {
-        clearObjectUrl();
-        hostRef.current?.clearInput();
-      }
       setDirty(true);
     },
-    [clearObjectUrl, protectedPreview]
+    [protectedPreview]
   );
 
   const onCompositionSelectLayer = useCallback((layerId) => {
@@ -5091,9 +5410,8 @@ export default function App() {
     try {
       const loaded = loadModule(source);
       const values =
-        layerId === COMPOSITION_FILL_ID
-          ? graph.fill.values
-          : graph.effects.find((effect) => effect.id === layerId)?.values;
+        graph.fills.find((fill) => fill.id === layerId)?.values ??
+        graph.effects.find((effect) => effect.id === layerId)?.values;
       const next = mergeValues(loaded.props, values);
       valuesRef.current = next;
       setProps(loaded.props);
@@ -5243,17 +5561,69 @@ export default function App() {
     }
   }, [figmaImportCards, figmaImportCheckedKeys, openFigmaShader]);
 
+  const renderPropertyHeaderActions = (noun) => {
+    const visibilityLabel = effectVisible ? `Hide ${noun}` : `Show ${noun}`;
+    return (
+      <hstack
+        style={{
+          marginLeft: "auto",
+          "--hstack-gap": "var(--spacer-1)",
+        }}
+      >
+        <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
+          <fig-tooltip text="More">
+            <fig-button
+              fig-menu-trigger=""
+              type="button"
+              variant="ghost"
+              icon="true"
+              aria-label={`More ${noun} property actions`}
+            >
+              <fig-icon name="more" />
+            </fig-button>
+          </fig-tooltip>
+          <fig-menu-item value="reset">Reset to default</fig-menu-item>
+          <fig-menu-item
+            value="save-defaults"
+            disabled={protectedPreview ? "" : undefined}
+          >
+            Save as default
+          </fig-menu-item>
+        </fig-menu>
+        <fig-tooltip text={visibilityLabel}>
+          <fig-button
+            type="button"
+            variant="ghost"
+            icon="true"
+            aria-label={visibilityLabel}
+            onClick={() => {
+              hostRef.current?.setActive(true);
+              setEffectVisible((visible) => !visible);
+            }}
+          >
+            <fig-icon name={effectVisible ? "visible" : "hidden"} />
+          </fig-button>
+        </fig-tooltip>
+      </hstack>
+    );
+  };
+
   const propertiesPanel = (
     <aside
       ref={propertiesPanelRef}
       className="shader-properties-panel"
-      aria-label="Properties"
+      aria-label={propertiesPanelTitle}
     >
       <fig-header>
-        <h3>Properties</h3>
+        <h2>{propertiesPanelTitle}</h2>
+        {isShaderFillPanel ? renderPropertyHeaderActions("fill") : null}
       </fig-header>
 
-      <fig-content class="shader-properties-panel-content" padding="none">
+      <fig-content
+        ref={propertiesPanelContentFadeRef}
+        class="shader-properties-panel-content"
+        padding="none"
+      >
           {isComposerView ? (
             <>
               <CompositionEditor
@@ -5283,14 +5653,29 @@ export default function App() {
                 onResetLayer={resetProperties}
                 onExport={() => openExportDialog(exportTab)}
                 exportDisabled={Boolean(videoExportProgress)}
-                onFill={applyPaintFill}
-                onFillValuesPreview={(nextValues) => {
+                onFill={(paint, fillId) => {
+                  const graph = normalizeComposition(compositionRef.current);
+                  compileCompositionRef.current?.({
+                    ...graph,
+                    fills: graph.fills.map((fill) =>
+                      fill.id === fillId
+                        ? {
+                            ...fill,
+                            type: graphTypeForPaint(paint.type),
+                            shaderId: null,
+                            paint,
+                          }
+                        : fill
+                    ),
+                  });
+                }}
+                onFillValuesPreview={(nextValues, fillId) => {
                   hostRef.current?.setActive(true);
                   hostRef.current?.setCompositionLayerParams?.(
-                    COMPOSITION_FILL_ID,
+                    fillId || COMPOSITION_FILL_ID,
                     nextValues
                   );
-                  if (selectedLayerIdRef.current === COMPOSITION_FILL_ID) {
+                  if (selectedLayerIdRef.current === fillId) {
                     valuesRef.current = nextValues;
                   }
                 }}
@@ -5324,84 +5709,109 @@ export default function App() {
               <CompositionEditor
                 key={presetId}
                 fillOnly
-                graph={{ fill: effectFill, effects: [] }}
+                graph={{ fills: effectFills, effects: [] }}
                 imageUrl={inputImageUrl}
                 resolvedByKey={resolvedByKey}
                 fillCards={compositionFillCards}
                 nameCards={compositionNameCards}
                 readOnly={protectedPreview}
-                onChange={(next) => {
-                  const fill = normalizeComposition(next).fill;
-                  const previousKey = effectFillPreviewKey(
-                    effectFillRef.current
+                onOpenShader={openHomeChoice}
+                onResetLayer={(fillId) => {
+                  const graph = normalizeComposition({
+                    fills: effectFillsRef.current,
+                    effects: [],
+                  });
+                  const fill = graph.fills.find((item) => item.id === fillId);
+                  const sourceText = resolveReferencedShaderSource(
+                    fill?.shaderId,
+                    {
+                      session: draftSessionRef.current,
+                      drafts,
+                      liveByKey: liveShaderSourceRef.current,
+                      resolvedByKey,
+                    }
                   );
-                  setEffectFill(fill);
-                  effectFillRef.current = fill;
-                  setDirty(true);
-                  if (fill.type === "shader") {
-                    clearObjectUrl();
-                    hostRef.current?.clearInput();
+                  if (!sourceText) return;
+                  try {
+                    const loaded = loadModule(sourceText);
+                    const nextValues = buildDefaults(loaded.props);
+                    const fills = graph.fills.map((item) =>
+                      item.id === fillId
+                        ? { ...item, values: nextValues }
+                        : item
+                    );
+                    effectFillsRef.current = fills;
+                    setEffectFills(fills);
+                    effectFillRef.current = fills[0] || null;
+                    setEffectFill(
+                      fills[0] || fillFromInputSource("image")
+                    );
+                    hostRef.current?.setCompositionLayerParams?.(
+                      fillId,
+                      nextValues
+                    );
+                    setDirty(true);
+                  } catch (resetError) {
+                    setError(resetError.message || String(resetError));
                   }
-                  if (previousKey || effectFillPreviewKey(fill)) {
+                }}
+                onChange={(next) => {
+                  const fills = normalizeComposition(next).fills;
+                  const previousKey = effectFillPreviewKey(
+                    effectFillsRef.current
+                  );
+                  setEffectFills(fills);
+                  effectFillsRef.current = fills;
+                  setEffectFill(fills[0] || fillFromInputSource("image"));
+                  effectFillRef.current =
+                    fills[0] || fillFromInputSource("image");
+                  setDirty(true);
+                  if (previousKey || effectFillPreviewKey(fills)) {
                     compile(source);
                   }
                 }}
-                onFill={applyPaintFill}
+                onFill={(paint, fillId) => {
+                  const graph = normalizeComposition({
+                    fills: effectFillsRef.current,
+                    effects: [
+                      {
+                        id: EFFECT_PREVIEW_LAYER_ID,
+                        shaderId: draftSessionRef.current.presetId,
+                        values: valuesRef.current,
+                        enabled: true,
+                      },
+                    ],
+                  });
+                  compileCompositionRef.current?.({
+                    ...graph,
+                    fills: graph.fills.map((fill) =>
+                      fill.id === fillId
+                        ? {
+                            ...fill,
+                            type: graphTypeForPaint(paint.type),
+                            shaderId: null,
+                            paint,
+                          }
+                        : fill
+                    ),
+                  });
+                }}
+                onFillValuesPreview={(nextValues, fillId) => {
+                  hostRef.current?.setActive(true);
+                  hostRef.current?.setCompositionLayerParams?.(
+                    fillId || COMPOSITION_FILL_ID,
+                    nextValues
+                  );
+                }}
               />
             )}
             <div className="properties-pane">
-              <fig-header borderless="">
-                <h3>{kind === "fill" ? "Shader fill" : "Effect properties"}</h3>
-                <hstack>
-                  <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
-                    <fig-tooltip text="More">
-                      <fig-button
-                        fig-menu-trigger=""
-                        type="button"
-                        variant="ghost"
-                        icon="true"
-                        aria-label="More property actions"
-                      >
-                        <fig-icon name="more" />
-                      </fig-button>
-                    </fig-tooltip>
-                    <fig-menu-item value="reset">
-                      Reset to default
-                    </fig-menu-item>
-                    <fig-menu-item
-                      value="save-defaults"
-                      disabled={protectedPreview ? "" : undefined}
-                    >
-                      Save as default
-                    </fig-menu-item>
-                  </fig-menu>
-                  <fig-tooltip
-                    text={effectVisible ? "Hide effect" : "Show effect"}
-                  >
-                    <fig-button
-                      type="toggle"
-                      variant="ghost"
-                      icon="true"
-                      selected={effectVisible}
-                      aria-label={
-                        effectVisible ? "Hide effect" : "Show effect"
-                      }
-                      onClick={() => {
-                        setEffectVisible((visible) => {
-                          const next = !visible;
-                          hostRef.current?.setActive(true);
-                          hostRef.current?.setEffectVisible?.(next);
-                          return next;
-                        });
-                      }}
-                    >
-                      <fig-icon
-                        name={effectVisible ? "visible" : "hidden"}
-                      />
-                    </fig-button>
-                  </fig-tooltip>
-                </hstack>
-              </fig-header>
+              {sessionKind === "effect" && (
+                <fig-header borderless="">
+                  <h3>Effect properties</h3>
+                  {renderPropertyHeaderActions("effect")}
+                </fig-header>
+              )}
               <Suspense fallback={null}>
                 <Controls
                   props={props}
@@ -5702,7 +6112,7 @@ export default function App() {
             )}
             {isComposerView &&
               mediaFillType(composition?.fill?.type) && (
-                <fig-tooltip text="Upload input">
+                <fig-tooltip text="Upload fill">
                   <fig-button
                     variant="ghost"
                     icon="true"

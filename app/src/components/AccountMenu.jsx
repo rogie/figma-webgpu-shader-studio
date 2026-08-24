@@ -510,7 +510,7 @@ export default function AccountMenu({
           </fig-group>
 
           {user && (
-            <fig-group name="User details">
+            <fig-group name="User details" collapsible="" open="">
               <fig-field direction="horizontal">
                 <label>Display name</label>
                 <fig-input-text

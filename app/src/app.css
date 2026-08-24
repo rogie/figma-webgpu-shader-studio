@@ -979,6 +979,7 @@ dialog.delete-shader-dialog {
 
   > fig-header {
     flex: 0 0 auto;
+    padding-right: var(--spacer-2);
   }
 
   fig-content.shader-properties-panel-content {
@@ -999,6 +1000,10 @@ dialog.delete-shader-dialog {
     fig-header {
       padding-right: var(--spacer-2);
     }
+  }
+
+  .properties-pane:not(:has(> fig-header)) {
+    padding-top: var(--spacer-3);
   }
 
   .properties-pane:has(> fig-header:only-child) {

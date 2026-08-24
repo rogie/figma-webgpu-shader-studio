@@ -3,6 +3,7 @@ import { isPaintFillType } from "./paintFill.js";
 
 export const COMPOSITION_KIND = "composition";
 export const COMPOSITION_FILL_ID = "fill";
+export const MAX_COMPOSITION_FILLS = 8;
 export const MAX_COMPOSITION_EFFECTS = 8;
 export const FILL_TYPES = ["shader", "image", "video", "html"];
 
@@ -19,6 +20,7 @@ export function libraryKind(kind) {
 export function hasCompositionGraph(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   return (
+    Array.isArray(value.fills) ||
     Object.prototype.hasOwnProperty.call(value, "fill") ||
     Array.isArray(value.effects)
   );
@@ -35,12 +37,26 @@ export function resolvedLibraryKind(shader) {
 }
 
 export function emptyFill() {
-  return { type: "none", shaderId: null, values: {}, enabled: true };
+  return {
+    id: crypto.randomUUID(),
+    type: "none",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  };
 }
 
 export function emptyComposition() {
+  const fill = {
+    id: COMPOSITION_FILL_ID,
+    type: "image",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  };
   return {
-    fill: { type: "image", shaderId: null, values: {}, enabled: true },
+    fills: [fill],
+    fill,
     effects: [],
   };
 }
@@ -123,7 +139,7 @@ export function readReferencedShader(
   return null;
 }
 
-function normalizeFill(fill) {
+function normalizeFill(fill, fallbackId = null) {
   const type =
     fill?.type === "none"
       ? "none"
@@ -143,12 +159,32 @@ function normalizeFill(fill) {
       ? fill.paint
       : null;
   return {
+    id:
+      typeof fill?.id === "string" && fill.id
+        ? fill.id
+        : fallbackId || crypto.randomUUID(),
     type,
     shaderId: parsed?.key ?? null,
     values,
     enabled: fill?.enabled !== false,
     ...(type !== "shader" && paint ? { paint } : {}),
   };
+}
+
+function normalizeFills(fills, fallbackId = null) {
+  const seen = new Set();
+  return (fills || []).slice(0, MAX_COMPOSITION_FILLS).map((fill, index) => {
+    let normalized = normalizeFill(fill, index === 0 ? fallbackId : null);
+    while (seen.has(normalized.id)) {
+      normalized = { ...normalized, id: crypto.randomUUID() };
+    }
+    seen.add(normalized.id);
+    return normalized;
+  });
+}
+
+function withFillAlias(graph, fills) {
+  return { ...graph, fills, fill: fills[0] };
 }
 
 export function firstFillShaderKey(cards = []) {
@@ -184,13 +220,42 @@ function normalizeEffect(effect) {
 
 export function normalizeComposition(value) {
   const graph = value && typeof value === "object" ? value : {};
+  const hasExplicitFills = Array.isArray(graph.fills);
+  const hasLegacyFill = Object.prototype.hasOwnProperty.call(graph, "fill");
+  const fills = hasExplicitFills
+    ? normalizeFills(graph.fills)
+    : hasLegacyFill
+      ? normalizeFills([graph.fill], COMPOSITION_FILL_ID)
+      : normalizeFills(emptyComposition().fills);
   const effects = Array.isArray(graph.effects)
     ? graph.effects.map(normalizeEffect).filter((effect) => effect.shaderId)
     : [];
-  return {
-    fill: normalizeFill(graph.fill),
-    effects: effects.slice(0, MAX_COMPOSITION_EFFECTS),
-  };
+  return withFillAlias(
+    {
+      effects: effects.slice(0, MAX_COMPOSITION_EFFECTS),
+    },
+    fills
+  );
+}
+
+export function reorderCompositionFills(graph, oldIndex, newIndex) {
+  const normalized = normalizeComposition(graph);
+  const count = normalized.fills.length;
+  if (
+    !Number.isInteger(oldIndex) ||
+    !Number.isInteger(newIndex) ||
+    oldIndex === newIndex ||
+    oldIndex < 0 ||
+    newIndex < 0 ||
+    oldIndex >= count ||
+    newIndex >= count
+  ) {
+    return normalized;
+  }
+  const fills = normalized.fills.slice();
+  const [moved] = fills.splice(oldIndex, 1);
+  fills.splice(newIndex, 0, moved);
+  return withFillAlias(normalized, fills);
 }
 
 export function reorderCompositionEffects(graph, oldIndex, newIndex) {
@@ -216,8 +281,10 @@ export function reorderCompositionEffects(graph, oldIndex, newIndex) {
 export function referencedShaderKeys(graph) {
   const normalized = normalizeComposition(graph);
   const keys = [];
-  if (normalized.fill.type === "shader" && normalized.fill.shaderId) {
-    keys.push(normalized.fill.shaderId);
+  for (const fill of normalized.fills) {
+    if (fill.type === "shader" && fill.shaderId) {
+      keys.push(fill.shaderId);
+    }
   }
   for (const effect of normalized.effects) {
     if (effect.shaderId) keys.push(effect.shaderId);
@@ -232,8 +299,9 @@ function storeGet(store, key) {
 
 export function compositionLayerShaderId(graph, layerId) {
   const normalized = normalizeComposition(graph);
-  if (layerId === COMPOSITION_FILL_ID) {
-    return normalized.fill.type === "shader" ? normalized.fill.shaderId : null;
+  const fill = normalized.fills.find((item) => item.id === layerId);
+  if (fill) {
+    return fill.type === "shader" ? fill.shaderId : null;
   }
   return (
     normalized.effects.find((effect) => effect.id === layerId)?.shaderId ?? null
@@ -301,14 +369,16 @@ export function serializeCompositionExport(
     });
   };
 
-  if (normalized.fill.type === "shader") {
-    pushLayer(
-      COMPOSITION_FILL_ID,
-      "fill",
-      normalized.fill.shaderId,
-      normalized.fill.values,
-      normalized.fill.enabled
-    );
+  for (const fill of normalized.fills.slice().reverse()) {
+    if (fill.enabled && fill.type === "shader") {
+      pushLayer(
+        fill.id,
+        "fill",
+        fill.shaderId,
+        fill.values,
+        true
+      );
+    }
   }
   for (const effect of normalized.effects) {
     pushLayer(
@@ -320,9 +390,12 @@ export function serializeCompositionExport(
     );
   }
 
+  const topmostEnabledFill = normalized.fills.find(
+    (fill) => fill.enabled
+  );
   return {
-    isFill: normalized.fill.type === "shader",
-    fillType: normalized.fill.type,
+    isFill: topmostEnabledFill?.type === "shader",
+    fillType: topmostEnabledFill?.type || "none",
     layers,
   };
 }
@@ -336,9 +409,11 @@ export function compositionReferencesKind(graph, resolvedByKey, expectedKind) {
     return resolved.kind !== COMPOSITION_KIND;
   }) && (
     expectedKind
-      ? (normalized.fill.type !== "shader" ||
-          !resolvedByKey.get(normalized.fill.shaderId) ||
-          resolvedByKey.get(normalized.fill.shaderId).kind === "fill") &&
+      ? normalized.fills.every((fill) => {
+          if (fill.type !== "shader") return true;
+          const resolved = resolvedByKey.get(fill.shaderId);
+          return !resolved || resolved.kind === "fill";
+        }) &&
         normalized.effects.every((effect) => {
           const resolved = resolvedByKey.get(effect.shaderId);
           return !resolved || resolved.kind === "effect";
@@ -362,16 +437,17 @@ function resolvedFeatures(resolved) {
 
 export function isCompositionPlayable(graph, resolvedByKey = new Map()) {
   const normalized = normalizeComposition(graph);
-  if (normalized.fill.enabled) {
-    if (normalized.fill.type === "video") return true;
+  for (const compositionFill of normalized.fills) {
+    if (!compositionFill.enabled) continue;
+    if (compositionFill.type === "video") return true;
     if (
-      normalized.fill.paint?.type === "video" ||
-      normalized.fill.paint?.type === "webcam"
+      compositionFill.paint?.type === "video" ||
+      compositionFill.paint?.type === "webcam"
     ) {
       return true;
     }
-    if (normalized.fill.type === "shader" && normalized.fill.shaderId) {
-      const fill = resolvedByKey.get(normalized.fill.shaderId);
+    if (compositionFill.type === "shader" && compositionFill.shaderId) {
+      const fill = resolvedByKey.get(compositionFill.shaderId);
       if (fill && fill.kind !== COMPOSITION_KIND && resolvedFeatures(fill).isAnimated) {
         return true;
       }
@@ -393,12 +469,10 @@ export function collectCompositionFeatures(graph, resolvedByKey = new Map()) {
     if (!resolved || resolved.kind === COMPOSITION_KIND) return;
     if (resolvedFeatures(resolved).usesMouse) usesMouse = true;
   };
-  if (
-    normalized.fill.enabled &&
-    normalized.fill.type === "shader" &&
-    normalized.fill.shaderId
-  ) {
-    consider(normalized.fill.shaderId);
+  for (const fill of normalized.fills) {
+    if (fill.enabled && fill.type === "shader" && fill.shaderId) {
+      consider(fill.shaderId);
+    }
   }
   for (const effect of normalized.effects) {
     if (effect.enabled) consider(effect.shaderId);
@@ -454,19 +528,20 @@ export function promoteCompositionRefs(graph, liveCloudShaders = []) {
     if (!cloudId || !cloudShaderById(liveCloudShaders, cloudId)) return shaderId;
     return `cloud:${cloudId}`;
   };
-  return {
-    ...normalized,
-    fill: {
-      ...normalized.fill,
-      shaderId: normalized.fill.shaderId
-        ? promote(normalized.fill.shaderId)
-        : null,
+  const fills = normalized.fills.map((fill) => ({
+    ...fill,
+    shaderId: fill.shaderId ? promote(fill.shaderId) : null,
+  }));
+  return withFillAlias(
+    {
+      ...normalized,
+      effects: normalized.effects.map((effect) => ({
+        ...effect,
+        shaderId: promote(effect.shaderId),
+      })),
     },
-    effects: normalized.effects.map((effect) => ({
-      ...effect,
-      shaderId: promote(effect.shaderId),
-    })),
-  };
+    fills
+  );
 }
 
 export function unpublishedCompositionRefs(
@@ -505,11 +580,13 @@ export function compositionsReferencing(shaderKey, compositions = []) {
 export function compositionStructureKey(graph) {
   const normalized = normalizeComposition(graph);
   return JSON.stringify({
-    fill: {
-      type: normalized.fill.type,
-      shaderId: normalized.fill.shaderId,
-      enabled: normalized.fill.enabled,
-    },
+    fills: normalized.fills.map((fill) => ({
+      id: fill.id,
+      type: fill.type,
+      shaderId: fill.shaderId,
+      enabled: fill.enabled,
+      ...(fill.paint ? { paint: fill.paint } : {}),
+    })),
     effects: normalized.effects.map((effect) => ({
       id: effect.id,
       shaderId: effect.shaderId,
@@ -525,15 +602,23 @@ export function mediaFillType(fillType) {
 }
 
 export function readEffectFillFromComposition(composition) {
+  return readEffectFillsFromComposition(composition)[0] || null;
+}
+
+export function readEffectFillsFromComposition(composition) {
+  if (Array.isArray(composition?.effectFills)) {
+    return normalizeComposition({ fills: composition.effectFills }).fills;
+  }
   const stored = composition?.effectFill;
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
-    return null;
+    return [];
   }
-  return normalizeComposition({ fill: stored }).fill;
+  return [normalizeComposition({ fill: stored }).fill];
 }
 
 export function effectFillComposition(fill) {
-  return { effectFill: normalizeComposition({ fill }).fill };
+  const effectFill = normalizeComposition({ fill }).fill;
+  return { effectFills: [effectFill], effectFill };
 }
 
 export function fillFromInputSource(inputSource) {
@@ -556,9 +641,15 @@ export function paintForInputSource(inputSource, urls = {}) {
 }
 
 export function compositionPaintFill(graph) {
-  const fill = normalizeFill(graph?.fill);
-  if (fill.type === "shader" || fill.type === "html") return null;
-  return isPaintFillType(fill.paint?.type) ? fill.paint : null;
+  const normalized = normalizeComposition(graph);
+  const fill = normalized.fills.find(
+    (item) =>
+      item.enabled &&
+      item.type !== "shader" &&
+      item.type !== "html" &&
+      isPaintFillType(item.paint?.type)
+  );
+  return fill?.paint || null;
 }
 
 export function sessionInputPlan({
@@ -571,13 +662,19 @@ export function sessionInputPlan({
 } = {}) {
   if (kind === COMPOSITION_KIND) {
     const normalized = normalizeComposition(graph);
-    if (normalized.fill.type === "shader") return { action: "clear" };
     if (media) return { action: "media", media };
     if (cloudShader?.input_path) {
       return { action: "download", shader: cloudShader };
     }
     const paint = compositionPaintFill(normalized);
     if (paint) return { action: "paint", paint };
+    if (
+      normalized.fills.some(
+        (fill) => fill.enabled && fill.type === "shader"
+      )
+    ) {
+      return { action: "clear" };
+    }
     return { action: "preferred" };
   }
   if (kind !== "effect") return { action: "clear" };

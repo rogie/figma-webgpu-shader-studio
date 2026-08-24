@@ -3,6 +3,18 @@
   flex-direction: column;
 }
 
+.composition-fill-control {
+  min-width: 0;
+  width: 100%;
+}
+
+/* The fill row supplies its own padding. FigUI3's padding variables inherit,
+   so set the box on this element instead of retuning them for the subtree. */
+.composition-fill-control > propskit-fill {
+  height: var(--propskit-color-height);
+  padding: 0;
+}
+
 .properties-layer-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

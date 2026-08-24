@@ -17,6 +17,7 @@ import {
   parseCompositionShaderId,
   readReferencedShader,
   reorderCompositionEffects,
+  reorderCompositionFills,
   referencedShaderKeys,
   resolveShaderFillKey,
   resolvedLibraryKind,
@@ -25,23 +26,40 @@ import {
   promoteCompositionRefs,
   compositionLayerName,
   compositionLayerShaderId,
+  compositionReferencesKind,
+  compositionStructureKey,
   resolveReferencedShaderSource,
   compositionPaintFill,
   sessionInputPlan,
   paintForInputSource,
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
+  MAX_COMPOSITION_FILLS,
 } from "./composition.js";
 
 test("empty composition defaults to an image fill", () => {
-  assert.deepEqual(emptyComposition(), {
-    fill: { type: "image", shaderId: null, values: {}, enabled: true },
+  const graph = emptyComposition();
+  const expectedFill = {
+    id: COMPOSITION_FILL_ID,
+    type: "image",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  };
+  assert.deepEqual(graph, {
+    fills: [expectedFill],
+    fill: expectedFill,
     effects: [],
   });
+  assert.strictEqual(graph.fill, graph.fills[0]);
 });
 
 test("cleared fills are none and do not count as a fill", () => {
-  assert.deepEqual(emptyFill(), {
+  const fill = emptyFill();
+  assert.equal(typeof fill.id, "string");
+  assert.ok(fill.id);
+  assert.deepEqual({ ...fill, id: "<id>" }, {
+    id: "<id>",
     type: "none",
     shaderId: null,
     values: {},
@@ -129,6 +147,23 @@ test("session input plan prefers stored composition paints over the sample", () 
   assert.deepEqual(sessionInputPlan({ kind: "fill" }), { action: "clear" });
 });
 
+test("composition input uses the topmost enabled paint fill", () => {
+  const lowerPaint = { type: "solid", color: "#0000FF", alpha: 1 };
+  const topPaint = { type: "solid", color: "#00FF00", alpha: 1 };
+  const graph = {
+    fills: [
+      { id: "disabled", type: "image", paint: topPaint, enabled: false },
+      { id: "shader", type: "shader", shaderId: "cloud:sphere" },
+      { id: "paint", type: "image", paint: lowerPaint },
+    ],
+  };
+  assert.deepEqual(compositionPaintFill(graph), lowerPaint);
+  assert.deepEqual(sessionInputPlan({ kind: COMPOSITION_KIND, graph }), {
+    action: "paint",
+    paint: lowerPaint,
+  });
+});
+
 test("maps preview input sources onto fill types", () => {
   assert.deepEqual(fillFromInputSource("video"), {
     type: "video",
@@ -178,6 +213,49 @@ test("normalizes fill types, shader keys, and effect cap", () => {
   assert.equal(graph.effects.length, 8);
 });
 
+test("migrates legacy fill and keeps the canonical alias", () => {
+  const graph = normalizeComposition({
+    fill: { type: "shader", shaderId: "legacy" },
+  });
+  assert.equal(graph.fills.length, 1);
+  assert.equal(graph.fills[0].id, COMPOSITION_FILL_ID);
+  assert.equal(graph.fills[0].shaderId, "cloud:legacy");
+  assert.strictEqual(graph.fill, graph.fills[0]);
+});
+
+test("normalizes explicit fills with stable unique ids and a cap", () => {
+  const graph = normalizeComposition({
+    fills: [
+      { id: "top", type: "image" },
+      { type: "shader", shaderId: "cloud:one" },
+      { id: "top", type: "video" },
+      ...Array.from({ length: 10 }, () => ({ type: "image" })),
+    ],
+    fill: { type: "html" },
+  });
+  assert.equal(graph.fills.length, MAX_COMPOSITION_FILLS);
+  assert.equal(graph.fill.id, "top");
+  assert.equal(graph.fill.type, "image");
+  assert.equal(new Set(graph.fills.map((fill) => fill.id)).size, graph.fills.length);
+  assert.ok(graph.fills.every((fill) => typeof fill.id === "string" && fill.id));
+
+  const renormalized = normalizeComposition(graph);
+  assert.deepEqual(
+    renormalized.fills.map((fill) => fill.id),
+    graph.fills.map((fill) => fill.id)
+  );
+});
+
+test("preserves an explicitly empty fills array", () => {
+  const graph = normalizeComposition({
+    fills: [],
+    fill: { type: "video" },
+    effects: [],
+  });
+  assert.deepEqual(graph.fills, []);
+  assert.equal(graph.fill, undefined);
+});
+
 test("reorders composition effects by index", () => {
   const graph = normalizeComposition({
     fill: { type: "image" },
@@ -200,6 +278,23 @@ test("reorders composition effects by index", () => {
     reorderCompositionEffects(graph, -1, 1).effects.map((effect) => effect.id),
     ["a", "b", "c"]
   );
+});
+
+test("reorders composition fills and updates the topmost alias", () => {
+  const graph = normalizeComposition({
+    fills: [
+      { id: "a", type: "image" },
+      { id: "b", type: "shader", shaderId: "cloud:two" },
+      { id: "c", type: "video" },
+    ],
+  });
+  const moved = reorderCompositionFills(graph, 2, 0);
+  assert.deepEqual(
+    moved.fills.map((fill) => fill.id),
+    ["c", "a", "b"]
+  );
+  assert.strictEqual(moved.fill, moved.fills[0]);
+  assert.equal(reorderCompositionFills(graph, 0, 9).fill.id, "a");
 });
 
 test("parses draft and cloud shader ids", () => {
@@ -360,9 +455,11 @@ test("collects features from enabled live refs only", () => {
   assert.deepEqual(
     collectCompositionFeatures(
       {
-        fill: { type: "image" },
+        fills: [
+          { id: "still", type: "image" },
+          { id: "mouse-fill", type: "shader", shaderId: "cloud:mouse" },
+        ],
         effects: [
-          { shaderId: "cloud:mouse", enabled: true },
           { shaderId: "cloud:still", enabled: true },
         ],
       },
@@ -455,23 +552,63 @@ test("publish uses live cloud publicity over a stale resolved cache", () => {
 test("promoteCompositionRefs rewrites published draft ids to cloud ids", () => {
   const promoted = promoteCompositionRefs(
     {
-      fill: { type: "shader", shaderId: "draft:fill" },
+      fills: [
+        { id: "first", type: "shader", shaderId: "draft:fill" },
+        { id: "second", type: "shader", shaderId: "draft:other" },
+      ],
       effects: [{ id: "a", shaderId: "draft:fx" }],
     },
-    [{ id: "fill", is_public: true }, { id: "fx", is_public: false }]
+    [
+      { id: "fill", is_public: true },
+      { id: "other", is_public: true },
+      { id: "fx", is_public: false },
+    ]
   );
   assert.equal(promoted.fill.shaderId, "cloud:fill");
+  assert.equal(promoted.fills[1].shaderId, "cloud:other");
+  assert.strictEqual(promoted.fill, promoted.fills[0]);
   assert.equal(promoted.effects[0].shaderId, "cloud:fx");
 });
 
 test("compositionLayerShaderId reads fill and effect shader ids", () => {
   const graph = normalizeComposition({
-    fill: { type: "shader", shaderId: "cloud:fill" },
+    fills: [
+      { id: COMPOSITION_FILL_ID, type: "shader", shaderId: "cloud:fill" },
+      { id: "fill-two", type: "shader", shaderId: "cloud:second" },
+    ],
     effects: [{ id: "fx", shaderId: "draft:grain" }],
   });
   assert.equal(compositionLayerShaderId(graph, COMPOSITION_FILL_ID), "cloud:fill");
+  assert.equal(compositionLayerShaderId(graph, "fill-two"), "cloud:second");
   assert.equal(compositionLayerShaderId(graph, "fx"), "draft:grain");
   assert.equal(compositionLayerShaderId(graph, "missing"), null);
+});
+
+test("fill structure and kind checks include every stacked fill", () => {
+  const graph = {
+    fills: [
+      { id: "top", type: "image", enabled: false, values: { ignored: 1 } },
+      { id: "bottom", type: "shader", shaderId: "cloud:wrong" },
+    ],
+    effects: [],
+  };
+  assert.deepEqual(JSON.parse(compositionStructureKey(graph)).fills, [
+    { id: "top", type: "image", shaderId: null, enabled: false },
+    {
+      id: "bottom",
+      type: "shader",
+      shaderId: "cloud:wrong",
+      enabled: true,
+    },
+  ]);
+  assert.equal(
+    compositionReferencesKind(
+      graph,
+      new Map([["cloud:wrong", { kind: "effect" }]]),
+      true
+    ),
+    false
+  );
 });
 
 test("resolveReferencedShaderSource prefers live source over a resolved cache", () => {
@@ -630,6 +767,46 @@ test("serializeCompositionExport treats media fills as input-backed", () => {
   assert.equal(serialized.layers[0].role, "effect");
 });
 
+test("serializeCompositionExport emits enabled shader fills bottom-to-top", () => {
+  const serialized = serializeCompositionExport(
+    {
+      fills: [
+        {
+          id: "top",
+          type: "shader",
+          shaderId: "cloud:top",
+          values: { layer: 1 },
+        },
+        {
+          id: "disabled",
+          type: "shader",
+          shaderId: "cloud:disabled",
+          enabled: false,
+        },
+        {
+          id: "bottom",
+          type: "shader",
+          shaderId: "cloud:bottom",
+          values: { layer: 3 },
+        },
+      ],
+      effects: [],
+    },
+    new Map([
+      ["cloud:top", { source: "top source", broken: false }],
+      ["cloud:disabled", { source: "disabled source", broken: false }],
+      ["cloud:bottom", { source: "bottom source", broken: false }],
+    ])
+  );
+  assert.equal(serialized.isFill, true);
+  assert.equal(serialized.fillType, "shader");
+  assert.deepEqual(
+    serialized.layers.map((layer) => layer.id),
+    ["bottom", "top"]
+  );
+  assert.ok(serialized.layers.every((layer) => layer.role === "fill"));
+});
+
 test("libraryKind preserves composition", () => {
   assert.equal(libraryKind("composition"), "composition");
   assert.equal(libraryKind("fill"), "fill");
@@ -661,10 +838,13 @@ test("fillTypeForDroppedMedia maps image, svg, and video", () => {
 test("referencedShaderKeys de-duplicates fill and effects", () => {
   assert.deepEqual(
     referencedShaderKeys({
-      fill: { type: "shader", shaderId: "cloud:a" },
+      fills: [
+        { id: "one", type: "shader", shaderId: "cloud:a" },
+        { id: "two", type: "shader", shaderId: "cloud:c" },
+      ],
       effects: [{ shaderId: "cloud:a" }, { shaderId: "cloud:b" }],
     }),
-    ["cloud:a", "cloud:b"]
+    ["cloud:a", "cloud:c", "cloud:b"]
   );
 });
 

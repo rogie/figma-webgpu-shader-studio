@@ -11,6 +11,8 @@ import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
+const DYNAMIC_SOURCE_FRAME_MS = 1000 / 30;
+const SOURCE_FILL_TYPES = new Set(["image", "video", "webcam"]);
 
 function collectShaderModules(value, modules, seen) {
   if (!value || (typeof value !== "object" && typeof value !== "function")) return;
@@ -103,6 +105,12 @@ export class ShaderHost {
     this._passthroughInputTexture = null;
     this.compositionLayers = null;
     this._compositionTextures = [];
+    this._compositorTextures = [];
+    this._compositorTransparentTexture = null;
+    this._compositorPipelines = new Map();
+    this._compositorSampler = null;
+    this._compositorBindLayout = null;
+    this._compositionSourceTimer = 0;
 
     this.frame = {
       input: null,
@@ -437,10 +445,23 @@ export class ShaderHost {
 
   _syncOutputSizeForMode() {
     if (this.isFill) {
-      if (this.frame.input || this.inputTexture || this.video || this.htmlElement) {
+      // A standalone fill replaces a prior effect subject. Composition source
+      // fills are owned by their layer descriptors and must survive this sync.
+      if (
+        (this.frame.input || this.inputTexture || this.video || this.htmlElement)
+      ) {
         this.clearInput();
       }
       return this.setFillSize(this.stageCssSize.width, this.stageCssSize.height);
+    }
+    const sourceSize = this._compositionSourceSize();
+    if (
+      sourceSize &&
+      !this.frame.input &&
+      this.logicalOutputSize.width <= 1 &&
+      this.logicalOutputSize.height <= 1
+    ) {
+      return this._setLogicalOutputSize(sourceSize.width, sourceSize.height);
     }
     return this._applyAdaptiveOutputSize();
   }
@@ -483,6 +504,12 @@ export class ShaderHost {
         this.frame.input,
         this.frame.output,
         ...(this._compositionTextures || []),
+        ...(this._compositorTextures || []),
+        this._compositorTransparentTexture,
+        ...(this.compositionLayers || []).flatMap((layer) => [
+          layer.fillTexture,
+          layer.sourceTexture,
+        ]),
       ].filter(Boolean)
     );
     const destroyedResources = new Set();
@@ -509,6 +536,16 @@ export class ShaderHost {
     for (const layer of this.compositionLayers || []) {
       this._destroyStateObject(layer.state);
       layer.state = {};
+      for (const key of ["fillTexture", "sourceTexture"]) {
+        if (!layer[key]) continue;
+        try {
+          layer[key].destroy();
+        } catch {
+          /* ignore */
+        }
+        layer[key] = null;
+      }
+      layer.sourceUploaded = false;
     }
     for (const texture of this._compositionTextures) {
       try {
@@ -518,6 +555,25 @@ export class ShaderHost {
       }
     }
     this._compositionTextures = [];
+    for (const texture of this._compositorTextures) {
+      try {
+        texture.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    this._compositorTextures = [];
+    if (this._compositorTransparentTexture) {
+      try {
+        this._compositorTransparentTexture.destroy();
+      } catch {
+        /* ignore */
+      }
+      this._compositorTransparentTexture = null;
+    }
+    this._compositorPipelines.clear();
+    this._compositorSampler = null;
+    this._compositorBindLayout = null;
   }
 
   _teardownState() {
@@ -1296,12 +1352,101 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     return this.frame.output;
   }
 
-  // Load a compiled module ({ setup, render }) and re-run setup with validation.
-  _ensureCompositionTexture(index, width, height) {
+  _isSourceFill(layer) {
+    return Boolean(
+      layer?.role === "fill" &&
+        layer.source &&
+        SOURCE_FILL_TYPES.has(layer.sourceType)
+    );
+  }
+
+  _sourceDimensions(source) {
+    if (!source) return null;
+    let width = Number(
+      source.videoWidth ||
+        source.naturalWidth ||
+        source.displayWidth ||
+        source.width
+    );
+    let height = Number(
+      source.videoHeight ||
+        source.naturalHeight ||
+        source.displayHeight ||
+        source.height
+    );
+    if (!(width > 0 && height > 0)) return null;
+    const scale = Math.min(1, this.maxDimension / Math.max(width, height));
+    width = Math.max(1, Math.round(width * scale));
+    height = Math.max(1, Math.round(height * scale));
+    return { width, height };
+  }
+
+  _compositionSourceSize() {
+    for (const layer of this.compositionLayers || []) {
+      if (layer.enabled === false || !this._isSourceFill(layer)) continue;
+      const size = this._sourceDimensions(layer.source);
+      if (size) return size;
+    }
+    return null;
+  }
+
+  _hasDynamicCompositionSource() {
+    return (this.compositionLayers || []).some(
+      (layer) =>
+        layer.enabled !== false &&
+        this._isSourceFill(layer) &&
+        (layer.sourceType === "video" || layer.sourceType === "webcam")
+    );
+  }
+
+  _stopCompositionSourceTimer() {
+    if (!this._compositionSourceTimer) return;
+    clearInterval(this._compositionSourceTimer);
+    this._compositionSourceTimer = 0;
+  }
+
+  _syncCompositionSourceTimer() {
+    this._stopCompositionSourceTimer();
+    if (!this.active || !this.renderFn || !this._hasDynamicCompositionSource()) {
+      return;
+    }
+    this._compositionSourceTimer = setInterval(() => {
+      if (
+        this.active &&
+        this.renderFn &&
+        this._hasDynamicCompositionSource() &&
+        !this._isLoopActive()
+      ) {
+        this.redraw();
+      }
+    }, DYNAMIC_SOURCE_FRAME_MS);
+  }
+
+  _textureUsage({ copyDestination = false } = {}) {
+    return (
+      GPUTextureUsage.TEXTURE_BINDING |
+      GPUTextureUsage.COPY_SRC |
+      GPUTextureUsage.RENDER_ATTACHMENT |
+      (copyDestination ? GPUTextureUsage.COPY_DST : 0)
+    );
+  }
+
+  _ensureLayerTexture(
+    layer,
+    key,
+    width,
+    height,
+    { copyDestination = false } = {}
+  ) {
     const w = Math.max(1, Math.round(width));
     const h = Math.max(1, Math.round(height));
-    const existing = this._compositionTextures[index];
-    if (existing && existing.width === w && existing.height === h) {
+    const existing = layer[key];
+    if (
+      existing &&
+      existing.width === w &&
+      existing.height === h &&
+      existing.format === this.format
+    ) {
       return existing;
     }
     if (existing) {
@@ -1313,15 +1458,208 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
     const texture = this.device.createTexture({
       size: [w, h],
-      format: "rgba8unorm",
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.COPY_SRC |
-        GPUTextureUsage.RENDER_ATTACHMENT,
+      format: this.format,
+      usage: this._textureUsage({ copyDestination }),
+    });
+    layer[key] = texture;
+    if (key === "sourceTexture") layer.sourceUploaded = false;
+    return texture;
+  }
+
+  _ensureCompositionTexture(index, width, height) {
+    const w = Math.max(1, Math.round(width));
+    const h = Math.max(1, Math.round(height));
+    const existing = this._compositionTextures[index];
+    if (
+      existing &&
+      existing.width === w &&
+      existing.height === h &&
+      existing.format === this.format
+    ) {
+      return existing;
+    }
+    if (existing) {
+      try {
+        existing.destroy();
+      } catch {
+        /* ignore */
+      }
+    }
+    const texture = this.device.createTexture({
+      size: [w, h],
+      format: this.format,
+      usage: this._textureUsage(),
     });
     this._compositionTextures[index] = texture;
     return texture;
+  }
+
+  _ensureCompositorTexture(index, width, height) {
+    const holder = { texture: this._compositorTextures[index] };
+    const texture = this._ensureLayerTexture(
+      holder,
+      "texture",
+      width,
+      height
+    );
+    this._compositorTextures[index] = texture;
+    return texture;
+  }
+
+  _ensureTransparentTexture(width, height) {
+    const holder = { texture: this._compositorTransparentTexture };
+    const existing = holder.texture;
+    const texture = this._ensureLayerTexture(
+      holder,
+      "texture",
+      width,
+      height
+    );
+    this._compositorTransparentTexture = texture;
+    if (texture !== existing) {
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view: texture.createView(),
+            loadOp: "clear",
+            storeOp: "store",
+            clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          },
+        ],
+      });
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+    }
+    return texture;
+  }
+
+  _ensureCompositorPipeline(format) {
+    if (
+      this._compositorPipelines.has(format) &&
+      this._compositorSampler &&
+      this._compositorBindLayout
+    ) {
+      return this._compositorPipelines.get(format);
+    }
+    if (!this._compositorBindLayout) {
+      this._compositorBindLayout = this.device.createBindGroupLayout({
+        entries: [
+          {
+            binding: 0,
+            visibility: GPUShaderStage.FRAGMENT,
+            sampler: { type: "filtering" },
+          },
+          {
+            binding: 1,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" },
+          },
+          {
+            binding: 2,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: { sampleType: "float" },
+          },
+        ],
+      });
+      this._compositorSampler = this.device.createSampler({
+        magFilter: "linear",
+        minFilter: "linear",
+      });
+    }
+    const module = this.device.createShaderModule({
+      code: `
+struct VsOut {
+  @builtin(position) position: vec4f,
+  @location(0) uv: vec2f,
+}
+
+@vertex
+fn vs_main(@builtin(vertex_index) vi: u32) -> VsOut {
+  var pos = array<vec2f, 3>(
+    vec2f(-1.0, -1.0),
+    vec2f(3.0, -1.0),
+    vec2f(-1.0, 3.0),
+  );
+  var result: VsOut;
+  let p = pos[vi];
+  result.position = vec4f(p, 0.0, 1.0);
+  result.uv = vec2f(p.x * 0.5 + 0.5, 1.0 - (p.y * 0.5 + 0.5));
+  return result;
+}
+
+@group(0) @binding(0) var linearSampler: sampler;
+@group(0) @binding(1) var baseTexture: texture_2d<f32>;
+@group(0) @binding(2) var overlayTexture: texture_2d<f32>;
+
+@fragment
+fn fs_main(in: VsOut) -> @location(0) vec4f {
+  let base = textureSample(baseTexture, linearSampler, in.uv);
+  let overlay = textureSample(overlayTexture, linearSampler, in.uv);
+  return overlay + base * (1.0 - overlay.a);
+}
+`,
+    });
+    const pipeline = this.device.createRenderPipeline({
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this._compositorBindLayout],
+      }),
+      vertex: { module, entryPoint: "vs_main" },
+      fragment: {
+        module,
+        entryPoint: "fs_main",
+        targets: [{ format }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+    this._compositorPipelines.set(format, pipeline);
+    return pipeline;
+  }
+
+  _encodeComposite(encoder, base, overlay, target) {
+    if (base === target || overlay === target) {
+      throw new Error("Composition pass cannot sample from its render target.");
+    }
+    const format = target.format || this.format;
+    const pipeline = this._ensureCompositorPipeline(format);
+    const bindGroup = this.device.createBindGroup({
+      layout: this._compositorBindLayout,
+      entries: [
+        { binding: 0, resource: this._compositorSampler },
+        { binding: 1, resource: base.createView() },
+        { binding: 2, resource: overlay.createView() },
+      ],
+    });
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: target.createView(),
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        },
+      ],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(3);
+    pass.end();
+  }
+
+  _clearRenderTarget(target) {
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: target.createView(),
+          loadOp: "clear",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+        },
+      ],
+    });
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
   }
 
   _layerFrame(layer, input, output) {
@@ -1338,51 +1676,159 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     };
   }
 
+  _sourceIsReady(layer) {
+    const source = layer.source;
+    if (!source) return false;
+    if (
+      (layer.sourceType === "video" || layer.sourceType === "webcam") &&
+      Number.isFinite(source.readyState)
+    ) {
+      const haveCurrentData =
+        globalThis.HTMLMediaElement?.HAVE_CURRENT_DATA ?? 2;
+      if (source.readyState < haveCurrentData) return false;
+    }
+    if (layer.sourceType === "image" && source.complete === false) return false;
+    return Boolean(this._sourceDimensions(source));
+  }
+
+  _prepareSourceFill(layer, width, height) {
+    const fillTexture = this._ensureLayerTexture(
+      layer,
+      "fillTexture",
+      width,
+      height
+    );
+    const sourceSize = this._sourceDimensions(layer.source) || {
+      width,
+      height,
+    };
+    const sourceTexture = this._ensureLayerTexture(
+      layer,
+      "sourceTexture",
+      sourceSize.width,
+      sourceSize.height,
+      { copyDestination: true }
+    );
+    const dynamic =
+      layer.sourceType === "video" || layer.sourceType === "webcam";
+    if (
+      this._sourceIsReady(layer) &&
+      (dynamic || !layer.sourceUploaded)
+    ) {
+      try {
+        this.device.queue.copyExternalImageToTexture(
+          { source: layer.source, flipY: false },
+          { texture: sourceTexture, premultipliedAlpha: true },
+          [sourceTexture.width, sourceTexture.height]
+        );
+        layer.sourceUploaded = true;
+      } catch {
+        // A media element can report ready before its backing frame is
+        // importable. Keep the previous texture and try again next present.
+      }
+    }
+    return { fillTexture, sourceTexture };
+  }
+
+  _compositionSize(swapchain, fills) {
+    if (!fills.length && this.frame.input) {
+      return {
+        width: this.frame.input.width,
+        height: this.frame.input.height,
+      };
+    }
+    const sourceSize = this._compositionSourceSize();
+    const logical = this.logicalOutputSize;
+    const hasLogicalSize = logical.width > 1 || logical.height > 1;
+    return {
+      width:
+        (hasLogicalSize && logical.width) ||
+        sourceSize?.width ||
+        swapchain.width,
+      height:
+        (hasLogicalSize && logical.height) ||
+        sourceSize?.height ||
+        swapchain.height,
+    };
+  }
+
   _presentComposition() {
     const swapchain = this.context.getCurrentTexture();
     this.frame.output = swapchain;
     const layers = this.compositionLayers || [];
-    const fillLayer = layers.find(
+    const fills = layers.filter(
       (layer) => layer.role === "fill" && layer.enabled
     );
     const effects = this.effectVisible
       ? layers.filter((layer) => layer.role === "effect" && layer.enabled)
       : [];
-    const fromInput = !this.isFill && this.frame.input;
-    const width = fromInput
-      ? this.frame.input.width
-      : this.logicalOutputSize.width || swapchain.width;
-    const height = fromInput
-      ? this.frame.input.height
-      : this.logicalOutputSize.height || swapchain.height;
+    const { width, height } = this._compositionSize(swapchain, fills);
+    const transparent = fills.length
+      ? this._ensureTransparentTexture(width, height)
+      : null;
+    const sourceFills = [];
+    const fillTextures = [];
 
-    let current = this.frame.input;
-    if (fillLayer) {
-      const target = effects.length
-        ? this._ensureCompositionTexture(0, width, height)
-        : swapchain;
-      const frame = this._layerFrame(fillLayer, null, target);
-      fillLayer.render(this.device, frame);
-      current = target;
+    for (const layer of fills) {
+      if (this._isSourceFill(layer)) {
+        const prepared = this._prepareSourceFill(layer, width, height);
+        sourceFills.push(prepared);
+        fillTextures.push(prepared.fillTexture);
+        continue;
+      }
+      if (typeof layer.render !== "function") continue;
+      const target = this._ensureLayerTexture(
+        layer,
+        "fillTexture",
+        width,
+        height
+      );
+      layer.render(this.device, this._layerFrame(layer, null, target));
+      fillTextures.push(target);
+    }
+
+    let current = fillTextures.length ? fillTextures[0] : this.frame.input;
+    if (fillTextures.length) {
+      const encoder = this.device.createCommandEncoder();
+      for (const { fillTexture, sourceTexture } of sourceFills) {
+        this._encodeComposite(
+          encoder,
+          transparent,
+          sourceTexture,
+          fillTexture
+        );
+      }
+      for (let index = 1; index < fillTextures.length; index += 1) {
+        const target = this._ensureCompositorTexture(
+          (index - 1) % 2,
+          width,
+          height
+        );
+        this._encodeComposite(
+          encoder,
+          current,
+          fillTextures[index],
+          target
+        );
+        current = target;
+      }
+      if (!effects.length) {
+        this._encodeComposite(encoder, transparent, current, swapchain);
+      }
+      this.device.queue.submit([encoder.finish()]);
     }
 
     if (!effects.length) {
-      if (!fillLayer) {
-        this.frame.input = current;
-        return this._presentPassthrough();
-      }
-      return swapchain;
+      return fillTextures.length ? swapchain : this._presentPassthrough();
     }
 
     effects.forEach((layer, index) => {
       const isLast = index === effects.length - 1;
       const target = isLast
         ? swapchain
-        : this._ensureCompositionTexture((fillLayer ? 1 : 0) + (index % 2), width, height);
+        : this._ensureCompositionTexture(index % 2, width, height);
       if (!current) {
-        this.frame.input = null;
-        this.frame.output = target;
-        this._presentPassthrough();
+        this._clearRenderTarget(target);
         current = target;
         return;
       }
@@ -1399,16 +1845,38 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   ) {
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
-    this._teardownCompositionResources();
+    this._stopCompositionSourceTimer();
+    this._teardownState();
     this.compositionLayers = (layers || []).map((layer) => ({
       ...layer,
       state: {},
       enabled: layer.enabled !== false,
       params: layer.params || {},
+      fillTexture: null,
+      sourceTexture: null,
+      sourceUploaded: false,
     }));
     this.setupFn = (device, frame) => {
+      const fills = this.compositionLayers.filter(
+        (layer) => layer.role === "fill" && layer.enabled
+      );
+      const size = this._compositionSize(frame.output, fills);
       for (const layer of this.compositionLayers) {
-        const layerFrame = this._layerFrame(layer, frame.input, frame.output);
+        if (!layer.enabled || typeof layer.setup !== "function") continue;
+        const isFillLayer = layer.role === "fill";
+        const output = isFillLayer
+          ? this._ensureLayerTexture(
+              layer,
+              "fillTexture",
+              size.width,
+              size.height
+            )
+          : frame.output;
+        const layerFrame = this._layerFrame(
+          layer,
+          isFillLayer ? null : frame.input,
+          output
+        );
         layer.setup?.(device, layerFrame);
       }
     };
@@ -1454,6 +1922,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       return false;
     }
     this.onError(null);
+    this._syncCompositionSourceTimer();
     return true;
   }
 
@@ -1461,16 +1930,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     { setup, render },
     { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
   ) {
-    this.compositionLayers = null;
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
+    this._stopCompositionSourceTimer();
+    this._teardownState();
+    this.compositionLayers = null;
     this.setupFn = setup;
     this.renderFn = render;
     this.isFill = Boolean(isFill);
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
     this.supportsRenderScale = Boolean(supportsRenderScale);
-    this._teardownState();
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
@@ -1518,6 +1988,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
     this._cancelVideoFrameCallback();
+    this._stopCompositionSourceTimer();
+    this._teardownState();
     this.setupFn = null;
     this.renderFn = null;
     this.compositionLayers = null;
@@ -1635,12 +2107,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (!this.active) {
       if (this.rafId) cancelAnimationFrame(this.rafId);
       this.rafId = 0;
+      this._stopCompositionSourceTimer();
       // Stop the video decoder so a hidden tab quiets the CPU/GPU. Frame
       // callbacks are re-armed on resume.
       this._cancelVideoFrameCallback();
       this.video?.pause?.();
       return;
     }
+    this._syncCompositionSourceTimer();
     if (this.video) {
       this._videoFrameDirty = true;
       this._watchVideoFrames();
@@ -1690,6 +2164,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   destroy() {
     this.stop();
+    this._stopCompositionSourceTimer();
     clearTimeout(this._fillResizeTimer);
     this._fillResizeTimer = 0;
     clearTimeout(this._zoomResizeTimer);

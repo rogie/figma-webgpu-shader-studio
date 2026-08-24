@@ -94,7 +94,10 @@ test("readDrafts round-trips composition drafts", () => {
         kind: "composition",
         source: "",
         composition: {
-          fill: { type: "video" },
+          fills: [
+            { id: "top", type: "video" },
+            { id: "bottom", type: "shader", shaderId: "cloud:mesh" },
+          ],
           effects: [{ shaderId: "cloud:grain", values: { amount: 1 } }],
         },
       },
@@ -103,7 +106,81 @@ test("readDrafts round-trips composition drafts", () => {
   const [draft] = readDrafts(storage);
   assert.equal(draft.kind, "composition");
   assert.equal(draft.composition.fill.type, "video");
+  assert.deepEqual(
+    draft.composition.fills.map((fill) => fill.id),
+    ["top", "bottom"],
+  );
+  assert.strictEqual(draft.composition.fill, draft.composition.fills[0]);
+  assert.equal(draft.composition.fills[1].shaderId, "cloud:mesh");
   assert.equal(draft.composition.effects[0].shaderId, "cloud:grain");
+});
+
+test("draft storage round-trips effectFills with effectFill compatibility", () => {
+  const storage = memoryStorage();
+  const fills = [
+    {
+      id: "top",
+      type: "shader",
+      shaderId: "cloud:mesh",
+      values: { scale: 2 },
+    },
+    {
+      id: "bottom",
+      type: "image",
+      paint: { type: "solid", color: "#FF0000", alpha: 1 },
+    },
+  ];
+  writeDrafts(
+    [
+      {
+        id: "draft:effect",
+        name: "Effect",
+        kind: "effect",
+        source: "export function render() {}",
+        effectFills: fills,
+      },
+    ],
+    {},
+    storage,
+  );
+
+  const raw = JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY))[0];
+  assert.deepEqual(
+    raw.composition.effectFills.map((fill) => fill.id),
+    ["top", "bottom"],
+  );
+  assert.equal(raw.composition.effectFill.id, "top");
+
+  const [draft] = readDrafts(storage);
+  assert.deepEqual(
+    draft.effectFills.map((fill) => fill.id),
+    ["top", "bottom"],
+  );
+  assert.strictEqual(draft.effectFill, draft.effectFills[0]);
+  assert.strictEqual(
+    draft.composition.effectFill,
+    draft.composition.effectFills[0],
+  );
+});
+
+test("legacy effectFill migrates to effectFills", () => {
+  const storage = memoryStorage({
+    [DRAFTS_STORAGE_KEY]: JSON.stringify([
+      {
+        id: "draft:legacy-effect",
+        name: "Legacy effect",
+        kind: "effect",
+        source: "export function render() {}",
+        composition: {
+          effectFill: { type: "video" },
+        },
+      },
+    ]),
+  });
+  const [draft] = readDrafts(storage);
+  assert.equal(draft.effectFills.length, 1);
+  assert.equal(draft.effectFills[0].id, "fill");
+  assert.equal(draft.effectFill.type, "video");
 });
 
 test("serializeDraft retains only supported cloud-link metadata", () => {

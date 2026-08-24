@@ -5,12 +5,12 @@ import {
   fillFromInputSource,
   mediaFillType,
   normalizeComposition,
-  readEffectFillFromComposition,
+  readEffectFillsFromComposition,
   sessionInputPlan,
 } from "../lib/composition.js";
 import {
-  rememberEffectFill,
-  resolveSessionEffectFill,
+  rememberEffectFills,
+  resolveSessionEffectFills,
 } from "../lib/effectFillStorage.js";
 import { readInputSource } from "../lib/inputSourceStorage.js";
 import { mediaType } from "../lib/mediaFiles.js";
@@ -44,9 +44,11 @@ export function useShaderSession({
   applyPaintFill,
   loadMediaForShader,
   reapplyPreferredInput,
+  effectFillsRef,
   effectPaintRef,
   effectFillStoreRef,
   sessionRef,
+  setEffectFills,
   setEffectFill,
   inputApplyGenRef,
   sessionInputAppliedRef,
@@ -70,10 +72,17 @@ export function useShaderSession({
       if (inputApplyGenRef) inputApplyGenRef.current += 1;
       const previous = sessionRef?.current;
       if (previous?.kind === "effect" && previous.presetId) {
-        rememberEffectFill(
+        const previousFills = Array.isArray(effectFillsRef?.current)
+          ? effectFillsRef.current
+          : Array.isArray(previous.effectFills)
+            ? previous.effectFills
+            : effectPaintRef?.current
+              ? [effectPaintRef.current]
+              : [];
+        rememberEffectFills(
           effectFillStoreRef?.current,
           previous.presetId,
-          effectPaintRef?.current,
+          previousFills,
         );
       }
       pendingValuesRef.current = nextValues;
@@ -95,34 +104,45 @@ export function useShaderSession({
       setPendingMedia(media);
       setDirty(nextDirty);
 
+      let nextEffectFills = [];
       let nextEffectFill = null;
       const storedInputSource = readInputSource(sessionId);
       if (nextKind === "effect") {
-        nextEffectFill = resolveSessionEffectFill({
+        nextEffectFills = resolveSessionEffectFills({
           sessionId,
           store: effectFillStoreRef?.current,
           fallbackSource: storedInputSource || "image",
-          documentFill: readEffectFillFromComposition(nextComposition),
+          documentFills: readEffectFillsFromComposition(nextComposition),
           sampleUrls: {
             image: defaultInputUrl,
             vector: defaultVectorUrl,
             video: defaultVideoUrl,
           },
         });
+        nextEffectFill = nextEffectFills[0] || null;
+        setEffectFills?.(nextEffectFills);
         setEffectFill?.(nextEffectFill);
+        if (effectFillsRef) effectFillsRef.current = nextEffectFills;
         if (effectPaintRef) effectPaintRef.current = nextEffectFill;
-      } else if (setEffectFill) {
+      } else {
         nextEffectFill = fillFromInputSource("image");
-        setEffectFill(nextEffectFill);
+        nextEffectFills = [nextEffectFill];
+        setEffectFills?.(nextEffectFills);
+        setEffectFill?.(nextEffectFill);
+        if (effectFillsRef) effectFillsRef.current = nextEffectFills;
         if (effectPaintRef) effectPaintRef.current = nextEffectFill;
       }
 
+      const topmostCompositionFill = graph?.fills.find((fill) => fill.enabled);
+      const topmostEffectPaintFill = nextEffectFills.find(
+        (fill) => fill.enabled && fill.paint,
+      );
       const mediaTypeForSession =
         nextKind === COMPOSITION_KIND
-          ? mediaFillType(graph.fill.type) || "image"
+          ? mediaFillType(topmostCompositionFill?.type) || "image"
           : storedInputSource === "html" || storedInputSource === "video"
             ? storedInputSource
-            : mediaFillType(nextEffectFill?.type) ||
+            : mediaFillType(topmostEffectPaintFill?.type) ||
               storedInputSource ||
               "image";
       setInputSource(mediaTypeForSession);
@@ -131,7 +151,8 @@ export function useShaderSession({
       const host = hostRef.current;
       if (!host?.ready) return;
       if (sessionInputAppliedRef) sessionInputAppliedRef.current = sessionId;
-      const sessionPaint = nextEffectFill?.paint ?? effectPaintRef?.current?.paint;
+      const sessionPaint =
+        topmostEffectPaintFill?.paint ?? effectPaintRef?.current?.paint;
       const plan = sessionInputPlan({
         kind: nextKind,
         graph,
@@ -164,9 +185,11 @@ export function useShaderSession({
       applyPaintFill,
       clearObjectUrl,
       effectFillStoreRef,
+      effectFillsRef,
       effectPaintRef,
       hostRef,
       sessionRef,
+      setEffectFills,
       setEffectFill,
       inputSourceRef,
       loadMediaForShader,

@@ -16,3 +16,6 @@ dist/
 
 # Supabase CLI local link metadata
 supabase/.temp/
+
+# Wrangler local cache
+.wrangler/

@@ -2,14 +2,34 @@ import {
   emptyComposition,
   isLibraryKind,
   normalizeComposition,
-  readEffectFillFromComposition,
+  readEffectFillsFromComposition,
 } from "./composition.js";
 import { figmaShaderLink, isDraftId } from "./shaderIdentity.js";
 
 export const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
 export const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
 
+function effectFillState(draft) {
+  let composition = null;
+  if (Array.isArray(draft?.effectFills)) {
+    composition = { effectFills: draft.effectFills };
+  } else if (Array.isArray(draft?.composition?.effectFills)) {
+    composition = { effectFills: draft.composition.effectFills };
+  } else {
+    const effectFill = draft?.effectFill || draft?.composition?.effectFill;
+    if (effectFill) composition = { effectFill };
+  }
+  if (!composition) return null;
+  const effectFills = readEffectFillsFromComposition(composition);
+  return {
+    effectFills,
+    effectFill: effectFills[0] || null,
+  };
+}
+
 export function serializeDraft(draft, thumbnail = null) {
+  const storedEffectFills =
+    draft.kind === "effect" ? effectFillState(draft) : null;
   return {
     id: draft.id,
     name: draft.name,
@@ -18,16 +38,8 @@ export function serializeDraft(draft, thumbnail = null) {
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
     ...(draft.kind === "composition"
       ? { composition: normalizeComposition(draft.composition) }
-      : draft.kind === "effect" &&
-          (draft.effectFill || draft.composition?.effectFill)
-        ? {
-            composition: {
-              effectFill:
-                readEffectFillFromComposition({
-                  effectFill: draft.effectFill || draft.composition?.effectFill,
-                }) || draft.effectFill,
-            },
-          }
+      : storedEffectFills
+        ? { composition: storedEffectFills }
         : {}),
     isPublic: Boolean(draft.isPublic),
     thumbnail: typeof thumbnail === "string" ? thumbnail : null,
@@ -50,33 +62,36 @@ export function readDrafts(storage = globalThis.localStorage) {
           isLibraryKind(draft.kind) &&
           (draft.kind === "composition" || typeof draft.source === "string"),
       )
-      .map((draft) => ({
-        id: draft.id,
-        name: draft.name,
-        kind: draft.kind,
-        source: typeof draft.source === "string" ? draft.source : "",
-        values:
-          draft.values && typeof draft.values === "object" ? draft.values : {},
-        ...(draft.kind === "composition"
-          ? {
-              composition: normalizeComposition(
-                draft.composition || emptyComposition()
-              ),
-            }
-          : draft.kind === "effect" && draft.composition?.effectFill
+      .map((draft) => {
+        const storedEffectFills =
+          draft.kind === "effect" ? effectFillState(draft) : null;
+        return {
+          id: draft.id,
+          name: draft.name,
+          kind: draft.kind,
+          source: typeof draft.source === "string" ? draft.source : "",
+          values:
+            draft.values && typeof draft.values === "object" ? draft.values : {},
+          ...(draft.kind === "composition"
             ? {
-                composition: {
-                  effectFill: readEffectFillFromComposition(draft.composition),
-                },
-                effectFill: readEffectFillFromComposition(draft.composition),
+                composition: normalizeComposition(
+                  draft.composition || emptyComposition()
+                ),
               }
-            : {}),
-        isPublic: Boolean(draft.isPublic),
-        pendingMedia: null,
-        thumbnail:
-          typeof draft.thumbnail === "string" ? draft.thumbnail : null,
-        ...figmaShaderLink(draft),
-      }));
+            : storedEffectFills
+              ? {
+                  composition: storedEffectFills,
+                  effectFills: storedEffectFills.effectFills,
+                  effectFill: storedEffectFills.effectFill,
+                }
+              : {}),
+          isPublic: Boolean(draft.isPublic),
+          pendingMedia: null,
+          thumbnail:
+            typeof draft.thumbnail === "string" ? draft.thumbnail : null,
+          ...figmaShaderLink(draft),
+        };
+      });
   } catch {
     return [];
   }
