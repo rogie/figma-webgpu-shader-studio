@@ -42,7 +42,7 @@ export default function HomeView({
     <nav className="home-nav">
       <div className="app-nav-headers">
         <fig-header class="app-nav-header">
-          <h2 className="app-title">Studio</h2>
+          <h2 className="app-title">Shader studio</h2>
           <div className="app-nav-home-tools">
             <fig-input-text
               class="app-nav-search"

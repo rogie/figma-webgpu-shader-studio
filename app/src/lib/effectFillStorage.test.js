@@ -416,6 +416,61 @@ test("resolveSessionEffectFills gives a live memory stack first precedence", () 
   assert.equal(resolved[0].paint.image.url, "blob:http://localhost/live");
 });
 
+test("resolveSessionEffectFills preserves an explicitly empty memory stack", () => {
+  const storage = memoryStorage();
+  writeEffectFills(
+    "cloud:one",
+    [{ id: "stored", type: "image", paint: { type: "solid", color: "#000" } }],
+    storage,
+  );
+  const store = new Map([["cloud:one", []]]);
+
+  assert.deepEqual(
+    resolveSessionEffectFills({
+      sessionId: "cloud:one",
+      store,
+      storage,
+      documentFills: [
+        {
+          id: "document",
+          type: "image",
+          paint: { type: "solid", color: "#fff" },
+        },
+      ],
+    }),
+    [],
+  );
+});
+
+test("resolveSessionEffectFills preserves explicitly empty durable stacks", () => {
+  const storage = memoryStorage();
+  writeEffectFills("cloud:one", [], storage);
+
+  assert.deepEqual(
+    resolveSessionEffectFills({
+      sessionId: "cloud:one",
+      storage,
+      documentFills: [
+        {
+          id: "document",
+          type: "image",
+          paint: { type: "solid", color: "#fff" },
+        },
+      ],
+    }),
+    [],
+  );
+  assert.deepEqual(
+    resolveSessionEffectFills({
+      sessionId: "cloud:two",
+      storage,
+      documentFills: [],
+      sampleUrls: { image: "/photo.png" },
+    }),
+    [],
+  );
+});
+
 test("effectFillIsLive allows blobs and effectFillIsDurable does not", () => {
   const live = {
     type: "image",

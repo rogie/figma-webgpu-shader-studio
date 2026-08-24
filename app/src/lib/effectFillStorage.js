@@ -97,19 +97,21 @@ function readFillMap(storage) {
   }
 }
 
-export function readEffectFills(shaderId, storage = globalThis.localStorage) {
-  if (!shaderId) return [];
+function storedEffectFills(shaderId, storage) {
+  if (!shaderId) return { found: false, fills: [] };
   const map = readFillMap(storage);
   for (const key of effectFillStorageKeys(shaderId)) {
+    if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
     const stored = map[key];
-    if (Array.isArray(stored)) {
-      return normalizeEffectFills(stored);
-    }
-    if (stored && typeof stored === "object") {
-      return normalizeEffectFills(stored);
+    if (Array.isArray(stored) || (stored && typeof stored === "object")) {
+      return { found: true, fills: normalizeEffectFills(stored) };
     }
   }
-  return [];
+  return { found: false, fills: [] };
+}
+
+export function readEffectFills(shaderId, storage = globalThis.localStorage) {
+  return storedEffectFills(shaderId, storage).fills;
 }
 
 export function readEffectFill(shaderId, storage = globalThis.localStorage) {
@@ -216,15 +218,21 @@ export function resolveSessionEffectFills({
   documentFill = null,
 } = {}) {
   let memoryFills = [];
+  let memoryFound = false;
   if (store && sessionId) {
     for (const key of effectFillStorageKeys(sessionId)) {
       if (store.has(key)) {
+        memoryFound = true;
         memoryFills = normalizeEffectFills(store.get(key));
         break;
       }
     }
   }
-  const storedFills = readEffectFills(sessionId, storage);
+  const stored = storedEffectFills(sessionId, storage);
+  const storedFills = stored.fills;
+  const documentFillsProvided =
+    Array.isArray(documentFills) ||
+    Boolean(documentFill && typeof documentFill === "object");
   const resolvedDocumentFills = normalizeEffectFills(
     Array.isArray(documentFills)
       ? documentFills
@@ -232,6 +240,18 @@ export function resolveSessionEffectFills({
         ? [documentFill]
         : [],
   );
+  // Empty and missing are different states: an explicitly stored empty stack
+  // means the user removed the final fill and must not trigger the sample
+  // fallback on navigation or refresh.
+  if (memoryFound && memoryFills.length === 0) return [];
+  if (stored.found && storedFills.length === 0) return [];
+  if (
+    documentFillsProvided &&
+    resolvedDocumentFills.length === 0 &&
+    !stored.found
+  ) {
+    return [];
+  }
   const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
   const fallback = () => {
     if (fallbackSource === "vector") {

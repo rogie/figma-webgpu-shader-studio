@@ -857,9 +857,12 @@ export default function App() {
   }, [presetId]);
   useEffect(() => {
     if (kind !== "effect") return;
+    // Removing the last input fill is intentional. Do not let the legacy
+    // single-fill alias recreate it from the stored input source.
+    if (effectFillsRef.current.length === 0) return;
     if (inputSource === "html") {
       setEffectFill((current) =>
-        current.type === "html" ? current : fillFromInputSource("html")
+        current?.type === "html" ? current : fillFromInputSource("html")
       );
       return;
     }
@@ -870,19 +873,20 @@ export default function App() {
     });
     if (!paint) return;
     setEffectFill((current) => {
-      if (current.type === "shader") return current;
+      if (current?.type === "shader") return current;
       const next = {
         ...fillFromInputSource(inputSource),
-        shaderId: current.shaderId ?? null,
-        values: current.values || {},
-        enabled: current.enabled !== false,
+        shaderId: current?.shaderId ?? null,
+        values: current?.values || {},
+        enabled: current?.enabled !== false,
         paint,
       };
-      const currentUrl = current.paint?.image?.url || current.paint?.video?.url;
+      const currentUrl =
+        current?.paint?.image?.url || current?.paint?.video?.url;
       const nextUrl = paint.image?.url || paint.video?.url;
       if (
-        current.type === next.type &&
-        current.paint?.type === paint.type &&
+        current?.type === next.type &&
+        current?.paint?.type === paint.type &&
         currentUrl === nextUrl
       ) {
         return current;
@@ -893,7 +897,7 @@ export default function App() {
         currentUrl !== defaultInputUrl &&
         currentUrl !== defaultVectorUrl &&
         currentUrl !== defaultVideoUrl;
-      if (customUrl && inputSource !== "vector" && current.type === next.type) {
+      if (customUrl && inputSource !== "vector" && current?.type === next.type) {
         return current;
       }
       return next;
@@ -4237,7 +4241,7 @@ export default function App() {
             effectFillsRef.current = localFills;
             setEffectFills(localFills);
             effectFillRef.current = localFills[0] || null;
-            setEffectFill(localFills[0] || fillFromInputSource("image"));
+            setEffectFill(localFills[0] || null);
           }
         }
         let mediaToUpload = background ? null : pendingMedia;
@@ -5743,9 +5747,7 @@ export default function App() {
                     effectFillsRef.current = fills;
                     setEffectFills(fills);
                     effectFillRef.current = fills[0] || null;
-                    setEffectFill(
-                      fills[0] || fillFromInputSource("image")
-                    );
+                    setEffectFill(fills[0] || null);
                     hostRef.current?.setCompositionLayerParams?.(
                       fillId,
                       nextValues
@@ -5762,9 +5764,8 @@ export default function App() {
                   );
                   setEffectFills(fills);
                   effectFillsRef.current = fills;
-                  setEffectFill(fills[0] || fillFromInputSource("image"));
-                  effectFillRef.current =
-                    fills[0] || fillFromInputSource("image");
+                  setEffectFill(fills[0] || null);
+                  effectFillRef.current = fills[0] || null;
                   setDirty(true);
                   if (previousKey || effectFillPreviewKey(fills)) {
                     compile(source);

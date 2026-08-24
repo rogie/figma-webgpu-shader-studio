@@ -108,11 +108,20 @@ export function useShaderSession({
       let nextEffectFill = null;
       const storedInputSource = readInputSource(sessionId);
       if (nextKind === "effect") {
+        const hasDocumentEffectFills =
+          nextComposition &&
+          (Array.isArray(nextComposition.effectFills) ||
+            Object.prototype.hasOwnProperty.call(
+              nextComposition,
+              "effectFill",
+            ));
         nextEffectFills = resolveSessionEffectFills({
           sessionId,
           store: effectFillStoreRef?.current,
           fallbackSource: storedInputSource || "image",
-          documentFills: readEffectFillsFromComposition(nextComposition),
+          documentFills: hasDocumentEffectFills
+            ? readEffectFillsFromComposition(nextComposition)
+            : null,
           sampleUrls: {
             image: defaultInputUrl,
             vector: defaultVectorUrl,
