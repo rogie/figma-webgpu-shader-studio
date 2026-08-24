@@ -797,6 +797,7 @@ export default function App() {
   const noticeToastRef = useRef(null);
   const exportDialogRef = useRef(null);
   const exportTabsRef = useRef(null);
+  const editorViewTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
   const inputLoadingToastRef = useRef(null);
@@ -1309,6 +1310,17 @@ export default function App() {
     tabs?.addEventListener("input", onInput);
     return () => tabs?.removeEventListener("input", onInput);
   }, [exportOpen]);
+
+  useEffect(() => {
+    const tabs = editorViewTabsRef.current;
+    if (!tabs || viewMode !== "editor") return;
+    const onInput = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "editor");
+      if (value === "shaders") setShaderRoute();
+    };
+    tabs.addEventListener("input", onInput);
+    return () => tabs.removeEventListener("input", onInput);
+  }, [setShaderRoute, viewMode]);
 
   useEffect(() => {
     const toast = videoExportToastRef.current;
@@ -6334,6 +6346,7 @@ export default function App() {
             cardSize: "large",
           })}
           onChoice={openHomeChoice}
+          onEditorSelect={() => openHomeChoice(presetId)}
           authOpen={authOpen}
           onAuthOpenChange={setAuthOpen}
           theme={theme}
@@ -6363,19 +6376,14 @@ export default function App() {
         >
           <div className="app-nav-headers">
             <fig-header class="app-nav-header">
-              <fig-tooltip text="Back to home">
-                <fig-button
-                  class="app-nav-back-button"
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Back to home"
-                  onClick={() => setShaderRoute()}
-                >
-                  <fig-icon name="back" />
-                </fig-button>
-              </fig-tooltip>
-              <h2 className="app-title">Shader studio</h2>
+              <fig-tabs
+                ref={editorViewTabsRef}
+                name="app-view"
+                value="editor"
+              >
+                <fig-tab value="shaders">Shaders</fig-tab>
+                <fig-tab value="editor">Editor</fig-tab>
+              </fig-tabs>
               <div className="app-nav-header-actions">
                 <fig-menu
                   ref={newShaderMenuRef}

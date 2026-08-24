@@ -16,6 +16,7 @@ export default function HomeView({
   publishedAuthors,
   choices,
   onChoice,
+  onEditorSelect,
   authOpen,
   onAuthOpenChange,
   theme,
@@ -27,6 +28,7 @@ export default function HomeView({
   onProfileChange,
 }) {
   const chooserRef = useRef(null);
+  const viewTabsRef = useRef(null);
 
   useEffect(() => {
     const node = chooserRef.current;
@@ -38,11 +40,25 @@ export default function HomeView({
     return () => node.removeEventListener("change", handleChange);
   }, [onChoice]);
 
+  useEffect(() => {
+    const tabs = viewTabsRef.current;
+    if (!tabs || !onEditorSelect) return;
+    const handleInput = (event) => {
+      const value = String(event.detail ?? event.target.value ?? "shaders");
+      if (value === "editor") onEditorSelect();
+    };
+    tabs.addEventListener("input", handleInput);
+    return () => tabs.removeEventListener("input", handleInput);
+  }, [onEditorSelect]);
+
   return (
     <nav className="home-nav">
       <div className="app-nav-headers">
         <fig-header class="app-nav-header">
-          <h2 className="app-title">Shader studio</h2>
+          <fig-tabs ref={viewTabsRef} name="app-view" value="shaders">
+            <fig-tab value="shaders">Shaders</fig-tab>
+            <fig-tab value="editor">Editor</fig-tab>
+          </fig-tabs>
           <div className="app-nav-home-tools">
             <fig-input-text
               class="app-nav-search"

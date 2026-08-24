@@ -63,16 +63,12 @@ body,
       flex: 0 0 auto;
     }
 
-    .app-title {
-      margin: 0;
-      margin-right: auto;
-    }
-
     .app-nav-header {
       height: auto;
       padding-block: var(--spacer-2);
       padding-right: var(--spacer-2-5);
       gap: var(--spacer-1);
+      padding-left: var(--spacer-1);
     }
 
     .app-nav-header-actions {
