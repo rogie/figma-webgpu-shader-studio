@@ -37,7 +37,7 @@
 
   & .streaming-code-status[name="checkmark"] {
     margin: var(--spacer-1);
-    margin-right: calc(-1 * var(--spacer-2));
+    margin-right: 0;
     color: var(--figma-color-text-tertiary);
   }
 
@@ -47,10 +47,6 @@
 
   & .streaming-code-status[name="warning"] {
     color: var(--figma-color-text-danger);
-  }
-
-  & .streaming-code-status {
-    margin-right: calc(-1 * var(--spacer-2));
   }
 
   & .streaming-code-source {

@@ -118,9 +118,10 @@ test("video playback follows the shader play state", () => {
   }
 });
 
-test("reactivating a paused host resumes its video input", () => {
+test("reactivating a paused host waits for play before resuming video", () => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
+  const raf = stubAnimationFrame();
   globalThis.setInterval = () => 42;
   globalThis.clearInterval = () => {};
   try {
@@ -139,16 +140,21 @@ test("reactivating a paused host resumes its video input", () => {
 
     host.setActive(true);
 
-    assert.equal(plays, 1);
+    assert.equal(plays, 0);
     assert.equal(pauses, 0);
+    assert.equal(host._videoPollId, 0);
+
+    host.start();
+    assert.equal(plays, 1);
     assert.equal(host._videoPollId, 42);
   } finally {
+    raf.restore();
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
   }
 });
 
-test("decoded video frames redraw while shader playback is paused", () => {
+test("decoded video frames redraw only while playback is running", () => {
   const host = makeHost();
   let videoFrameCallback = null;
   let callbackId = 0;
@@ -167,16 +173,16 @@ test("decoded video frames redraw while shader playback is paused", () => {
 
   host._watchVideoFrames();
   videoFrameCallback();
-  assert.equal(host._videoFrameDirty, true);
-  assert.equal(redraws, 1);
+  assert.equal(host._videoFrameDirty, false);
+  assert.equal(redraws, 0);
 
   host.running = true;
-  host.rafId = 1;
+  host._watchVideoFrames();
   videoFrameCallback();
   assert.equal(redraws, 1);
 });
 
-test("video polling redraws paused previews without video frame callbacks", () => {
+test("video polling redraws only while playback is running", () => {
   const originalSetInterval = globalThis.setInterval;
   const originalClearInterval = globalThis.clearInterval;
   let poll = null;
@@ -198,15 +204,16 @@ test("video polling redraws paused previews without video frame callbacks", () =
 
     host._watchVideoFrames();
     poll();
-    assert.equal(redraws, 1);
+    assert.equal(redraws, 0);
 
+    host.running = true;
     host._lastVideoTime = 0;
     poll();
-    assert.equal(redraws, 1);
+    assert.equal(redraws, 0);
 
     host.video.currentTime = 0.1;
     poll();
-    assert.equal(redraws, 2);
+    assert.equal(redraws, 1);
 
     host._cancelVideoFrameCallback();
     assert.equal(cleared, 42);
@@ -1169,46 +1176,60 @@ test("composition teardown destroys GPU resources without closing app sources", 
   assert.equal(host._sourceFillPipelines.size, 0);
 });
 
-test("dynamic composition source timer redraws while paused and cleans up", () => {
-  const originalSetInterval = globalThis.setInterval;
-  const originalClearInterval = globalThis.clearInterval;
-  let callback = null;
-  let cleared = 0;
-  globalThis.setInterval = (next) => {
-    callback = next;
-    return 73;
-  };
-  globalThis.clearInterval = (id) => {
-    cleared = id;
-  };
+test("composition video and webcam sources follow the host play state", () => {
+  const raf = stubAnimationFrame();
   try {
     const host = makeHost();
+    const source = () => {
+      const state = { plays: 0, pauses: 0 };
+      return {
+        state,
+        play() {
+          state.plays += 1;
+        },
+        pause() {
+          state.pauses += 1;
+        },
+      };
+    };
+    const video = source();
+    const webcam = source();
+    const disabledVideo = source();
     host.compositionLayers = [
+      {
+        id: "video",
+        role: "fill",
+        enabled: true,
+        source: video,
+        sourceType: "video",
+      },
       {
         id: "webcam",
         role: "fill",
         enabled: true,
-        source: { videoWidth: 8, videoHeight: 8 },
+        source: webcam,
         sourceType: "webcam",
-        state: {},
+      },
+      {
+        id: "disabled-video",
+        role: "fill",
+        enabled: false,
+        source: disabledVideo,
+        sourceType: "video",
       },
     ];
-    let redraws = 0;
-    host.redraw = () => {
-      redraws += 1;
-    };
 
-    host._syncCompositionSourceTimer();
-    assert.equal(host._compositionSourceTimer, 73);
-    callback();
-    assert.equal(redraws, 1);
+    host.start();
+    assert.deepEqual(video.state, { plays: 1, pauses: 0 });
+    assert.deepEqual(webcam.state, { plays: 1, pauses: 0 });
+    assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 1 });
 
-    host.destroy();
-    assert.equal(cleared, 73);
-    assert.equal(host._compositionSourceTimer, 0);
+    host.stop({ resetTime: true });
+    assert.deepEqual(video.state, { plays: 1, pauses: 1 });
+    assert.deepEqual(webcam.state, { plays: 1, pauses: 1 });
+    assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 2 });
   } finally {
-    globalThis.setInterval = originalSetInterval;
-    globalThis.clearInterval = originalClearInterval;
+    raf.restore();
   }
 });
 

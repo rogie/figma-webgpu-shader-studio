@@ -11,7 +11,6 @@ import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
-const DYNAMIC_SOURCE_FRAME_MS = 1000 / 30;
 const SOURCE_FILL_TYPES = new Set(["image", "video", "webcam"]);
 
 function collectShaderModules(value, modules, seen) {
@@ -113,7 +112,6 @@ export class ShaderHost {
     this._sourceFillPipelines = new Map();
     this._sourceFillSampler = null;
     this._sourceFillBindLayout = null;
-    this._compositionSourceTimer = 0;
 
     this.frame = {
       input: null,
@@ -695,15 +693,13 @@ export class ShaderHost {
     this._videoFrameDirty = true;
     this._uploadVideoFrame();
     this._rebindAfterInputChange(sizeChanged, { resetState: true });
-    if (!this.active) {
+    if (!this.active || !this.running) {
       video.pause?.();
       return;
     }
-    // Keep decoding while the tab is visible even if shader playback is
-    // paused — video is the input clock, not the effect clock.
     this._watchVideoFrames();
     Promise.resolve(video.play?.()).catch(() => {});
-    if (this.running) this._scheduleLoop();
+    this._scheduleLoop();
   }
 
   // Replace the contents of an existing image input without changing texture
@@ -821,7 +817,7 @@ export class ShaderHost {
     if (!video) return;
     if (typeof video.requestVideoFrameCallback !== "function") {
       this._videoPollId = setInterval(() => {
-        if (this.video !== video) return;
+        if (this.video !== video || !this.running) return;
         if (
           Number.isFinite(video.currentTime) &&
           video.currentTime === this._lastVideoTime
@@ -836,11 +832,10 @@ export class ShaderHost {
       return;
     }
     const markDirty = () => {
-      if (this.video !== video) return;
+      if (this.video !== video || !this.running) return;
       this._videoFrameDirty = true;
-      // A changing input must continue to render even when shader playback is
-      // paused. The RAF loop already presents while running; otherwise render
-      // exactly once for each decoded video frame.
+      // The RAF loop normally presents while running. If it is temporarily
+      // unavailable, render exactly once for the decoded video frame.
       if (this.active && this.renderFn && !this._isLoopActive()) {
         this.redraw();
       }
@@ -1400,36 +1395,22 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     return null;
   }
 
-  _hasDynamicCompositionSource() {
-    return (this.compositionLayers || []).some(
-      (layer) =>
-        layer.enabled !== false &&
-        this._isSourceFill(layer) &&
-        (layer.sourceType === "video" || layer.sourceType === "webcam")
-    );
-  }
-
-  _stopCompositionSourceTimer() {
-    if (!this._compositionSourceTimer) return;
-    clearInterval(this._compositionSourceTimer);
-    this._compositionSourceTimer = 0;
-  }
-
-  _syncCompositionSourceTimer() {
-    this._stopCompositionSourceTimer();
-    if (!this.active || !this.renderFn || !this._hasDynamicCompositionSource()) {
-      return;
-    }
-    this._compositionSourceTimer = setInterval(() => {
+  _syncCompositionSourcePlayback(
+    shouldPlay = this.active && this.running
+  ) {
+    for (const layer of this.compositionLayers || []) {
       if (
-        this.active &&
-        this.renderFn &&
-        this._hasDynamicCompositionSource() &&
-        !this._isLoopActive()
+        !this._isSourceFill(layer) ||
+        (layer.sourceType !== "video" && layer.sourceType !== "webcam")
       ) {
-        this.redraw();
+        continue;
       }
-    }, DYNAMIC_SOURCE_FRAME_MS);
+      if (shouldPlay && layer.enabled !== false) {
+        Promise.resolve(layer.source?.play?.()).catch(() => {});
+      } else {
+        layer.source?.pause?.();
+      }
+    }
   }
 
   _textureUsage({ copyDestination = false } = {}) {
@@ -2026,7 +2007,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   ) {
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
-    this._stopCompositionSourceTimer();
+    this._syncCompositionSourcePlayback(false);
     this._teardownState();
     this.compositionLayers = (layers || []).map((layer) => ({
       ...layer,
@@ -2038,6 +2019,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       sourceFillUniform: null,
       sourceUploaded: false,
     }));
+    this._syncCompositionSourcePlayback();
     this.setupFn = (device, frame) => {
       const fills = this.compositionLayers.filter(
         (layer) => layer.role === "fill" && layer.enabled
@@ -2104,7 +2086,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       return false;
     }
     this.onError(null);
-    this._syncCompositionSourceTimer();
     return true;
   }
 
@@ -2114,7 +2095,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   ) {
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
-    this._stopCompositionSourceTimer();
+    this._syncCompositionSourcePlayback(false);
     this._teardownState();
     this.compositionLayers = null;
     this.setupFn = setup;
@@ -2170,7 +2151,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
     this._cancelVideoFrameCallback();
-    this._stopCompositionSourceTimer();
+    this._syncCompositionSourcePlayback();
     this._teardownState();
     this.setupFn = null;
     this.renderFn = null;
@@ -2226,6 +2207,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       this._watchVideoFrames();
       Promise.resolve(this.video.play?.()).catch(() => {});
     }
+    this._syncCompositionSourcePlayback();
     const now = performance.now();
     // Resume from the current frame clock so temporary stop()/start() pairs
     // (thumbnail capture) do not jump, and a zeroed pause restarts at t=0.
@@ -2267,6 +2249,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._cancelMouseReset();
     this._cancelVideoFrameCallback();
     this.video?.pause?.();
+    this._syncCompositionSourcePlayback();
     if (!resetTime) return;
     this.frame.time = 0;
     this.frame.deltaTime = 0;
@@ -2286,18 +2269,17 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     const next = Boolean(active);
     if (next === this.active) return;
     this.active = next;
+    this._syncCompositionSourcePlayback();
     if (!this.active) {
       if (this.rafId) cancelAnimationFrame(this.rafId);
       this.rafId = 0;
-      this._stopCompositionSourceTimer();
       // Stop the video decoder so a hidden tab quiets the CPU/GPU. Frame
       // callbacks are re-armed on resume.
       this._cancelVideoFrameCallback();
       this.video?.pause?.();
       return;
     }
-    this._syncCompositionSourceTimer();
-    if (this.video) {
+    if (this.video && this.running) {
       this._videoFrameDirty = true;
       this._watchVideoFrames();
       // play() can reject if interrupted; playback resumes on the next start.
@@ -2346,7 +2328,6 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   destroy() {
     this.stop();
-    this._stopCompositionSourceTimer();
     clearTimeout(this._fillResizeTimer);
     this._fillResizeTimer = 0;
     clearTimeout(this._zoomResizeTimer);

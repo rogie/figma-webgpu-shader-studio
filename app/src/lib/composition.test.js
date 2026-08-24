@@ -19,6 +19,7 @@ import {
   reorderCompositionEffects,
   reorderCompositionFills,
   referencedShaderKeys,
+  replacePrimaryCompositionFill,
   resolveShaderFillKey,
   resolvedLibraryKind,
   serializeCompositionExport,
@@ -175,10 +176,18 @@ test("maps preview input sources onto fill types", () => {
   assert.equal(fillFromInputSource("vector").type, "image");
 });
 
-test("maps vector input onto an image paint", () => {
+test("maps preview input sources onto default paints", () => {
+  assert.deepEqual(
+    paintForInputSource("video", { video: "/clip.mp4" }),
+    { type: "video", video: { url: "/clip.mp4", scaleMode: "fit" } },
+  );
   assert.deepEqual(
     paintForInputSource("vector", { vector: "/vector.svg", image: "/photo.png" }),
-    { type: "image", image: { url: "/vector.svg", scaleMode: "fill" } },
+    { type: "image", image: { url: "/vector.svg", scaleMode: "fit" } },
+  );
+  assert.deepEqual(
+    paintForInputSource("image", { image: "/photo.png" }),
+    { type: "image", image: { url: "/photo.png", scaleMode: "fit" } },
   );
   assert.deepEqual(
     sessionInputPlan({
@@ -295,6 +304,48 @@ test("reorders composition fills and updates the topmost alias", () => {
   );
   assert.strictEqual(moved.fill, moved.fills[0]);
   assert.equal(reorderCompositionFills(graph, 0, 9).fill.id, "a");
+});
+
+test("replaces or adds the primary composition fill with dropped media", () => {
+  const videoPaint = {
+    type: "video",
+    video: { url: "blob:video", scaleMode: "fit" },
+  };
+  const replaced = replacePrimaryCompositionFill(
+    {
+      fills: [
+        { id: "top", type: "shader", shaderId: "cloud:fill" },
+        { id: "bottom", type: "image" },
+      ],
+      effects: [{ id: "fx", shaderId: "cloud:effect" }],
+    },
+    {
+      type: "video",
+      shaderId: null,
+      values: {},
+      paint: videoPaint,
+    }
+  );
+  assert.equal(replaced.fills.length, 2);
+  assert.equal(replaced.fill.id, "top");
+  assert.equal(replaced.fill.type, "video");
+  assert.equal(replaced.fill.shaderId, null);
+  assert.deepEqual(replaced.fill.paint, videoPaint);
+  assert.equal(replaced.fills[1].id, "bottom");
+  assert.equal(replaced.effects[0].id, "fx");
+
+  const added = replacePrimaryCompositionFill(
+    { fills: [], effects: [] },
+    {
+      type: "image",
+      shaderId: null,
+      values: {},
+      paint: { type: "image", image: { url: "blob:image" } },
+    }
+  );
+  assert.equal(added.fills.length, 1);
+  assert.equal(added.fill.id, COMPOSITION_FILL_ID);
+  assert.equal(added.fill.type, "image");
 });
 
 test("parses draft and cloud shader ids", () => {

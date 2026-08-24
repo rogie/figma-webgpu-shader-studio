@@ -14,6 +14,7 @@ import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import ExportDialog from "./components/ExportDialog.jsx";
+import FigmaPlanDialog from "./components/FigmaPlanDialog.jsx";
 import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
 import "./components/HomeNav.css";
@@ -105,6 +106,15 @@ import {
   subscribeFigmaAccessToken,
 } from "./lib/figmaAccessToken.js";
 import { FIGMA_LIBRARY_UI_ENABLED } from "./lib/figmaLibraryUi.js";
+import {
+  preferredFigmaPlan,
+  setPreferredFigmaPlanKey,
+} from "./lib/figmaPlanPreference.js";
+import {
+  createAndDeployFigmaShader,
+  figmaShaderProgressMessage,
+  figmaShaderSuccessMessage,
+} from "./lib/figmaShaderSync.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
   ACTIVE_DRAFT_STORAGE_KEY,
@@ -167,6 +177,7 @@ import {
   parseCompositionShaderId,
   readReferencedShader,
   referencedShaderKeys,
+  replacePrimaryCompositionFill,
   resolveReferencedShaderSource,
   unpublishedCompositionLabels,
   unpublishedCompositionRefs,
@@ -193,8 +204,12 @@ import {
   withExclusiveShaderSave,
 } from "./lib/shaderSaveQueue.js";
 import {
+  buildFigmaShaderPackage,
+  createFigmaShader,
   getFigmaShader,
   listAllFigmaShaders,
+  listFigmaPlans,
+  updateFigmaShader,
 } from "./services/figmaShaders.js";
 import { useFigMenuChange } from "./hooks/useFigMenuChange.js";
 import { useOverflowFade } from "./hooks/useOverflowFade.js";
@@ -742,6 +757,11 @@ export default function App() {
   const [figmaImportProgress, setFigmaImportProgress] = useState(null);
   const [figmaImportCheckedKeys, setFigmaImportCheckedKeys] = useState([]);
   const [figmaImportKind, setFigmaImportKind] = useState("all");
+  const [figmaSyncing, setFigmaSyncing] = useState(false);
+  const [figmaSyncToast, setFigmaSyncToast] = useState(null);
+  const [figmaPlans, setFigmaPlans] = useState([]);
+  const [figmaPlanKey, setFigmaPlanKey] = useState("");
+  const [pendingFigmaCreate, setPendingFigmaCreate] = useState(null);
   const [codeCollapsed, setCodeCollapsed] = useState(
     () => savedSidebarSections().codeCollapsed
   );
@@ -794,6 +814,7 @@ export default function App() {
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
+  const figmaSyncToastRef = useRef(null);
   const noticeToastRef = useRef(null);
   const exportDialogRef = useRef(null);
   const exportTabsRef = useRef(null);
@@ -814,6 +835,7 @@ export default function App() {
   const editorCardsRef = useRef([]);
   const chooseItemRef = useRef(() => {});
   const figmaImportDialogRef = useRef(null);
+  const figmaPlanDialogRef = useRef(null);
   const figmaImportChooserRef = useRef(null);
   const figmaImportKindRef = useRef(null);
   const propertiesPanelRef = useRef(null);
@@ -1127,6 +1149,16 @@ export default function App() {
       setFigmaImportProgress(null);
     }
   }, [figmaImportOpen]);
+
+  useEffect(() => {
+    const dialog = figmaPlanDialogRef.current;
+    if (!dialog) return;
+    if (pendingFigmaCreate) {
+      if (!dialog.open) dialog.showModal();
+    } else if (dialog.open) {
+      dialog.close();
+    }
+  }, [pendingFigmaCreate]);
 
   useEffect(() => {
     const control = figmaImportKindRef.current;
@@ -1455,6 +1487,20 @@ export default function App() {
     );
     toast.showToast?.();
   }, [publishToast]);
+
+  useEffect(() => {
+    const toast = figmaSyncToastRef.current;
+    if (!toast) return;
+    if (!figmaSyncToast) {
+      toast.hideToast?.();
+      return;
+    }
+    toast.setAttribute(
+      "duration",
+      figmaSyncToast.phase === "syncing" ? "0" : "4500"
+    );
+    toast.showToast?.();
+  }, [figmaSyncToast]);
 
   useEffect(() => {
     if (notice) noticeToastRef.current?.showToast?.();
@@ -2095,6 +2141,7 @@ export default function App() {
       if (!host?.ready) return false;
       if (!isInputApplyCurrent(generation)) return false;
       clearObjectUrl();
+      let appliedPaint = null;
 
       if (mimeType.startsWith("video/")) {
         const video = document.createElement("video");
@@ -2183,8 +2230,9 @@ export default function App() {
         setInputSource("video");
         const videoPaint = {
           type: "video",
-          video: { url, scaleMode: "fill" },
+          video: { url, scaleMode: "fit" },
         };
+        appliedPaint = videoPaint;
         syncEffectFillFromCanvasInput(videoPaint);
       } else {
         const bitmap =
@@ -2199,13 +2247,15 @@ export default function App() {
         setInputSource("image");
         const previewUrl = URL.createObjectURL(blob);
         setImagePreviewUrl(previewUrl);
-        syncEffectFillFromCanvasInput({
+        const imagePaint = {
           type: "image",
-          image: { url: previewUrl, scaleMode: "fill" },
-        });
+          image: { url: previewUrl, scaleMode: "fit" },
+        };
+        appliedPaint = imagePaint;
+        syncEffectFillFromCanvasInput(imagePaint);
       }
       setPreviewRevision((revision) => revision + 1);
-      return true;
+      return appliedPaint;
     },
     [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl, syncEffectFillFromCanvasInput]
   );
@@ -2352,7 +2402,7 @@ export default function App() {
       setImagePreviewUrl(defaultVectorUrl);
       syncEffectFillFromCanvasInput({
         type: "image",
-        image: { url: defaultVectorUrl, scaleMode: "fill" },
+        image: { url: defaultVectorUrl, scaleMode: "fit" },
       });
       setPreviewRevision((revision) => revision + 1);
       return true;
@@ -2847,7 +2897,7 @@ export default function App() {
         .then((url) => {
           if (!url || !isInputApplyCurrent(generation)) return;
           const paint = isVideo
-            ? { type: "video", video: { url, scaleMode: "fill" } }
+            ? { type: "video", video: { url, scaleMode: "fit" } }
             : { type: "image", image: { url, scaleMode: "fill" } };
           syncEffectFillFromCanvasInput(paint);
           if (!isVideo) setImagePreviewUrl(url);
@@ -3899,16 +3949,21 @@ export default function App() {
       const generation = ++inputApplyGenRef.current;
       setUploading(true);
       try {
-        const applied = await applyMediaBlob(file, mimeType, generation);
-        if (!applied) return;
+        const paint = await applyMediaBlob(file, mimeType, generation);
+        if (!paint) return;
         setPendingMedia(file);
         if (sessionKindRef.current === COMPOSITION_KIND && !protectedPreview) {
           const fillType = fillTypeForDroppedMedia(mimeType);
           if (fillType) {
-            const graph = normalizeComposition({
-              ...compositionRef.current,
-              fill: { type: fillType, shaderId: null, values: {} },
-            });
+            const graph = replacePrimaryCompositionFill(
+              compositionRef.current,
+              {
+                type: fillType,
+                shaderId: null,
+                values: {},
+                paint,
+              }
+            );
             compositionRef.current = graph;
             setComposition(graph);
           }
@@ -4967,6 +5022,7 @@ export default function App() {
       setPublishToast({
         phase: "done",
         url: makeShareUrl(saved.id, saved.kind),
+        kind: saved.kind,
       });
     } catch (publishError) {
       setPublishToast(null);
@@ -5109,7 +5165,7 @@ export default function App() {
           current.filter((item) => item.id !== shader.id)
         );
         selectAfterLibraryDelete(cloudChoiceId(shader.id));
-        showNotice("Shader deleted", { danger: true });
+        showNotice("Shader deleted");
         return true;
       } catch (deleteError) {
         setError(deleteError.message || String(deleteError));
@@ -5138,7 +5194,7 @@ export default function App() {
     setDeleting(true);
     if (deleteTarget.draft) {
       removeDraft(deleteTarget.draft);
-      showNotice("Shader deleted", { danger: true });
+      showNotice("Shader deleted");
       setDeleteTarget(null);
       setDeleting(false);
       return;
@@ -6066,6 +6122,159 @@ export default function App() {
     else if (value === "composition") createCompositionDraft();
     else if (value === "from-figma") setFigmaImportOpen(true);
   });
+
+  const persistCurrentFigmaLink = useCallback(
+    async (link) => {
+      const normalizedLink = figmaShaderLink(link);
+      draftSessionRef.current = {
+        ...draftSessionRef.current,
+        ...normalizedLink,
+      };
+      if (isDraftId(presetId)) {
+        setDrafts((current) => {
+          const next = current.map((draft) =>
+            draft.id === presetId ? { ...draft, ...normalizedLink } : draft
+          );
+          writeDrafts(next, thumbnailDataUrlsRef.current);
+          return next;
+        });
+        return normalizedLink;
+      }
+      if (currentShader?.id && isOwner) {
+        const saved = await updateShader(currentShader.id, normalizedLink);
+        setCurrentShader(saved);
+        setCloudShaders((current) =>
+          current.map((shader) =>
+            shader.id === saved.id ? { ...shader, ...saved } : shader
+          )
+        );
+        return figmaShaderLink(saved);
+      }
+      throw new Error("Save or duplicate this shader before creating it in Figma.");
+    },
+    [currentShader, isOwner, presetId, setCurrentShader]
+  );
+
+  const runFigmaUpdate = useCallback(
+    async (snapshot, link, operation) => {
+      setFigmaSyncing(true);
+      setFigmaSyncToast({
+        phase: "syncing",
+        message: figmaShaderProgressMessage(operation, snapshot.kind),
+      });
+      try {
+        const pkg = buildFigmaShaderPackage(snapshot.source, snapshot.name);
+        const result = await updateFigmaShader({
+          id: link.figma_shader_id,
+          kind: snapshot.kind,
+          mainTs: pkg.mainTs,
+          commitMessage: `${
+            operation === "create" ? "Create" : "Update"
+          } ${snapshot.name} from Shader Studio`,
+        });
+        await persistCurrentFigmaLink({
+          ...link,
+          figma_shader_version:
+            result.version || link.figma_shader_version || null,
+        });
+        setFigmaSyncToast({
+          phase: "done",
+          message: figmaShaderSuccessMessage(operation, snapshot.kind),
+        });
+      } catch (syncError) {
+        setFigmaSyncToast(null);
+        showNotice(syncError.message || String(syncError), { error: true });
+      } finally {
+        setFigmaSyncing(false);
+      }
+    },
+    [persistCurrentFigmaLink, showNotice]
+  );
+
+  const createShaderInFigma = useCallback(
+    async (snapshot, planKey) => {
+      setFigmaSyncing(true);
+      setFigmaSyncToast({
+        phase: "syncing",
+        message: figmaShaderProgressMessage("create", snapshot.kind),
+      });
+      try {
+        const pkg = buildFigmaShaderPackage(snapshot.source, snapshot.name);
+        await createAndDeployFigmaShader({
+          snapshot: {
+            ...snapshot,
+            mainTs: pkg.mainTs,
+          },
+          planKey,
+          create: createFigmaShader,
+          update: updateFigmaShader,
+          persistLink: persistCurrentFigmaLink,
+        });
+        setFigmaSyncToast({
+          phase: "done",
+          message: figmaShaderSuccessMessage("create", snapshot.kind),
+        });
+      } catch (syncError) {
+        setFigmaSyncToast(null);
+        showNotice(syncError.message || String(syncError), { error: true });
+      } finally {
+        setFigmaSyncing(false);
+      }
+    },
+    [persistCurrentFigmaLink, showNotice]
+  );
+
+  const beginFigmaSync = useCallback(async () => {
+    if (figmaSyncing || sessionKind === COMPOSITION_KIND) return;
+    const snapshot = {
+      name: shaderName.trim() || "Untitled Shader",
+      source: sourceRef.current,
+      kind: activeFigmaLink.figma_shader_id
+        ? activeFigmaLink.figma_shader_kind ||
+          (sessionKind === "fill" ? "fill" : "effect")
+        : sessionKind === "fill"
+          ? "fill"
+          : "effect",
+    };
+    if (activeFigmaLink.figma_shader_id) {
+      await runFigmaUpdate(snapshot, activeFigmaLink, "update");
+      return;
+    }
+    try {
+      const plans = await listFigmaPlans();
+      if (!plans.length) {
+        throw new Error("No writable Figma team or organization is available.");
+      }
+      const preferred = preferredFigmaPlan(plans);
+      if (preferred) {
+        await createShaderInFigma(snapshot, preferred.key);
+        return;
+      }
+      setFigmaPlans(plans);
+      setFigmaPlanKey(plans[0].key);
+      setPendingFigmaCreate(snapshot);
+    } catch (planError) {
+      showNotice(planError.message || String(planError), { error: true });
+    }
+  }, [
+    activeFigmaLink,
+    createShaderInFigma,
+    figmaSyncing,
+    runFigmaUpdate,
+    sessionKind,
+    shaderName,
+    showNotice,
+  ]);
+
+  const confirmFigmaPlan = useCallback(() => {
+    const snapshot = pendingFigmaCreate;
+    const selected = figmaPlans.find((plan) => plan.key === figmaPlanKey);
+    if (!snapshot || !selected) return;
+    setPreferredFigmaPlanKey(selected.key);
+    setPendingFigmaCreate(null);
+    createShaderInFigma(snapshot, selected.key);
+  }, [createShaderInFigma, figmaPlanKey, figmaPlans, pendingFigmaCreate]);
+
   const onShaderAction = useCallback((value, anchor) => {
     if (value === "rename") startRename();
     else if (value === "save") {
@@ -6087,8 +6296,11 @@ export default function App() {
     } else if (value === "export") {
       if (kind === COMPOSITION_KIND) return;
       exportFiles();
+    } else if (value === "sync-figma") {
+      beginFigmaSync();
     }
   }, [
+    beginFigmaSync,
     copyShareLink,
     currentShader,
     dirty,
@@ -6218,7 +6430,17 @@ export default function App() {
                           : "Save"
                     }
                     showDownload={!isComposerView}
-                    showFigmaPush={FIGMA_LIBRARY_UI_ENABLED}
+                    showFigmaPush={
+                      FIGMA_LIBRARY_UI_ENABLED &&
+                      sessionKind !== COMPOSITION_KIND &&
+                      (isDraftId(presetId) || Boolean(currentShader && isOwner))
+                    }
+                    figmaLinked={Boolean(activeFigmaLink.figma_shader_id)}
+                    figmaKind={
+                      activeFigmaLink.figma_shader_kind ||
+                      (sessionKind === "fill" ? "fill" : "effect")
+                    }
+                    figmaSyncing={figmaSyncing}
                     triggerRef={moreMenuAnchorRef}
                     onAction={(value) =>
                       onShaderAction(value, moreMenuAnchorRef.current)
@@ -6292,19 +6514,6 @@ export default function App() {
                 showFps={!isComposerView || compositionPlayable}
               />
             )}
-            {isComposerView &&
-              mediaFillType(composition?.fill?.type) && (
-                <fig-tooltip text="Upload fill">
-                  <fig-button
-                    variant="ghost"
-                    icon="true"
-                    disabled={uploading || inputSource === "html"}
-                    onClick={() => fileInputRef.current?.click()}
-                  >
-                    <fig-icon name="upload" />
-                  </fig-button>
-                </fig-tooltip>
-              )}
             <fig-separator direction="vertical" />
             <fig-tooltip
               text={
@@ -6504,7 +6713,18 @@ export default function App() {
             showRename={!protectedPreview}
             showSave={!protectedPreview}
             showDownload={!isComposerView}
-            showFigmaPush={!protectedPreview && FIGMA_LIBRARY_UI_ENABLED}
+            showFigmaPush={
+              !protectedPreview &&
+              FIGMA_LIBRARY_UI_ENABLED &&
+              sessionKind !== COMPOSITION_KIND &&
+              (isDraftId(presetId) || Boolean(currentShader && isOwner))
+            }
+            figmaLinked={Boolean(activeFigmaLink.figma_shader_id)}
+            figmaKind={
+              activeFigmaLink.figma_shader_kind ||
+              (sessionKind === "fill" ? "fill" : "effect")
+            }
+            figmaSyncing={figmaSyncing}
             onAction={onShaderAction}
           />
           <fig-footer sticky="">
@@ -6828,6 +7048,15 @@ export default function App() {
         onCancel={() => setDeleteTarget(null)}
         onConfirm={confirmDelete}
       />
+      <FigmaPlanDialog
+        dialogRef={figmaPlanDialogRef}
+        plans={figmaPlans}
+        value={figmaPlanKey}
+        loading={figmaSyncing}
+        onChange={setFigmaPlanKey}
+        onCancel={() => setPendingFigmaCreate(null)}
+        onConfirm={confirmFigmaPlan}
+      />
 
       <dialog
         is="fig-dialog"
@@ -7051,6 +7280,9 @@ export default function App() {
         publishToastRef={publishToastRef}
         publishToast={publishToast}
         onPublishToastClose={() => setPublishToast(null)}
+        figmaSyncToastRef={figmaSyncToastRef}
+        figmaSyncToast={figmaSyncToast}
+        onFigmaSyncToastClose={() => setFigmaSyncToast(null)}
       />
       <input
         ref={fileInputRef}

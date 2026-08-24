@@ -7,7 +7,7 @@ description: Author, update, and validate Figma shader effects and shader fills.
 
 ## Instructions
 
-When this skill is used, immediately read `/Users/rking/Downloads/v3.md.tmpl` and follow it as the source of truth for coding Figma shader effects and shader fills.
+When this skill is used, immediately read `/Users/rking/Figma shaders/skills/v3.md.tmpl` and follow it as the source of truth for coding Figma shader effects and shader fills.
 
 Treat the template as shader-authoring guidance for the current agent. If the template refers to the `shader-coder` subagent or "caller", map that to the current request context.
 

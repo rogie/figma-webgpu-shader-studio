@@ -16,7 +16,7 @@ export default function DeleteShaderDialog({
       position="center center"
       autoresize=""
     >
-      <fig-content padding>
+      <fig-content>
         <p>
           Delete “{name || "this shader"}”? This action cannot be undone.
         </p>

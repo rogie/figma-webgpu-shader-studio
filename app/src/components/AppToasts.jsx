@@ -9,6 +9,9 @@ export default function AppToasts({
   publishToastRef,
   publishToast,
   onPublishToastClose,
+  figmaSyncToastRef,
+  figmaSyncToast,
+  onFigmaSyncToastClose,
 }) {
   return (
     <>
@@ -47,7 +50,6 @@ export default function AppToasts({
         live="polite"
         duration="3200"
         offset="24"
-        icon="checkmark"
       >
         <span>Video exported</span>
       </dialog>
@@ -86,11 +88,32 @@ export default function AppToasts({
           </>
         ) : publishToast?.phase === "done" ? (
           <span className="publish-toast-body">
-            Published to{" "}
-            <a href={publishToast.url} target="_blank" rel="noreferrer">
-              community
-            </a>
+            Published{" "}
+            {publishToast.kind === "composition"
+              ? "composition"
+              : publishToast.kind === "fill"
+                ? "shader fill"
+                : "shader effect"}
           </span>
+        ) : null}
+      </dialog>
+      <dialog
+        is="fig-toast"
+        ref={figmaSyncToastRef}
+        class="figma-sync-toast"
+        theme={figmaSyncToast?.phase === "done" ? "brand" : "dark"}
+        live="polite"
+        duration="0"
+        offset="24"
+        onClose={onFigmaSyncToastClose}
+      >
+        {figmaSyncToast?.phase === "syncing" ? (
+          <>
+            <fig-spinner aria-label="Syncing shader with Figma" />
+            <span>{figmaSyncToast.message}</span>
+          </>
+        ) : figmaSyncToast?.phase === "done" ? (
+          <span>{figmaSyncToast.message}</span>
         ) : null}
       </dialog>
     </>

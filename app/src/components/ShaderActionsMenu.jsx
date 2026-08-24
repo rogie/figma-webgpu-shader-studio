@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
+import { figmaShaderActionLabel } from "../lib/figmaShaderSync.js";
 
 export default function ShaderActionsMenu({
   signedIn = false,
@@ -10,6 +11,9 @@ export default function ShaderActionsMenu({
   saveLabel = "Save",
   showDownload = true,
   showFigmaPush = false,
+  figmaLinked = false,
+  figmaKind = "effect",
+  figmaSyncing = false,
   showRename = true,
   showSave = true,
   showTrigger = true,
@@ -70,18 +74,23 @@ export default function ShaderActionsMenu({
       <fig-separator />
       <fig-menu-item value="duplicate">Duplicate</fig-menu-item>
       {owner && <fig-menu-item value="delete">Delete</fig-menu-item>}
-      {(showDownload || showFigmaPush) && <fig-separator />}
+      {showDownload && <fig-separator />}
       {showDownload && (
         <fig-menu-item value="export">Download</fig-menu-item>
       )}
       {showFigmaPush && (
-        <fig-menu-item
-          value="push-figma"
-          disabled=""
-          title="Figma has not shipped create/update for the custom shader library yet."
-        >
-          Push to Figma (soon)
-        </fig-menu-item>
+        <>
+          <fig-separator label="Figma" />
+          <fig-menu-item
+            value="sync-figma"
+            disabled={figmaSyncing ? "" : undefined}
+          >
+            {figmaShaderActionLabel({
+              linked: figmaLinked,
+              kind: figmaKind,
+            })}
+          </fig-menu-item>
+        </>
       )}
     </fig-menu>
   );

@@ -32,7 +32,7 @@ export function resolvePaintFill(
     return {
       ...fill,
       video: {
-        scaleMode: "fill",
+        scaleMode: "fit",
         scale: 50,
         ...(fill.video && typeof fill.video === "object" ? fill.video : {}),
         url,
@@ -47,7 +47,7 @@ export function resolvePaintFill(
     return {
       ...fill,
       image: {
-        scaleMode: "fill",
+        scaleMode: "fit",
         ...(fill.image && typeof fill.image === "object" ? fill.image : {}),
         url,
       },

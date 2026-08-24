@@ -49,10 +49,9 @@ const TOAST_STATES = [
   },
   {
     id: "notice-danger-confirm",
-    title: "Notice · danger (confirm)",
-    description:
-      "Destructive-action confirmation. Danger theme, auto-dismisses.",
-    theme: "danger",
+    title: "Notice · confirmation",
+    description: "Destructive-action confirmation that auto-dismisses.",
+    theme: "dark",
     live: "polite",
     duration: "3200",
     className: "notice-toast",
@@ -115,12 +114,11 @@ const TOAST_STATES = [
   {
     id: "video-exported",
     title: "Video export · done",
-    description: "Brand success toast using the native checkmark icon.",
+    description: "Brand success toast shown after export completes.",
     theme: "brand",
     live: "polite",
     duration: "3200",
     className: "video-exported-toast",
-    icon: "checkmark",
     examples: ["Video exported"],
     body: () => <span>Video exported</span>,
   },
@@ -148,15 +146,12 @@ const TOAST_STATES = [
     live: "polite",
     duration: "4500",
     className: "publish-toast",
-    examples: ["Published to community"],
-    body: () => (
-      <span className="publish-toast-body">
-        Published to{" "}
-        <a href="#community" onClick={(event) => event.preventDefault()}>
-          community
-        </a>
-      </span>
-    ),
+    examples: [
+      "Published shader effect",
+      "Published shader fill",
+      "Published composition",
+    ],
+    body: (message) => <span className="publish-toast-body">{message}</span>,
   },
 ];
 

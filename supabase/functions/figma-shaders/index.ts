@@ -34,6 +34,7 @@ type Op =
   | "list"
   | "get"
   | "test"
+  | "plans"
   | "create"
   | "update"
   | "oauth-authorize"
@@ -54,6 +55,11 @@ type RequestBody = {
   codeVerifier?: string;
   refreshToken?: string;
   intent?: string;
+  name?: string;
+  description?: string;
+  planKey?: string;
+  mainTs?: string;
+  commitMessage?: string;
 };
 
 type OAuthIntent = "signin" | "connect";
@@ -685,7 +691,22 @@ class McpClient {
       method: "tools/call",
       params: { name, arguments: args },
     });
-    return rpc.result;
+    const result = rpc.result as {
+      isError?: boolean;
+      content?: Array<{ text?: string }>;
+    } | null;
+    if (result?.isError) {
+      const message = result.content
+        ?.map((part) => part?.text)
+        .filter((text): text is string => Boolean(text))
+        .join("\n")
+        .trim();
+      throw Object.assign(new Error(message || `${name} failed`), {
+        code: "figma_mcp_tool_error",
+        status: 502,
+      });
+    }
+    return result;
   }
 
   async readResource(uri: string): Promise<string> {
@@ -741,10 +762,146 @@ function extractToolPayload(result: unknown): Record<string, unknown> {
   }
 
   // Some servers return the payload at the top level.
-  if ("items" in record || "id" in record || "files" in record) {
+  if (
+    "items" in record || "id" in record || "files" in record ||
+    "plans" in record || "version" in record
+  ) {
     return record;
   }
   return {};
+}
+
+function requireShaderKind(kind: unknown): ShaderKind {
+  if (kind !== "effect" && kind !== "fill") {
+    throw Object.assign(new Error("kind must be effect or fill"), {
+      code: "invalid_kind",
+      status: 400,
+    });
+  }
+  return kind;
+}
+
+function requireBodyString(
+  value: unknown,
+  field: string,
+  maxLength = 100_000,
+): string {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) {
+    throw Object.assign(new Error(`${field} is required`), {
+      code: `invalid_${field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)}`,
+      status: 400,
+    });
+  }
+  if (text.length > maxLength) {
+    throw Object.assign(new Error(`${field} is too long`), {
+      code: `invalid_${field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)}`,
+      status: 400,
+    });
+  }
+  return text;
+}
+
+function requireBodySource(value: unknown): string {
+  const source = typeof value === "string" ? value : "";
+  if (!source.trim()) {
+    throw Object.assign(new Error("mainTs is required"), {
+      code: "invalid_main_ts",
+      status: 400,
+    });
+  }
+  if (source.length > 500_000) {
+    throw Object.assign(new Error("mainTs is too long"), {
+      code: "invalid_main_ts",
+      status: 400,
+    });
+  }
+  return source;
+}
+
+async function listFigmaPlans(client: McpClient) {
+  const payload = extractToolPayload(await client.callTool("whoami"));
+  const plans = Array.isArray(payload.plans) ? payload.plans : [];
+  return {
+    plans: plans.map((entry) => {
+      const plan = (entry && typeof entry === "object" ? entry : {}) as Record<
+        string,
+        unknown
+      >;
+      const key = typeof plan.key === "string" ? plan.key.trim() : "";
+      return {
+        key,
+        name: typeof plan.name === "string" && plan.name.trim()
+          ? plan.name.trim()
+          : "Figma plan",
+        tier: typeof plan.tier === "string" ? plan.tier : "",
+        seat: typeof plan.seat === "string" ? plan.seat : "",
+      };
+    }).filter((plan) => /^(team|organization)::\d+$/.test(plan.key)),
+  };
+}
+
+async function createFigmaShader(
+  client: McpClient,
+  body: RequestBody,
+) {
+  const kind = requireShaderKind(body.kind);
+  const name = requireBodyString(body.name, "name", 256);
+  const description = requireBodyString(body.description, "description", 1000);
+  const planKey = requireBodyString(body.planKey, "planKey", 128);
+  if (!/^(team|organization)::\d+$/.test(planKey)) {
+    throw Object.assign(new Error("planKey must be a Figma team or organization key"), {
+      code: "invalid_plan_key",
+      status: 400,
+    });
+  }
+  const payload = extractToolPayload(
+    await client.callTool("create_shader", {
+      name,
+      description,
+      planKey,
+      kind,
+    }),
+  );
+  const id = stringField(payload, "id", "shaderId", "shader_id");
+  if (!id) {
+    throw Object.assign(new Error("Figma did not return the created shader id"), {
+      code: "missing_shader_id",
+      status: 502,
+    });
+  }
+  return {
+    id,
+    kind,
+    version: stringField(payload, "version"),
+  };
+}
+
+async function updateFigmaShader(
+  client: McpClient,
+  body: RequestBody,
+) {
+  const kind = requireShaderKind(body.kind);
+  const id = requireBodyString(body.id, "id", 256);
+  const mainTs = requireBodySource(body.mainTs);
+  const commitMessage = requireBodyString(
+    body.commitMessage,
+    "commitMessage",
+    500,
+  );
+  const payload = extractToolPayload(
+    await client.callTool("update_shader", {
+      id,
+      kind,
+      mainTs,
+      commitMessage,
+    }),
+  );
+  return {
+    id: stringField(payload, "id", "shaderId", "shader_id") || id,
+    kind,
+    version: stringField(payload, "version", "commit", "commitSha", "sha"),
+  };
 }
 
 async function listShaders(
@@ -851,14 +1008,6 @@ Deno.serve(async (req) => {
   const op = body.op;
   if (!op) {
     return jsonResponse(400, { error: "Missing op", code: "missing_op" });
-  }
-
-  if (op === "create" || op === "update") {
-    return jsonResponse(501, {
-      error:
-        "Figma has not shipped create/update for the custom shader library yet.",
-      code: "write_not_supported",
-    });
   }
 
   if (op === "oauth-authorize") {
@@ -971,6 +1120,24 @@ Deno.serve(async (req) => {
       const client = new McpClient(token);
       await listShaders(client, "effect");
       return jsonResponse(200, { ok: true });
+    }
+
+    if (op === "plans") {
+      return jsonResponse(200, await listFigmaPlans(new McpClient(token)));
+    }
+
+    if (op === "create") {
+      return jsonResponse(
+        200,
+        await createFigmaShader(new McpClient(token), body),
+      );
+    }
+
+    if (op === "update") {
+      return jsonResponse(
+        200,
+        await updateFigmaShader(new McpClient(token), body),
+      );
     }
 
     if (op === "list") {

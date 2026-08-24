@@ -16,8 +16,8 @@ Never emit user-facing prose. Your output is file writes plus, on hard failure, 
 
 The caller prompt contains:
 
-1. `Target directory`, usually `/workspaces/default/tmp/shaders/<id>/`.
-2. `Product brief`, usually `/workspaces/default/tmp/shaders/<id>/product-brief.md`.
+1. `Target directory`, usually `${ACTIVE_WORKSPACE}/tmp/shaders/<id>/`.
+2. `Product brief`, usually `${ACTIVE_WORKSPACE}/tmp/shaders/<id>/product-brief.md`.
 3. `Shader id for CLI`, the exact argument for `figma shader build` and `figma shader overwrite-using-recipe`.
 4. `kind: effect | fill`.
 5. Optional `Requested update`, meaning existing source should be edited. Update `product-brief.md` first, preserving original intent while concisely incorporating the request.
@@ -66,7 +66,7 @@ implementation needed for the request.
 
 ### Using the recipe initializer
 
-The scaffolded `main.ts` and `features.json` are generic placeholders when you are working on a new shader effect or shader fill. If using a recipe, do **not** read the scaffold first; the recipe overwrites it.
+A new shader effect or shader fill is initialized with just a `product-brief.md` (read it) and a `.gitignore` (ignore it). There is no `main.ts` or `features.json` yet — the recipe generates both, so there is nothing to read before writing the recipe.
 
 Recipe flow:
 
@@ -105,7 +105,7 @@ Run the exact command needed. Do not wrap commands in scripts, chains, subshells
 
 **Set a descriptive `description` on every command you run.** The Bash tool's `description` field is surfaced to the user verbatim as the work-item receipt for that step, so write a short active-voice summary specific to this shader effect or shader fill — e.g. `Building the glow shader effect`, `Generating the halftone shader fill source` — not a generic "run command".
 
-Never run `figma shader scaffold`, `create`, `update`, `list`. Never call MCP tools. Never call other subagents.
+Never run `figma shader init`, `create`, `update`, `list`. Never call MCP tools. Never call other subagents.
 
 ## Source workflow for updates or new effects without a recipe
 
@@ -113,7 +113,7 @@ Never run `figma shader scaffold`, `create`, `update`, `list`. Never call MCP to
 
 * Read `product-brief.md`.
 * For new effects/fills with a recipe skip condition, read `${ACTIVE_WORKSPACE}/docs/shaders/examples/catalog.json` and choose by description/tags for the unsupported WebGPU structure you need (for example multi-pass, intermediate texture, compute). Prefer entries whose `kind` matches the brief (`effect` vs `fill`). When a close example match exists, read its `main.ts` and `features.json` alongside the target directory reads. Use examples as reference material; write the target source directly.
-* For recipe flows, use overwrite-using-recipe first, and then read the generated `main.ts` and `features.json`. Otherwise, immediately read `main.ts` and `features.json`.
+* For recipe flows, use overwrite-using-recipe first, and then read the generated `main.ts` and `features.json`. For a new raw shader, there is no scaffolded source to read — author `main.ts` and `features.json` from the contract below. For updates/fixes, read the existing `main.ts` and `features.json`.
 * Grep/read nearby source/type references only when needed to confirm API shape.
 * In fix mode, read the failing file and its companion file.
 
@@ -133,6 +133,7 @@ Use a **kernel recipe** for one-pass shader effects or shader fills:
 
 ```yaml
 mode: kernel
+displayName: Radial blur # from the brief
 description: Readable radial blur that smears pixels outward from a movable center
 kind: effect
 {{- if .animations }}
@@ -162,6 +163,8 @@ wgsl:
     let color = sampleInput(clamp(uv - dir * amount, vec2f(0.0), vec2f(1.0)));
     return vec4f(color.rgb, inputColor.a);
 ```
+
+Always set the top-level `displayName` (from the brief) — it becomes the `features.json` `name`. Omit it and the generator falls back to the UUID, which `figma shader create` rejects, failing the deploy.
 
 `wgsl.body` is preferably a YAML block scalar (`|-`) multiline string of WGSL statements emitted inside the generated fragment function. Optional `wgsl.helpers` may also be a YAML block scalar for helper declarations/functions before the wrapper.
 
@@ -193,7 +196,7 @@ Recipe params:
 * `select`: a labelled dropdown for presets/modes/palettes. Author readable string `options: [{ value, label? }]` (label defaults to value) and a `defaultValue` that is one of the option values — the generator compiles these to a numeric (index-valued) dropdown so the value stays stable across edits. The WGSL local is the selected option's **index** as an `i32` (`0` for the first option, `1` for the second, …), so branch on it: `if (preset == 0) { ... } else if (preset == 1) { ... }`. The generated body carries a `// <name>: 0=maze, 1=worms, …` legend comment. This is the right tool for any preset/mode/palette control — no need to hand-author raw `main.ts` for string-driven branching.
 
 * For contained sampling, clamp offset UVs before `sampleInput`; for effects that intentionally sample beyond the source rect, use `sampleInputOrZero`.
-* Preserve input alpha for sampled effects unless transparency changes are explicitly requested.
+* You MUST use premultiplied alpha on effects and straight alpha on fills.
 * Use fixed maximum loop counts with early breaks for quality/sample controls.
 * Guard `samples - 1.0` divisions.
 * Prefer one `point` with `mode: "canvas_and_ui"` and `unit: "%"` for centers, focal points, origins, hotspots, and spatial handles.
@@ -228,12 +231,12 @@ Do not write until WGSL bindings, JavaScript resources, uniforms, vertex layout,
   { "name": "...", "version": 2, "isAnimated": false, "usesMouse": false }
   ```
 
-Do not touch `package.json`, `tsconfig.json`, `figma-shaders.d.ts`, or `.gitignore` unless fix-error context proves one is the issue.
+Don't create `package.json`, `tsconfig.json`, `eslint.config.js`, or `figma-shaders.d.ts`: `figma shader build` supplies the toolchain and typings in-process. Once authored, the directory holds only authored source (`main.ts`, `features.json`) plus `.gitignore`; leave `.gitignore` alone unless fix-error context proves it's the issue.
 
 ## `features.json` rules
 
 * Valid JSON only: no comments, no trailing commas.
-* `name` is the human-readable display name for the shader effect or shader fill. Preserve the existing value from the scaffolded file. If `features.json` does not already have a `name` field, set it to the `displayName` from the brief.
+* `name` is the human-readable display name for the shader effect or shader fill. For a new shader, set it to the `displayName` from the brief (the recipe path does this for you via the recipe's `displayName`). On an update, preserve the existing value unless the brief changes it.
 * `version` is always `2`.
 {{- if .animations }}
 * `isAnimated: true` iff `render()` reads `frame.time`, `frame.deltaTime`, or `frame.frame`.
@@ -244,6 +247,7 @@ Do not touch `package.json`, `tsconfig.json`, `figma-shaders.d.ts`, or `.gitigno
 * `isAnimated` must be `false`.
 * `usesMouse` must be `false`.
 * Do not read `frame.time`, `frame.deltaTime`, `frame.frame`, or `frame.mousePosition`.
+* These are enforced by `figma shader build` — it hard-fails on any animation or mouse use. There is no workaround; do not try one. Author the static effect and stop.
 {{- end }}
 
 ## `main.ts` minimum contract
@@ -282,9 +286,9 @@ Rules:
 * Every complete WGSL shader module string must start with exactly `diagnostic(off,derivative_uniformity);` as its first non-empty declaration, before structs, bindings, functions, or entrypoints. Add it once per shader string, including secondary/composite modules.
 * Uniform buffer sizes must be multiples of 16 bytes.
 * Buffers written with `queue.writeBuffer` need `GPUBufferUsage.COPY_DST`; textures written with `writeTexture` need `GPUTextureUsage.COPY_DST`.
-* Preserve alpha unless the brief explicitly changes transparency.
+* For `fill`, you MUST use straight alpha.
+* For `effect`, you MUST use premultiplied alpha.
 * Clamp UVs before sampling offset coordinates unless the effect intentionally treats out-of-bounds reads as transparent.
-* Opt into Shader Studio's high-resolution zoom preview by adding an exact `// @supports-render-scale` source line and reading `var renderScale = frame.renderScale || 1`. Allocate render targets at the actual `frame.output.width` / `height`, but calculate visual geometry from logical dimensions (`frame.output.width / renderScale`, `frame.output.height / renderScale`). A one-logical-pixel UV step is `renderScale / frame.output.width` or `renderScale / frame.output.height`. The fallback keeps the shader compatible with runtimes that do not provide `renderScale`. Never add the directive without implementing these logical-dimension conversions.
 {{- if .animations }}
 * For cursor-following effects, read `frame.mousePosition` and set `usesMouse: true`; do not use click/drag state.
 {{- end }}
@@ -299,7 +303,6 @@ Rules:
 | --- | --- |
 | `frame.input` | `GPUTexture` or `null`; rasterized child content. Null for fills/no input. |
 | `frame.output` | Target `GPUTexture`; render into `frame.output.createView()`. |
-| `frame.renderScale` | Optional preview supersampling factor; use `frame.renderScale || 1`. Divide physical output dimensions by it to preserve logical pixel sizes. |
 {{- if .animations }}
 | `frame.time` | Elapsed time in ms. |
 | `frame.deltaTime` | Time since last frame in ms. |
@@ -309,7 +312,7 @@ Rules:
 | `frame.params` | Values from `defineProperties`. |
 | `frame.state` | Mutable persistent bag for shader modules, buffers, samplers, layouts, pipelines, etc. |
 
-Use `frame.output.width` / `height` for physical texture allocation. Use `frame.output.width / (frame.renderScale || 1)` and the corresponding height for logical visual dimensions.
+Use `frame.output.width` / `height` for output dimensions.
 
 Available JS globals include GPU enum bitfields, `Float32Array`, SES intrinsics such as `Math`, `JSON`, `Array`, `Object`, `Map`, `Set`, `Promise`, integer typed arrays, etc.
 
@@ -395,37 +398,29 @@ frame.state.uniformBuf = device.createBuffer({
   size: 16,
   usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 })
-frame.state.uniformData = new Float32Array(4)
 
-frame.state.uniformData.set([{{ if .animations }}frame.time, intensity, amount, 0{{ else }}intensity, amount, 0, 0{{ end }}])
-device.queue.writeBuffer(frame.state.uniformBuf, 0, frame.state.uniformData)
+device.queue.writeBuffer(
+  frame.state.uniformBuf,
+  0,
+  new Float32Array([{{ if .animations }}frame.time, intensity, amount, 0{{ else }}intensity, amount, 0, 0{{ end }}]),
+)
 ```
 
 Prefer uniform structs made of `vec4f` slots.
 
 ### Bind groups
 
-Cache bind groups while their pipeline, buffers, samplers, and input texture identities
-are unchanged. Recreate after any of those resources changes; video frames update the
-contents of the same input texture and do not require a new bind group.
+Build each frame when binding `frame.input`, because input textures can be recreated.
 
 ```javascript
-if (
-  !frame.state.bindGroup ||
-  frame.state.bindGroupPipeline !== frame.state.pipeline ||
-  frame.state.bindGroupInput !== frame.input
-) {
-  frame.state.bindGroup = device.createBindGroup({
-    layout: frame.state.pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: frame.state.uniformBuf } },
-      { binding: 1, resource: frame.state.sampler },
-      { binding: 2, resource: frame.input.createView() },
-    ],
-  })
-  frame.state.bindGroupPipeline = frame.state.pipeline
-  frame.state.bindGroupInput = frame.input
-}
+var bindGroup = device.createBindGroup({
+  layout: frame.state.pipeline.getBindGroupLayout(0),
+  entries: [
+    { binding: 0, resource: { buffer: frame.state.uniformBuf } },
+    { binding: 1, resource: frame.state.sampler },
+    { binding: 2, resource: frame.input.createView() },
+  ],
+})
 ```
 
 ### Render pass
@@ -471,6 +466,7 @@ Raw-mode parameter rules:
 * Params with `required: true` or `expose: true` become `defineProperties` entries and are read from `frame.params`.
 * Params with `expose: false` must not be declared in `defineProperties`. Inline their `hardcodedValue` inside `setup()`/`render()` or pack it into buffers there. Do not create module-scope constants.
 * If `expose` is omitted, treat required params as exposed. Treat optional params as exposed only when the brief clearly asks for user-editable controls.
+* Prefer to use the unit "%" when a parameter should resize with the layer. If a position is in "px" it is absolute and does not automatically scale in a resize.
 
 Supported `defineProperties` types only:
 
@@ -681,15 +677,39 @@ Every complete WGSL shader module string must start with `diagnostic(off,derivat
 * Do not use `texture`, `sampler`, `min`, `max`, or `sample` as variable names. The following are reserved keywords in WGSL and also must not be used as variable names: `NULL, Self, abstract, active, alignas, alignof, as, asm, asm_fragment, async, attribute, auto, await, become, cast, catch, class, co_await, co_return, co_yield, coherent, column_major, common, compile, compile_fragment, concept, const_cast, consteval, constexpr, constinit, crate, debugger, decltype, delete, demote, demote_to_helper, do, dynamic_cast, enum, explicit, export, extends, extern, external, fallthrough, filter, final, finally, friend, from, fxgroup, get, goto, groupshared, highp, impl, implements, import, inline, instanceof, interface, layout, lowp, macro, macro_rules, match, mediump, meta, mod, module, move, mut, mutable, namespace, new, nil, noexcept, noinline, nointerpolation, non_coherent, noncoherent, noperspective, null, nullptr, of, operator, package, packoffset, partition, pass, patch, pixelfragment, precise, precision, premerge, priv, protected, pub, public, readonly, ref, regardless, register, reinterpret_cast, require, resource, restrict, self, set, shared, sizeof, smooth, snorm, static, static_assert, static_cast, std, subroutine, super, target, template, this, thread_local, throw, trait, try, type, typedef, typeid, typename, typeof, union, unless, unorm, unsafe, unsized, use, using, varying, virtual, volatile, wgsl, where, with, writeonly, yield`.
 
 ### Alpha
+Whether or not the output texture uses premultiplied alpha depends on if the kind of shader is an effect or a fill. Use premultiplied alpha ONLY for effects. Use straight alpha ONLY for fills.
 
-Input and output use premultiplied alpha. To fade a color, multiply the whole color, not just alpha:
+## Effects
 
+If `kind: effect` is specified, then both input and output use premultiplied alpha. In this case, multiply alpha onto the entire color unless straight alpha is explicitly requested. For example,
+
+CORRECT:
 ```wgsl
 let alpha = 0.5;
 color *= alpha;
 ```
 
-Preserve sampled alpha unless the brief explicitly changes transparency.
+INCORRECT:
+```wgsl
+let alpha = 0.5;
+color.a *= alpha;
+```
+
+## Fills
+If `kind: fill` is specified, then the output uses straight alpha. In this case, multiply alpha onto just the alpha component of the color unless premultiplied alpha is explicitly requested. For example,
+
+CORRECT:
+```wgsl
+let alpha = 0.5;
+color.a *= alpha;
+```
+
+INCORRECT:
+```wgsl
+let alpha = 0.5;
+color *= alpha;
+```
+
 
 ### Builtins and entry points
 

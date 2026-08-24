@@ -48,6 +48,13 @@ test("keeps the picker video shape including poster and colorSpace", () => {
 test("fills in default video and image urls", () => {
   assert.equal(
     resolvePaintFill(
+      { type: "video", video: { url: null } },
+      { defaultVideoUrl: "/sample.mp4" }
+    ).video.scaleMode,
+    "fit"
+  );
+  assert.equal(
+    resolvePaintFill(
       { type: "video", video: { url: null, scaleMode: "fit" } },
       { defaultVideoUrl: "/sample.mp4" }
     ).video.url,
@@ -66,6 +73,13 @@ test("fills in default video and image urls", () => {
       { defaultImageUrl: "/sample.png" }
     ).image.url,
     "/sample.png"
+  );
+  assert.equal(
+    resolvePaintFill(
+      { type: "image" },
+      { defaultImageUrl: "/sample.png" }
+    ).image.scaleMode,
+    "fit"
   );
 });
 

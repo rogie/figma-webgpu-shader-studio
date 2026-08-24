@@ -258,6 +258,26 @@ export function reorderCompositionFills(graph, oldIndex, newIndex) {
   return withFillAlias(normalized, fills);
 }
 
+export function replacePrimaryCompositionFill(graph, replacement) {
+  const normalized = normalizeComposition(graph);
+  const current = normalized.fills[0] || {
+    id: COMPOSITION_FILL_ID,
+    type: "none",
+    shaderId: null,
+    values: {},
+    enabled: true,
+  };
+  const fill = normalizeFill(
+    {
+      ...current,
+      ...replacement,
+      id: current.id || COMPOSITION_FILL_ID,
+    },
+    COMPOSITION_FILL_ID
+  );
+  return withFillAlias(normalized, [fill, ...normalized.fills.slice(1)]);
+}
+
 export function reorderCompositionEffects(graph, oldIndex, newIndex) {
   const normalized = normalizeComposition(graph);
   const count = normalized.effects.length;
@@ -629,13 +649,13 @@ export function fillFromInputSource(inputSource) {
 
 export function paintForInputSource(inputSource, urls = {}) {
   if (inputSource === "video" && urls.video) {
-    return { type: "video", video: { url: urls.video, scaleMode: "fill" } };
+    return { type: "video", video: { url: urls.video, scaleMode: "fit" } };
   }
   if (inputSource === "vector" && urls.vector) {
-    return { type: "image", image: { url: urls.vector, scaleMode: "fill" } };
+    return { type: "image", image: { url: urls.vector, scaleMode: "fit" } };
   }
   if (urls.image) {
-    return { type: "image", image: { url: urls.image, scaleMode: "fill" } };
+    return { type: "image", image: { url: urls.image, scaleMode: "fit" } };
   }
   return null;
 }

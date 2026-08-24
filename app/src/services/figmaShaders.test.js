@@ -24,17 +24,89 @@ export default class Shader {
   assert.equal(pkg.features.isAnimated, true);
 });
 
-test("create/update stubs refuse write until Figma ships it", () => {
-  assert.throws(
-    () => createFigmaShader(),
-    (error) =>
-      error instanceof FigmaShadersError &&
-      error.code === "write_not_supported"
+test("createFigmaShader sends the staging MCP proxy contract", async () => {
+  const calls = [];
+  const result = await createFigmaShader(
+    async (body, options) => {
+      calls.push({ body, options });
+      return { id: "shader-1", kind: "effect", version: "v1" };
+    },
+    {
+      name: "Glow",
+      description: "Adds a glow",
+      planKey: "organization::123",
+      kind: "effect",
+    },
+    { token: "test-token" }
   );
-  assert.throws(
-    () => updateFigmaShader(),
+  assert.deepEqual(calls, [
+    {
+      body: {
+        op: "create",
+        name: "Glow",
+        description: "Adds a glow",
+        planKey: "organization::123",
+        kind: "effect",
+      },
+      options: { token: "test-token" },
+    },
+  ]);
+  assert.deepEqual(result, {
+    id: "shader-1",
+    kind: "effect",
+    version: "v1",
+  });
+});
+
+test("updateFigmaShader sends complete main.ts and commit message", async () => {
+  const calls = [];
+  const result = await updateFigmaShader(
+    async (body) => {
+      calls.push(body);
+      return { id: "shader-1", kind: "fill", version: "v2" };
+    },
+    {
+      id: "shader-1",
+      kind: "fill",
+      mainTs: "export default function Fill() {}",
+      commitMessage: "Update Fill from Shader Studio",
+    }
+  );
+  assert.deepEqual(calls[0], {
+    op: "update",
+    id: "shader-1",
+    kind: "fill",
+    mainTs: "export default function Fill() {}",
+    commitMessage: "Update Fill from Shader Studio",
+  });
+  assert.equal(result.version, "v2");
+});
+
+test("write requests validate kind, plan, and returned id", async () => {
+  await assert.rejects(
+    createFigmaShader(
+      async () => ({}),
+      {
+        name: "Glow",
+        description: "Glow",
+        planKey: "bad-plan",
+        kind: "effect",
+      }
+    ),
     (error) =>
-      error instanceof FigmaShadersError &&
-      error.code === "write_not_supported"
+      error instanceof FigmaShadersError && error.code === "invalid_plan_key"
+  );
+  await assert.rejects(
+    updateFigmaShader(
+      async () => ({}),
+      {
+        id: "shader-1",
+        kind: "effect",
+        mainTs: "source",
+        commitMessage: "Update",
+      }
+    ),
+    (error) =>
+      error instanceof FigmaShadersError && error.code === "missing_shader_id"
   );
 });

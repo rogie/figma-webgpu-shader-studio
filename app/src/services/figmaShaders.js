@@ -7,16 +7,14 @@ import {
 import { isSupabaseConfigured, supabase } from "../lib/supabase.js";
 import { buildFigmaShaderPackage } from "../runtime/exportFigma.js";
 import {
-  createFigmaShader,
+  createFigmaShader as createFigmaShaderRequest,
   FigmaShadersError,
-  updateFigmaShader,
+  updateFigmaShader as updateFigmaShaderRequest,
 } from "./figmaShadersWrite.js";
 
 export {
   buildFigmaShaderPackage,
-  createFigmaShader,
   FigmaShadersError,
-  updateFigmaShader,
 };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -466,4 +464,44 @@ export async function testFigmaConnection(options = {}) {
     email: typeof payload.email === "string" ? payload.email : undefined,
     handle: typeof payload.handle === "string" ? payload.handle : undefined,
   };
+}
+
+/**
+ * @param {{ token?: string, signal?: AbortSignal }} [options]
+ * @returns {Promise<Array<{ key: string, name: string, tier: string, seat: string }>>}
+ */
+export async function listFigmaPlans(options = {}) {
+  const payload = await callFigmaShaders({ op: "plans" }, options);
+  const plans = Array.isArray(payload.plans) ? payload.plans : [];
+  return plans
+    .map((plan) => ({
+      key: typeof plan?.key === "string" ? plan.key : "",
+      name:
+        typeof plan?.name === "string" && plan.name.trim()
+          ? plan.name.trim()
+          : "Figma plan",
+      tier: typeof plan?.tier === "string" ? plan.tier : "",
+      seat: typeof plan?.seat === "string" ? plan.seat : "",
+    }))
+    .filter(
+      (plan) =>
+        /^(team|organization)::\d+$/.test(plan.key) &&
+        plan.seat.toLowerCase() !== "view"
+    );
+}
+
+/**
+ * @param {{ name: string, description: string, planKey: string, kind: FigmaShaderKind }} args
+ * @param {{ token?: string, signal?: AbortSignal }} [options]
+ */
+export function createFigmaShader(args, options = {}) {
+  return createFigmaShaderRequest(callFigmaShaders, args, options);
+}
+
+/**
+ * @param {{ id: string, kind: FigmaShaderKind, mainTs: string, commitMessage: string }} args
+ * @param {{ token?: string, signal?: AbortSignal }} [options]
+ */
+export function updateFigmaShader(args, options = {}) {
+  return updateFigmaShaderRequest(callFigmaShaders, args, options);
 }

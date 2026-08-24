@@ -74,13 +74,13 @@ function defaultPaintFill(type) {
         },
       };
     case "video":
-      return { type: "video", video: { url: defaultVideoUrl, scaleMode: "fill" } };
+      return { type: "video", video: { url: defaultVideoUrl, scaleMode: "fit" } };
     case "webcam":
       return { type: "webcam" };
     default:
       return {
         type: "image",
-        image: { url: defaultInputUrl, scaleMode: "fill" },
+        image: { url: defaultInputUrl, scaleMode: "fit" },
       };
   }
 }
@@ -189,7 +189,7 @@ function findShaderFillCard(cards, shaderId) {
 function imageFillValueFromUrl(url) {
   return JSON.stringify({
     type: "image",
-    image: { url, scaleMode: "fill" },
+    image: { url, scaleMode: "fit" },
   });
 }
 
