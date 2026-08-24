@@ -12,6 +12,7 @@ const ShaderList = forwardRef(function ShaderList(
     layout = "list",
     showPreview = true,
     renderActions,
+    onContextMenu,
     drag = true,
   },
   ref
@@ -74,7 +75,12 @@ const ShaderList = forwardRef(function ShaderList(
         );
 
         return (
-          <fig-choice key={card.key} value={card.key} aria-label={card.name}>
+          <fig-choice
+            key={card.key}
+            value={card.key}
+            aria-label={card.name}
+            onContextMenu={(event) => onContextMenu?.(card, event)}
+          >
             {item}
           </fig-choice>
         );

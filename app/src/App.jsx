@@ -666,6 +666,8 @@ export default function App() {
   const nameInputRef = useRef(null);
   const fileInputRef = useRef(null);
   const moreMenuAnchorRef = useRef(null);
+  const shaderContextMenuRef = useRef(null);
+  const [shaderContextRequest, setShaderContextRequest] = useState(null);
   const publishAnchorRef = useRef(null);
   const publishDialogRef = useRef(null);
   const publishToastRef = useRef(null);
@@ -3274,6 +3276,29 @@ export default function App() {
   );
   chooseItemRef.current = chooseItem;
 
+  const onShaderContextMenu = useCallback(
+    (card, event) => {
+      if (!card?.key) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setShaderContextRequest({
+        key: card.key,
+        x: event.clientX,
+        y: event.clientY,
+      });
+      if (card.key !== presetId) chooseItem(card.key);
+    },
+    [chooseItem, presetId]
+  );
+
+  useEffect(() => {
+    if (!shaderContextRequest || shaderContextRequest.key !== presetId) return;
+    const menu = shaderContextMenuRef.current;
+    if (!menu?.showAt) return;
+    menu.showAt(shaderContextRequest.x, shaderContextRequest.y);
+    setShaderContextRequest(null);
+  }, [presetId, shaderContextRequest]);
+
   const openHomeChoice = useCallback(
     (id) => {
       if (typeof id !== "string") return;
@@ -5449,7 +5474,7 @@ export default function App() {
     else if (value === "composition") createCompositionDraft();
     else if (value === "from-figma") setFigmaImportOpen(true);
   });
-  const onShaderAction = useCallback((value) => {
+  const onShaderAction = useCallback((value, anchor) => {
     if (value === "rename") startRename();
     else if (value === "save") {
       if (saving || restoringVersion) return;
@@ -5457,7 +5482,7 @@ export default function App() {
       saveShader().catch(() => {});
     } else if (value === "publish") {
       if (!user || saving) return;
-      publishAnchorRef.current = moreMenuAnchorRef.current;
+      publishAnchorRef.current = anchor || moreMenuAnchorRef.current;
       setPublishOpen(true);
     } else if (value === "unpublish") {
       if (!isOwner || saving) return;
@@ -5603,7 +5628,9 @@ export default function App() {
                     showDownload={!isComposerView}
                     showFigmaPush={FIGMA_LIBRARY_UI_ENABLED}
                     triggerRef={moreMenuAnchorRef}
-                    onAction={onShaderAction}
+                    onAction={(value) =>
+                      onShaderAction(value, moreMenuAnchorRef.current)
+                    }
                   />
                 )}
               </hstack>
@@ -5863,6 +5890,34 @@ export default function App() {
             cards={groupedEditorCards}
             layout={libraryView}
             onChoice={chooseItem}
+            onContextMenu={onShaderContextMenu}
+          />
+          <ShaderActionsMenu
+            menuRef={shaderContextMenuRef}
+            showTrigger={false}
+            signedIn={!protectedPreview && Boolean(user)}
+            owner={!protectedPreview && isOwner}
+            published={Boolean(currentShader?.is_public)}
+            saving={saving}
+            saveDisabled={
+              saving ||
+              restoringVersion ||
+              Boolean(
+                currentShader && !dirty && !hasUncheckpointedChanges
+              )
+            }
+            saveLabel={
+              saving
+                ? "Saving…"
+                : currentShader && isOwner
+                  ? "Save version"
+                  : "Save"
+            }
+            showRename={!protectedPreview}
+            showSave={!protectedPreview}
+            showDownload={!isComposerView}
+            showFigmaPush={!protectedPreview && FIGMA_LIBRARY_UI_ENABLED}
+            onAction={onShaderAction}
           />
           <fig-footer sticky="">
             <AccountMenu

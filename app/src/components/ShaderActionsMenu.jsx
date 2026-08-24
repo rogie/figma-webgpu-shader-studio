@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 
 export default function ShaderActionsMenu({
@@ -9,34 +10,52 @@ export default function ShaderActionsMenu({
   saveLabel = "Save",
   showDownload = true,
   showFigmaPush = false,
+  showRename = true,
+  showSave = true,
+  showTrigger = true,
   position = "bottom right",
   triggerRef,
+  menuRef,
   onAction,
 }) {
-  const menuRef = useFigMenuChange((value) => onAction?.(value));
+  const changeRef = useFigMenuChange((value, menu) =>
+    onAction?.(value, menu)
+  );
+  const bindMenu = useCallback(
+    (node) => {
+      changeRef(node);
+      if (typeof menuRef === "function") menuRef(node);
+      else if (menuRef) menuRef.current = node;
+    },
+    [changeRef, menuRef]
+  );
 
   return (
     <fig-menu
-      ref={menuRef}
+      ref={bindMenu}
       key={signedIn ? "signed-in" : "signed-out"}
       position={position}
     >
-      <fig-tooltip text="More">
-        <fig-button
-          ref={triggerRef}
-          fig-menu-trigger=""
-          variant="ghost"
-          icon="true"
-          aria-label="More shader actions"
-        >
-          <fig-icon name="more" />
-        </fig-button>
-      </fig-tooltip>
-      <fig-menu-item value="rename">Rename</fig-menu-item>
-      <fig-menu-item value="save" disabled={saveDisabled ? "" : undefined}>
-        {saveLabel}
-      </fig-menu-item>
-      <fig-separator />
+      {showTrigger && (
+        <fig-tooltip text="More">
+          <fig-button
+            ref={triggerRef}
+            fig-menu-trigger=""
+            variant="ghost"
+            icon="true"
+            aria-label="More shader actions"
+          >
+            <fig-icon name="more" />
+          </fig-button>
+        </fig-tooltip>
+      )}
+      {showRename && <fig-menu-item value="rename">Rename</fig-menu-item>}
+      {showSave && (
+        <fig-menu-item value="save" disabled={saveDisabled ? "" : undefined}>
+          {saveLabel}
+        </fig-menu-item>
+      )}
+      {(showRename || showSave) && <fig-separator />}
       {signedIn && (
         <fig-menu-item value="publish" disabled={saving ? "" : undefined}>
           {published ? "Publish update" : "Publish…"}
