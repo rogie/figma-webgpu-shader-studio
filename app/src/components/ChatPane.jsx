@@ -1461,7 +1461,9 @@ ${pendingPlan.content}
           }
           if (
             isPlanMode(message.mode) &&
-            (message.pending || isPlanDocument(message.content))
+            isPlanDocument(message.content, {
+              allowIncomplete: Boolean(message.pending),
+            })
           ) {
             const subject = planDocumentSubject(message.content);
             return (
@@ -1486,9 +1488,17 @@ ${pendingPlan.content}
           if (isPlanMode(message.mode)) {
             return (
               <fig-chat-message key={index} from="agent">
-                <MarkdownProse className="chat-prose">
-                  {message.content}
-                </MarkdownProse>
+                {message.content ? (
+                  <MarkdownProse className="chat-prose">
+                    {message.content}
+                  </MarkdownProse>
+                ) : (
+                  message.pending && (
+                    <fig-shimmer aria-label={assistantPhaseLabel(message)}>
+                      <span>{assistantPhaseLabel(message)}</span>
+                    </fig-shimmer>
+                  )
+                )}
               </fig-chat-message>
             );
           }

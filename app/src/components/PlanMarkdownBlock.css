@@ -26,10 +26,6 @@
     color: var(--figma-color-text-tertiary);
   }
 
-  & .plan-markdown-header > fig-icon {
-    margin-right: calc(-1 * var(--spacer-2));
-  }
-
   /* Markdown element styles come from MarkdownProse.css. */
   & .plan-markdown-content {
     max-height: 16rem;

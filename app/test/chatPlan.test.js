@@ -57,7 +57,11 @@ test("plan prompt forbids applying a complete module", () => {
   });
 
   assert.match(prompt, /discussion and design phase/);
+  assert.match(prompt, /primary intent is to get information or to change/);
+  assert.match(prompt, /what may be missing, answer directly/);
+  assert.match(prompt, /Do not classify intent from punctuation alone/);
   assert.match(prompt, /ask concise clarification questions/);
+  assert.match(prompt, /Create or revise a plan only when the user explicitly asks/);
   assert.match(prompt, /exactly one H1 heading/);
   assert.match(prompt, /future-oriented language/);
   assert.match(prompt, /Do not emit a complete shader module/);
@@ -75,6 +79,10 @@ test("agent prompt retains the complete-module apply contract", () => {
   });
 
   assert.match(prompt, /exactly ONE plain-prose sentence in future tense/);
+  assert.match(prompt, /primary intent is to get information or to change/);
+  assert.match(prompt, /what may be missing, answer directly/);
+  assert.match(prompt, /Update the module only when the user explicitly requests/);
+  assert.match(prompt, /Can you add X/);
   assert.match(prompt, /Do not claim the implementation is complete/);
   assert.match(prompt, /COMPLETE updated module source/);
   assert.match(prompt, /applied automatically to the live editor/);
@@ -131,6 +139,12 @@ test("local plan fallback and deterministic cloud path", () => {
 test("clarifications stay in chat while completed plan responses become plan.md", () => {
   assert.equal(isPlanDocument("# Focused implementation plan\n\n- Step one"), true);
   assert.equal(isPlanDocument("#", { allowIncomplete: true }), true);
+  assert.equal(
+    isPlanDocument("Anything you suggest here or anything I’m missing?", {
+      allowIncomplete: true,
+    }),
+    false
+  );
   assert.equal(isPlanDocument("What does “more fun” mean here?"), false);
   assert.equal(
     isPlanDocument("Sorry—I need one detail before planning this. Which option?"),
