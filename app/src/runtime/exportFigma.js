@@ -1,7 +1,7 @@
 import { inferFeatures } from "./params.js";
 
-function download(filename, text, mime) {
-  const blob = new Blob([text], { type: mime });
+function download(filename, contents, mime) {
+  const blob = new Blob([contents], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -23,8 +23,8 @@ function download(filename, text, mime) {
 export function buildFigmaShaderPackage(source, name) {
   const inferred = inferFeatures(source);
   const features = {
-    name: name || "Shader",
     version: 2,
+    name: typeof name === "string" && name.trim() ? name.trim() : "Shader",
     isAnimated: inferred.isAnimated,
     usesMouse: inferred.usesMouse,
   };
@@ -35,10 +35,38 @@ export function buildFigmaShaderPackage(source, name) {
   };
 }
 
-// Export the current editor source as a shader-coder deliverable: main.ts plus
-// a generated features.json (version 2, inferred isAnimated/usesMouse).
-export function exportFigmaFiles(source, name) {
-  const { mainTs, featuresJson } = buildFigmaShaderPackage(source, name);
-  download("main.ts", mainTs, "text/typescript");
-  download("features.json", featuresJson, "application/json");
+function zipFilename(name) {
+  const safeName = name
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "-")
+    .replace(/[.\s]+$/g, "")
+    .slice(0, 120);
+  return `${safeName || "Shader"}.zip`;
+}
+
+/**
+ * Build a ZIP containing the complete shader-coder deliverable.
+ *
+ * @param {string} source
+ * @param {string} [name]
+ * @returns {Promise<{ filename: string, bytes: Uint8Array }>}
+ */
+export async function buildFigmaShaderZip(source, name) {
+  const { strToU8, zipSync } = await import("fflate");
+  const { mainTs, featuresJson, features } = buildFigmaShaderPackage(source, name);
+  return {
+    filename: zipFilename(features.name),
+    bytes: zipSync(
+      {
+        "main.ts": strToU8(mainTs),
+        "features.json": strToU8(featuresJson),
+      },
+      { level: 6 }
+    ),
+  };
+}
+
+// Export one shader-coder ZIP with main.ts and generated features.json.
+export async function exportFigmaFiles(source, name) {
+  const { filename, bytes } = await buildFigmaShaderZip(source, name);
+  download(filename, bytes, "application/zip");
 }

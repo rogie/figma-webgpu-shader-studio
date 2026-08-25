@@ -4274,8 +4274,12 @@ export default function App() {
     [pickFile]
   );
 
-  const exportFiles = useCallback(() => {
-    exportFigmaFiles(sourceRef.current, shaderName || "Shader");
+  const exportFiles = useCallback(async () => {
+    try {
+      await exportFigmaFiles(sourceRef.current, shaderName || "Shader");
+    } catch (exportError) {
+      setError(exportError.message || String(exportError));
+    }
   }, [shaderName]);
 
   const downloadPreviewImage = useCallback(async () => {
@@ -6509,6 +6513,7 @@ export default function App() {
           id: link.figma_shader_id,
           kind: snapshot.kind,
           mainTs: pkg.mainTs,
+          featuresJson: pkg.featuresJson,
           commitMessage: `${
             operation === "create" ? "Create" : "Update"
           } ${snapshot.name} from Shader Studio`,
@@ -6545,6 +6550,7 @@ export default function App() {
           snapshot: {
             ...snapshot,
             mainTs: pkg.mainTs,
+            featuresJson: pkg.featuresJson,
           },
           planKey,
           create: createFigmaShader,

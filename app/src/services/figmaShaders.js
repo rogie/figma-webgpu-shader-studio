@@ -499,7 +499,7 @@ export function createFigmaShader(args, options = {}) {
 }
 
 /**
- * @param {{ id: string, kind: FigmaShaderKind, mainTs: string, commitMessage: string }} args
+ * @param {{ id: string, kind: FigmaShaderKind, mainTs: string, featuresJson: string, commitMessage: string }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */
 export function updateFigmaShader(args, options = {}) {

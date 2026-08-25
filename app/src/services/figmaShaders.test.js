@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildFigmaShaderPackage } from "../runtime/exportFigma.js";
+import { strFromU8, unzipSync } from "fflate";
+import {
+  buildFigmaShaderPackage,
+  buildFigmaShaderZip,
+} from "../runtime/exportFigma.js";
 import {
   createFigmaShader,
   updateFigmaShader,
@@ -22,6 +26,27 @@ export default class Shader {
   assert.equal(pkg.features.name, "Demo");
   assert.equal(pkg.features.version, 2);
   assert.equal(pkg.features.isAnimated, true);
+});
+
+test("buildFigmaShaderZip bundles source and inferred mouse features", async () => {
+  const source = `
+// frame.time must not mark this shader as animated.
+export function render(device, frame) {
+  return frame.mousePosition.x;
+}
+`;
+  const archive = await buildFigmaShaderZip(source, "Cursor/Glow");
+  const files = unzipSync(archive.bytes);
+
+  assert.equal(archive.filename, "Cursor-Glow.zip");
+  assert.deepEqual(Object.keys(files).sort(), ["features.json", "main.ts"]);
+  assert.equal(strFromU8(files["main.ts"]), source);
+  assert.deepEqual(JSON.parse(strFromU8(files["features.json"])), {
+    version: 2,
+    name: "Cursor/Glow",
+    isAnimated: false,
+    usesMouse: true,
+  });
 });
 
 test("createFigmaShader sends the staging MCP proxy contract", async () => {
@@ -58,7 +83,7 @@ test("createFigmaShader sends the staging MCP proxy contract", async () => {
   });
 });
 
-test("updateFigmaShader sends complete main.ts and commit message", async () => {
+test("updateFigmaShader sends both source files and commit message", async () => {
   const calls = [];
   const result = await updateFigmaShader(
     async (body) => {
@@ -69,6 +94,8 @@ test("updateFigmaShader sends complete main.ts and commit message", async () => 
       id: "shader-1",
       kind: "fill",
       mainTs: "export default function Fill() {}",
+      featuresJson:
+        '{"version":2,"name":"Fill","isAnimated":false,"usesMouse":false}',
       commitMessage: "Update Fill from Shader Studio",
     }
   );
@@ -77,6 +104,8 @@ test("updateFigmaShader sends complete main.ts and commit message", async () => 
     id: "shader-1",
     kind: "fill",
     mainTs: "export default function Fill() {}",
+    featuresJson:
+      '{"version":2,"name":"Fill","isAnimated":false,"usesMouse":false}',
     commitMessage: "Update Fill from Shader Studio",
   });
   assert.equal(result.version, "v2");
@@ -103,6 +132,23 @@ test("write requests validate kind, plan, and returned id", async () => {
         id: "shader-1",
         kind: "effect",
         mainTs: "source",
+        featuresJson: "{broken",
+        commitMessage: "Update",
+      }
+    ),
+    (error) =>
+      error instanceof FigmaShadersError &&
+      error.code === "invalid_features_json"
+  );
+  await assert.rejects(
+    updateFigmaShader(
+      async () => ({}),
+      {
+        id: "shader-1",
+        kind: "effect",
+        mainTs: "source",
+        featuresJson:
+          '{"version":2,"name":"Glow","isAnimated":false,"usesMouse":false}',
         commitMessage: "Update",
       }
     ),
