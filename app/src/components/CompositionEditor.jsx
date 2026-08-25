@@ -637,6 +637,7 @@ function ImageFillInput({
       ref={ref}
       label={typeLabel}
       direction="horizontal"
+      size="large"
       mode={allowShader ? FILL_SHADER_MODES : FILL_PAINT_MODES}
       value={value}
       disabled={disabled ? "" : undefined}

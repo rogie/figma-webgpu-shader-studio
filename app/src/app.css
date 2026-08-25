@@ -76,6 +76,10 @@ body,
       padding-right: var(--spacer-2-5);
       gap: var(--spacer-1);
       padding-left: 0;
+
+      fig-tabs {
+        padding-block: 0;
+      }
     }
 
     .app-nav-header-actions {
