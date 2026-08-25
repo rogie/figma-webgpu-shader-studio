@@ -59,7 +59,8 @@ type RequestBody = {
   description?: string;
   planKey?: string;
   mainTs?: string;
-  featuresJson?: string;
+  isAnimated?: boolean;
+  usesMouse?: boolean;
   commitMessage?: string;
 };
 
@@ -820,29 +821,14 @@ function requireBodySource(value: unknown): string {
   return source;
 }
 
-function requireBodyFeaturesJson(value: unknown): string {
-  const source = typeof value === "string" ? value : "";
-  if (!source.trim()) {
-    throw Object.assign(new Error("featuresJson is required"), {
-      code: "invalid_features_json",
+function requireBodyBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw Object.assign(new Error(`${field} must be a boolean`), {
+      code: `invalid_${field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)}`,
       status: 400,
     });
   }
-  if (source.length > 50_000) {
-    throw Object.assign(new Error("featuresJson is too long"), {
-      code: "invalid_features_json",
-      status: 400,
-    });
-  }
-  try {
-    JSON.parse(source);
-  } catch {
-    throw Object.assign(new Error("featuresJson must be valid JSON"), {
-      code: "invalid_features_json",
-      status: 400,
-    });
-  }
-  return source;
+  return value;
 }
 
 async function listFigmaPlans(client: McpClient) {
@@ -910,7 +896,8 @@ async function updateFigmaShader(
   const kind = requireShaderKind(body.kind);
   const id = requireBodyString(body.id, "id", 256);
   const mainTs = requireBodySource(body.mainTs);
-  const featuresJson = requireBodyFeaturesJson(body.featuresJson);
+  const isAnimated = requireBodyBoolean(body.isAnimated, "isAnimated");
+  const usesMouse = requireBodyBoolean(body.usesMouse, "usesMouse");
   const commitMessage = requireBodyString(
     body.commitMessage,
     "commitMessage",
@@ -921,7 +908,8 @@ async function updateFigmaShader(
       id,
       kind,
       mainTs,
-      featuresJson,
+      isAnimated,
+      usesMouse,
       commitMessage,
     }),
   );

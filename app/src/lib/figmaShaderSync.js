@@ -43,7 +43,8 @@ export async function createAndDeployFigmaShader({
     id: created.id,
     kind: snapshot.kind,
     mainTs: snapshot.mainTs,
-    featuresJson: snapshot.featuresJson,
+    isAnimated: snapshot.isAnimated,
+    usesMouse: snapshot.usesMouse,
     commitMessage: `Create ${snapshot.name} from Shader Studio`,
   });
   const deployedLink = {

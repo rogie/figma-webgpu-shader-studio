@@ -83,7 +83,7 @@ test("createFigmaShader sends the staging MCP proxy contract", async () => {
   });
 });
 
-test("updateFigmaShader sends both source files and commit message", async () => {
+test("updateFigmaShader sends source, feature flags, and commit message", async () => {
   const calls = [];
   const result = await updateFigmaShader(
     async (body) => {
@@ -94,8 +94,8 @@ test("updateFigmaShader sends both source files and commit message", async () =>
       id: "shader-1",
       kind: "fill",
       mainTs: "export default function Fill() {}",
-      featuresJson:
-        '{"version":2,"name":"Fill","isAnimated":false,"usesMouse":false}',
+      isAnimated: true,
+      usesMouse: false,
       commitMessage: "Update Fill from Shader Studio",
     }
   );
@@ -104,8 +104,8 @@ test("updateFigmaShader sends both source files and commit message", async () =>
     id: "shader-1",
     kind: "fill",
     mainTs: "export default function Fill() {}",
-    featuresJson:
-      '{"version":2,"name":"Fill","isAnimated":false,"usesMouse":false}',
+    isAnimated: true,
+    usesMouse: false,
     commitMessage: "Update Fill from Shader Studio",
   });
   assert.equal(result.version, "v2");
@@ -132,23 +132,8 @@ test("write requests validate kind, plan, and returned id", async () => {
         id: "shader-1",
         kind: "effect",
         mainTs: "source",
-        featuresJson: "{broken",
-        commitMessage: "Update",
-      }
-    ),
-    (error) =>
-      error instanceof FigmaShadersError &&
-      error.code === "invalid_features_json"
-  );
-  await assert.rejects(
-    updateFigmaShader(
-      async () => ({}),
-      {
-        id: "shader-1",
-        kind: "effect",
-        mainTs: "source",
-        featuresJson:
-          '{"version":2,"name":"Glow","isAnimated":false,"usesMouse":false}',
+        isAnimated: false,
+        usesMouse: false,
         commitMessage: "Update",
       }
     ),

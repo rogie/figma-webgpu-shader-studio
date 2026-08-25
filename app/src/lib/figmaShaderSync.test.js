@@ -33,8 +33,8 @@ test("create persists the scaffold link before deploying source", async () => {
       name: "Glow",
       kind: "effect",
       mainTs: "export default function Effect() {}",
-      featuresJson:
-        '{"version":2,"name":"Glow","isAnimated":false,"usesMouse":false}',
+      isAnimated: true,
+      usesMouse: false,
     },
     planKey: "organization::123",
     create: async (args) => {
@@ -53,9 +53,12 @@ test("create persists the scaffold link before deploying source", async () => {
     ["create", "persist", "update", "persist"]
   );
   assert.equal(result.figma_shader_version, "v2");
-  assert.equal(
-    events.find(([event]) => event === "update")[1].featuresJson,
-    '{"version":2,"name":"Glow","isAnimated":false,"usesMouse":false}'
+  assert.deepEqual(
+    {
+      isAnimated: events.find(([event]) => event === "update")[1].isAnimated,
+      usesMouse: events.find(([event]) => event === "update")[1].usesMouse,
+    },
+    { isAnimated: true, usesMouse: false }
   );
 });
 
@@ -67,8 +70,8 @@ test("a failed initial deploy leaves the created link available for retry", asyn
         name: "Glow",
         kind: "effect",
         mainTs: "broken",
-        featuresJson:
-          '{"version":2,"name":"Glow","isAnimated":false,"usesMouse":false}',
+        isAnimated: false,
+        usesMouse: false,
       },
       planKey: "organization::123",
       create: async () => ({ id: "shader-1", kind: "effect" }),

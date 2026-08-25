@@ -6513,7 +6513,8 @@ export default function App() {
           id: link.figma_shader_id,
           kind: snapshot.kind,
           mainTs: pkg.mainTs,
-          featuresJson: pkg.featuresJson,
+          isAnimated: pkg.features.isAnimated,
+          usesMouse: pkg.features.usesMouse,
           commitMessage: `${
             operation === "create" ? "Create" : "Update"
           } ${snapshot.name} from Shader Studio`,
@@ -6550,7 +6551,8 @@ export default function App() {
           snapshot: {
             ...snapshot,
             mainTs: pkg.mainTs,
-            featuresJson: pkg.featuresJson,
+            isAnimated: pkg.features.isAnimated,
+            usesMouse: pkg.features.usesMouse,
           },
           planKey,
           create: createFigmaShader,

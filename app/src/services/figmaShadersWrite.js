@@ -37,23 +37,14 @@ function requiredSource(value) {
   return source;
 }
 
-function requiredFeaturesJson(value) {
-  const source = typeof value === "string" ? value : "";
-  if (!source.trim()) {
-    throw new FigmaShadersError("featuresJson is required", {
-      code: "invalid_features_json",
+function requiredBoolean(value, field) {
+  if (typeof value !== "boolean") {
+    throw new FigmaShadersError(`${field} must be a boolean`, {
+      code: `invalid_${field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)}`,
       status: 400,
     });
   }
-  try {
-    JSON.parse(source);
-  } catch {
-    throw new FigmaShadersError("featuresJson must be valid JSON", {
-      code: "invalid_features_json",
-      status: 400,
-    });
-  }
-  return source;
+  return value;
 }
 
 /**
@@ -125,7 +116,7 @@ export async function createFigmaShader(request, args, options = {}) {
 
 /**
  * @param {(body: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>} request
- * @param {{ id: string, kind: "effect" | "fill", mainTs: string, featuresJson: string, commitMessage: string }} args
+ * @param {{ id: string, kind: "effect" | "fill", mainTs: string, isAnimated: boolean, usesMouse: boolean, commitMessage: string }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */
 export async function updateFigmaShader(request, args, options = {}) {
@@ -140,7 +131,8 @@ export async function updateFigmaShader(request, args, options = {}) {
       id: requiredString(args?.id, "id"),
       kind: requiredKind(args?.kind),
       mainTs: requiredSource(args?.mainTs),
-      featuresJson: requiredFeaturesJson(args?.featuresJson),
+      isAnimated: requiredBoolean(args?.isAnimated, "isAnimated"),
+      usesMouse: requiredBoolean(args?.usesMouse, "usesMouse"),
       commitMessage: requiredString(args?.commitMessage, "commitMessage"),
     },
     options
