@@ -58,6 +58,22 @@ test("persistableEffectFill strips ephemeral media urls", () => {
   assert.equal(stored.paint.image.scaleMode, "fit");
 });
 
+test("persistableEffectFill strips build-specific default asset urls", () => {
+  const stored = persistableEffectFill({
+    type: "video",
+    paint: {
+      type: "video",
+      video: {
+        url: "/assets/default-input-Cz2i1NsZ.mp4",
+        scaleMode: "fit",
+      },
+    },
+  });
+
+  assert.equal(stored.paint.video.url, undefined);
+  assert.equal(stored.paint.video.scaleMode, "fit");
+});
+
 test("persistableEffectFill strips ephemeral video posters", () => {
   const stored = persistableEffectFill({
     type: "video",
@@ -608,6 +624,29 @@ test("authoritative cloud fills preserve a saved empty stack", () => {
     }),
     [],
   );
+});
+
+test("authoritative cloud fills rebind stale bundled defaults to this runtime", () => {
+  const [resolved] = resolveSessionEffectFills({
+    sessionId: "cloud:one",
+    storage: memoryStorage(),
+    documentAuthoritative: true,
+    documentFills: [
+      {
+        id: "saved-video",
+        type: "video",
+        paint: {
+          type: "video",
+          video: { url: "/assets/default-input-old.mp4", scaleMode: "fit" },
+        },
+      },
+    ],
+    sampleUrls: {
+      video: "/src/assets/default-input.mp4",
+    },
+  });
+
+  assert.equal(resolved.paint.video.url, "/src/assets/default-input.mp4");
 });
 
 test("effectFillIsLive allows blobs and effectFillIsDurable does not", () => {

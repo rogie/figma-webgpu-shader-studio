@@ -1938,22 +1938,27 @@ export default function App() {
           if (!loaded) await addFallbackFill(fill);
           continue;
         }
-        if (!isPaintFillType(fill.paint?.type)) continue;
+        const fillPaint = resolvePaintFill(fill.paint, {
+          defaultImageUrl: defaultInputUrl,
+          defaultVectorUrl,
+          defaultVideoUrl,
+        });
+        if (!isPaintFillType(fillPaint?.type)) continue;
         try {
-          if (fill.paint.type === "video") {
+          if (fillPaint.type === "video") {
             const assetUrl =
-              !fill.paint.video?.url && fill.paint.video?.assetPath
-                ? await getAssetUrl(fill.paint.video.assetPath)
+              !fillPaint.video?.url && fillPaint.video?.assetPath
+                ? await getAssetUrl(fillPaint.video.assetPath)
                 : "";
             const resolvedPaint = resolvePaintFill(
               assetUrl
                 ? {
-                    ...fill.paint,
-                    video: { ...fill.paint.video, url: assetUrl },
+                    ...fillPaint,
+                    video: { ...fillPaint.video, url: assetUrl },
                   }
-                : fill.paint,
+                : fillPaint,
               {
-              defaultVideoUrl,
+                defaultVideoUrl,
               }
             );
             const video = createHiddenVideoElement();
@@ -1978,9 +1983,9 @@ export default function App() {
             });
             continue;
           }
-          if (fill.paint.type === "webcam" && fill.paint.webcam?.live !== false) {
+          if (fillPaint.type === "webcam" && fillPaint.webcam?.live !== false) {
             activeWebcamFillIds.add(fill.id);
-            const wantedDevice = fill.paint.webcam?.deviceId || "";
+            const wantedDevice = fillPaint.webcam?.deviceId || "";
             let cached = compositionWebcamStreamsRef.current.get(fill.id);
             const cachedDevice = webcamDeviceId(cached?.stream);
             if (
@@ -2027,7 +2032,7 @@ export default function App() {
               }
             }
             if (stream) {
-              const webcamSettings = paintImageSource(fill.paint);
+              const webcamSettings = paintImageSource(fillPaint);
               const video = createHiddenVideoElement();
               video.srcObject = stream;
               await waitForVideoFrame(video, "Could not load webcam fill.");
@@ -2052,17 +2057,17 @@ export default function App() {
             }
           }
           const { width, height } = paintSize(host);
-          const assetPath = fill.paint.image?.assetPath;
+          const assetPath = fillPaint.image?.assetPath;
           const assetUrl =
-            !fill.paint.image?.url && assetPath
+            !fillPaint.image?.url && assetPath
               ? await getAssetUrl(assetPath)
               : "";
           const paint = assetUrl
             ? {
-                ...fill.paint,
-                image: { ...fill.paint.image, url: assetUrl },
+                ...fillPaint,
+                image: { ...fillPaint.image, url: assetUrl },
               }
-            : fill.paint;
+            : fillPaint;
           const bitmap = await rasterizePaintFill(paint, width, height);
           if (compileGeneration !== compileGenerationRef.current) {
             bitmap.close?.();

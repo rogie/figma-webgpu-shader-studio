@@ -19,6 +19,23 @@ export function graphTypeForPaint(type) {
   return "image";
 }
 
+export function bundledDefaultAssetKind(url) {
+  if (typeof url !== "string" || !url) return null;
+  let pathname;
+  try {
+    pathname = new URL(url, "https://shader-studio.local").pathname;
+  } catch {
+    pathname = url.split(/[?#]/, 1)[0];
+  }
+  const match = pathname.match(
+    /(?:^|\/)(?:assets\/default-input(?:-[a-z0-9_-]+)?|src\/assets\/default-input)\.(mp4|svg|png)$/i,
+  );
+  if (match?.[1]?.toLowerCase() === "mp4") return "video";
+  if (match?.[1]?.toLowerCase() === "svg") return "vector";
+  if (match?.[1]?.toLowerCase() === "png") return "image";
+  return null;
+}
+
 export function sampleFallbackPaint(defaultImageUrl) {
   return {
     type: "image",
@@ -34,14 +51,22 @@ export function fillLoadErrorMessage(fill, error) {
 
 export function resolvePaintFill(
   fill,
-  { defaultImageUrl = "", defaultVideoUrl = "" } = {}
+  {
+    defaultImageUrl = "",
+    defaultVectorUrl = "",
+    defaultVideoUrl = "",
+  } = {}
 ) {
   if (!fill || !isPaintFillType(fill.type)) return fill;
   if (fill.type === "video") {
-    const url =
+    const candidate =
       typeof fill.video?.url === "string" && fill.video.url
         ? fill.video.url
         : defaultVideoUrl;
+    const url =
+      bundledDefaultAssetKind(candidate) === "video" && defaultVideoUrl
+        ? defaultVideoUrl
+        : candidate;
     return {
       ...fill,
       video: {
@@ -53,10 +78,17 @@ export function resolvePaintFill(
     };
   }
   if (fill.type === "image") {
-    const url =
+    const candidate =
       typeof fill.image?.url === "string" && fill.image.url
         ? fill.image.url
         : defaultImageUrl;
+    const defaultKind = bundledDefaultAssetKind(candidate);
+    const url =
+      defaultKind === "vector" && defaultVectorUrl
+        ? defaultVectorUrl
+        : defaultKind === "image" && defaultImageUrl
+          ? defaultImageUrl
+          : candidate;
     return {
       ...fill,
       image: {

@@ -83,7 +83,8 @@ dialog[is="fig-popup"].shader-version-popup {
     visibility: hidden;
   }
 
-  fig-menu-item.shader-version-menu-item:hover .shader-version-item-trailing--interactive {
+  fig-menu-item.shader-version-menu-item:hover .shader-version-item-trailing--interactive,
+  fig-menu-item.shader-version-menu-item:has(fig-menu[open]) .shader-version-item-trailing--interactive {
     & .shader-version-item-time {
       visibility: hidden;
     }

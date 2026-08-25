@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  bundledDefaultAssetKind,
   buildGradientCss,
   coverContainRect,
   fillLoadErrorMessage,
@@ -13,6 +14,33 @@ import {
   resolvePaintFill,
   sampleFallbackPaint,
 } from "./paintFill.js";
+
+test("recognizes and rebinds build-specific default asset urls", () => {
+  assert.equal(
+    bundledDefaultAssetKind("/assets/default-input-Cz2i1NsZ.mp4"),
+    "video",
+  );
+  assert.equal(
+    resolvePaintFill(
+      {
+        type: "video",
+        video: { url: "/assets/default-input-Cz2i1NsZ.mp4" },
+      },
+      { defaultVideoUrl: "/src/assets/default-input.mp4" },
+    ).video.url,
+    "/src/assets/default-input.mp4",
+  );
+  assert.equal(
+    resolvePaintFill(
+      {
+        type: "image",
+        image: { url: "/assets/default-input-old.svg" },
+      },
+      { defaultVectorUrl: "/src/assets/default-input.svg" },
+    ).image.url,
+    "/src/assets/default-input.svg",
+  );
+});
 
 test("identifies paint fill types and graph mapping", () => {
   assert.equal(isPaintFillType("solid"), true);

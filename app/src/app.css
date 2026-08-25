@@ -75,7 +75,7 @@ body,
       padding-block: var(--spacer-2);
       padding-right: var(--spacer-2-5);
       gap: var(--spacer-1);
-      padding-left: var(--spacer-1);
+      padding-left: 0;
     }
 
     .app-nav-header-actions {

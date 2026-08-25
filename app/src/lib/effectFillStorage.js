@@ -4,6 +4,10 @@ import {
   paintForInputSource,
   parseCompositionShaderId,
 } from "./composition.js";
+import {
+  bundledDefaultAssetKind,
+  resolvePaintFill,
+} from "./paintFill.js";
 
 export const EFFECT_FILL_STORAGE_KEY = "figma-shader-studio:effect-fills";
 
@@ -80,7 +84,9 @@ function persistableNormalizedEffectFill(normalized) {
   let changed = false;
   if (
     nextPaint.image &&
-    (nextPaint.image.assetPath || isEphemeralUrl(nextPaint.image.url))
+    (nextPaint.image.assetPath ||
+      isEphemeralUrl(nextPaint.image.url) ||
+      bundledDefaultAssetKind(nextPaint.image.url))
   ) {
     const { url: _url, ...image } = nextPaint.image;
     nextPaint.image = image;
@@ -88,7 +94,11 @@ function persistableNormalizedEffectFill(normalized) {
   }
   if (nextPaint.video) {
     const video = { ...nextPaint.video };
-    if (video.assetPath || isEphemeralUrl(video.url)) {
+    if (
+      video.assetPath ||
+      isEphemeralUrl(video.url) ||
+      bundledDefaultAssetKind(video.url)
+    ) {
       delete video.url;
       changed = true;
     }
@@ -231,6 +241,18 @@ function isLegacyDefaultSample(fills, sampleUrls) {
   );
 }
 
+function resolveBundledDefaultFills(fills, sampleUrls) {
+  return fills.map((fill) => {
+    if (!fill?.paint) return fill;
+    const paint = resolvePaintFill(fill.paint, {
+      defaultImageUrl: sampleUrls.image,
+      defaultVectorUrl: sampleUrls.vector,
+      defaultVideoUrl: sampleUrls.video,
+    });
+    return paint === fill.paint ? fill : { ...fill, paint };
+  });
+}
+
 export function resolveSessionEffectFills({
   sessionId,
   store = null,
@@ -252,17 +274,21 @@ export function resolveSessionEffectFills({
       }
     }
   }
+  memoryFills = resolveBundledDefaultFills(memoryFills, sampleUrls);
   const stored = storedEffectFills(sessionId, storage);
-  const storedFills = stored.fills;
+  const storedFills = resolveBundledDefaultFills(stored.fills, sampleUrls);
   const documentFillsProvided =
     Array.isArray(documentFills) ||
     Boolean(documentFill && typeof documentFill === "object");
-  const resolvedDocumentFills = normalizeEffectFills(
-    Array.isArray(documentFills)
-      ? documentFills
-      : documentFill
-        ? [documentFill]
-        : [],
+  const resolvedDocumentFills = resolveBundledDefaultFills(
+    normalizeEffectFills(
+      Array.isArray(documentFills)
+        ? documentFills
+        : documentFill
+          ? [documentFill]
+          : [],
+    ),
+    sampleUrls,
   );
   const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
   if (documentAuthoritative && documentFillsProvided) {
