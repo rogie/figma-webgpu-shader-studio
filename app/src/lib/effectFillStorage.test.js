@@ -568,6 +568,48 @@ test("resolveSessionEffectFills preserves explicitly empty durable stacks", () =
   );
 });
 
+test("authoritative cloud fills override stale local empty stacks", () => {
+  const storage = memoryStorage();
+  writeEffectFills("cloud:one", [], storage);
+  const store = new Map([["cloud:one", []]]);
+
+  const resolved = resolveSessionEffectFills({
+    sessionId: "cloud:one",
+    store,
+    storage,
+    documentAuthoritative: true,
+    documentFills: [
+      {
+        id: "saved",
+        type: "image",
+        paint: { type: "solid", color: "#fff" },
+      },
+    ],
+  });
+
+  assert.deepEqual(resolved.map((fill) => fill.id), ["saved"]);
+});
+
+test("authoritative cloud fills preserve a saved empty stack", () => {
+  const store = new Map([
+    [
+      "cloud:one",
+      [{ id: "local", type: "image", paint: { type: "solid", color: "#000" } }],
+    ],
+  ]);
+
+  assert.deepEqual(
+    resolveSessionEffectFills({
+      sessionId: "cloud:one",
+      store,
+      storage: memoryStorage(),
+      documentAuthoritative: true,
+      documentFills: [],
+    }),
+    [],
+  );
+});
+
 test("effectFillIsLive allows blobs and effectFillIsDurable does not", () => {
   const live = {
     type: "image",

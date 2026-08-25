@@ -3,11 +3,29 @@ import test from "node:test";
 import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
+  cacheFullShaderRow,
   filterShaderLibraryCards,
   figmaLibraryKey,
   nextLibraryCardKey,
   parseFigmaLibraryKey,
 } from "./shaderLibrary.js";
+
+test("caches a fetched full shader row for later navigation", () => {
+  const rows = [
+    { id: "one", name: "Library row", kind: "effect" },
+    { id: "two", name: "Other" },
+  ];
+  const next = cacheFullShaderRow(rows, {
+    id: "one",
+    source: "export const shader = true;",
+    composition: { effectFills: [{ id: "saved-fill" }] },
+  });
+
+  assert.equal(next.length, 2);
+  assert.equal(next[0].name, "Library row");
+  assert.equal(next[0].source, "export const shader = true;");
+  assert.equal(next[0].composition.effectFills[0].id, "saved-fill");
+});
 
 test("shows drafts, owned cloud drafts, and public shaders without presets", () => {
   const cards = buildShaderLibraryCards({

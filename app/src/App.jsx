@@ -48,6 +48,7 @@ import {
 } from "./runtime/exportVideo.js";
 import { ShaderHost } from "./runtime/host.js";
 import { loadModule } from "./runtime/loader.js";
+import { measurePerf, perfNow, recordPerf } from "./runtime/perf.js";
 import {
   buildDefaults,
   detectKind,
@@ -93,6 +94,7 @@ import { validateModuleSource } from "./lib/chatApply.js";
 import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
+  cacheFullShaderRow,
   figmaLibraryKey,
   filterShaderLibraryCards,
   nextLibraryCardKey,
@@ -175,6 +177,7 @@ import {
   mediaFillType,
   normalizeComposition,
   parseCompositionShaderId,
+  readEffectFillsFromComposition,
   readReferencedShader,
   referencedShaderKeys,
   replacePrimaryCompositionFill,
@@ -186,11 +189,13 @@ import {
 } from "./lib/composition.js";
 import {
   graphTypeForPaint,
+  fillLoadErrorMessage,
   isPaintFillType,
   paintImageSource,
   paintSize,
   rasterizePaintFill,
   resolvePaintFill,
+  sampleFallbackPaint,
 } from "./lib/paintFill.js";
 import {
   cloudChoiceId,
@@ -199,6 +204,7 @@ import {
   isDraftId,
   shaderContentFingerprint,
 } from "./lib/shaderIdentity.js";
+import { activateBeforeHydration } from "./lib/sessionRequests.js";
 import {
   shaderSaveQueue,
   withExclusiveShaderSave,
@@ -229,7 +235,6 @@ import {
   getShaderVersion,
   getAppRoute,
   getShaderRouteId,
-  listAllShaderVersions,
   listShaderVersions,
   listShaders,
   makeHomeUrl,
@@ -261,6 +266,9 @@ const THUMBNAIL_SIZE = 512;
 const THUMBNAIL_IDLE_MS = 4000;
 const BACKGROUND_AUTOSAVE_MS = 4000;
 const CLOUD_WRITE_BACKOFF_MS = 20_000;
+const FILL_ASSET_URL_CACHE_MS = 5 * 60_000;
+const fillAssetUrlCache = new Map();
+const fillAssetBatchPromises = new Map();
 
 const INITIAL_DRAFTS = savedDrafts();
 
@@ -284,6 +292,42 @@ const FIGMA_SHADER_CATEGORIES = [
   { kind: "fill", label: "Shader fill" },
 ];
 const EFFECT_PREVIEW_LAYER_ID = "effect-preview";
+
+function afterPointerRelease(callback) {
+  let finished = false;
+  let frame = 0;
+  let fallbackTimer = 0;
+
+  const cleanupListeners = () => {
+    window.clearTimeout(fallbackTimer);
+    window.removeEventListener("pointerup", open, true);
+    window.removeEventListener("pointercancel", cancel, true);
+  };
+  const open = () => {
+    if (finished) return;
+    finished = true;
+    cleanupListeners();
+    frame = requestAnimationFrame(callback);
+  };
+  const cancel = () => {
+    if (finished) return;
+    finished = true;
+    cleanupListeners();
+  };
+
+  window.addEventListener("pointerup", open, { once: true, capture: true });
+  window.addEventListener("pointercancel", cancel, {
+    once: true,
+    capture: true,
+  });
+  fallbackTimer = window.setTimeout(open, 180);
+
+  return () => {
+    finished = true;
+    cleanupListeners();
+    cancelAnimationFrame(frame);
+  };
+}
 
 function effectFillPreviewKey(fills) {
   const normalized = normalizeComposition(
@@ -383,13 +427,52 @@ async function hydrateCompositionMediaUrls(composition) {
     composition.fill ? [composition.fill] : null,
     composition.effectFill ? [composition.effectFill] : null,
   ].filter(Array.isArray);
-  const paths = groups.flat().map(fillMediaAssetPath).filter(Boolean);
+  const paths = [
+    ...new Set(
+      groups
+        .flat()
+        .filter((fill) => !fillMediaUrl(fill))
+        .map(fillMediaAssetPath)
+        .filter(Boolean)
+    ),
+  ];
   if (!paths.length) return composition;
-  let urlsByPath;
+  const now = Date.now();
+  const urlsByPath = {};
+  const missingPaths = [];
+  for (const path of paths) {
+    const cached = fillAssetUrlCache.get(path);
+    if (cached?.expiresAt > now && cached.url) {
+      urlsByPath[path] = cached.url;
+    } else {
+      fillAssetUrlCache.delete(path);
+      missingPaths.push(path);
+    }
+  }
   try {
-    urlsByPath = await getAssetUrls(paths);
+    if (missingPaths.length) {
+      const batchKey = [...missingPaths].sort().join("\n");
+      let batchPromise = fillAssetBatchPromises.get(batchKey);
+      if (!batchPromise) {
+        recordPerf("navigation.fillAssetBatch");
+        batchPromise = getAssetUrls(missingPaths).finally(() => {
+          fillAssetBatchPromises.delete(batchKey);
+        });
+        fillAssetBatchPromises.set(batchKey, batchPromise);
+      }
+      const resolved = await batchPromise;
+      for (const path of missingPaths) {
+        const url = resolved?.[path];
+        if (!url) continue;
+        urlsByPath[path] = url;
+        fillAssetUrlCache.set(path, {
+          url,
+          expiresAt: now + FILL_ASSET_URL_CACHE_MS,
+        });
+      }
+    }
   } catch {
-    return composition;
+    if (!Object.keys(urlsByPath).length) return composition;
   }
   const hydrate = (fill) => withFillAssetUrl(fill, urlsByPath);
   return {
@@ -666,6 +749,8 @@ export default function App() {
     isInputApplyCurrent,
     clearObjectUrl,
   } = useShaderRuntime();
+  const [fillsLoading, setFillsLoading] = useState(false);
+  const inputBusy = uploading || fillsLoading;
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
   const [cloudShaders, setCloudShaders] = useState([]);
@@ -699,8 +784,9 @@ export default function App() {
     saving,
     setSaving,
     shaderVersions,
-    setShaderVersions,
     versionsLoading,
+    versionsHasMore,
+    loadShaderVersions,
     restoringVersion,
     setRestoringVersion,
     pendingAgentCheckpoint,
@@ -864,6 +950,8 @@ export default function App() {
   const compileGenerationRef = useRef(0);
   const compileCompositionRef = useRef(null);
   const compileRef = useRef(null);
+  const navigationStartedAtRef = useRef(0);
+  const sessionRequestRef = useRef(0);
   const versionPreviewCacheRef = useRef(new Map());
   const versionPreviewStateRef = useRef(null);
   const versionPreviewAppliedRef = useRef(false);
@@ -1368,9 +1456,9 @@ export default function App() {
   useEffect(() => {
     const toast = inputLoadingToastRef.current;
     if (!toast) return;
-    if (uploading) toast.showToast?.();
+    if (inputBusy) toast.showToast?.();
     else toast.hideToast?.();
-  }, [uploading]);
+  }, [inputBusy]);
 
   useEffect(() => {
     const imageFormatSelect = imageFormatRef.current;
@@ -1532,6 +1620,13 @@ export default function App() {
       return;
     }
     hostRef.current?.setParams(next);
+  }, []);
+
+  const recordNavigationFirstFrame = useCallback(() => {
+    const startedAt = navigationStartedAtRef.current;
+    if (!startedAt) return;
+    navigationStartedAtRef.current = 0;
+    measurePerf("navigation.firstFrame", startedAt);
   }, []);
 
   const rememberResolved = useCallback((rows) => {
@@ -1707,18 +1802,48 @@ export default function App() {
   );
 
   const compileComposition = useCallback(
-    async (graphOverride) => {
+    async (
+      graphOverride,
+      { layerSourceOverrides = null, syncEditorState = true } = {}
+    ) => {
       const host = hostRef.current;
-      if (!host?.ready) return;
-      const graph = normalizeComposition(
+      if (!host?.ready) return false;
+      let graph = normalizeComposition(
         graphOverride || compositionRef.current || emptyComposition()
       );
+      const compileStartedAt = perfNow();
       const compileGeneration = ++compileGenerationRef.current;
       host.stop();
-      const resolved = await hydrateCompositionRefs(graph);
-      if (compileGeneration !== compileGenerationRef.current) return;
+      setFillsLoading(
+        graph.fills.some(
+          (fill) =>
+            fill.enabled &&
+            (fill.paint?.type === "image" ||
+              fill.paint?.type === "video" ||
+              fill.paint?.type === "webcam"),
+        ),
+      );
+      const hydrationStartedAt = perfNow();
+      let hydratedGraph;
+      let resolved;
+      try {
+        [hydratedGraph, resolved] = await Promise.all([
+          hydrateCompositionMediaUrls(graph),
+          hydrateCompositionRefs(graph),
+        ]);
+      } catch (hydrateError) {
+        if (compileGeneration === compileGenerationRef.current) {
+          setFillsLoading(false);
+          setError(hydrateError.message || String(hydrateError));
+        }
+        return false;
+      }
+      measurePerf("navigation.fillHydration", hydrationStartedAt);
+      if (compileGeneration !== compileGenerationRef.current) return false;
+      graph = normalizeComposition(hydratedGraph);
       const map = new Map(Object.entries(resolved));
       const layers = [];
+      const fillWarnings = [];
       const activeWebcamFillIds = new Set();
       for (const source of compositionMediaSourcesRef.current) {
         source.pause?.();
@@ -1728,15 +1853,28 @@ export default function App() {
       }
       compositionMediaSourcesRef.current = [];
       const loadLayer = (id, role, shaderId, values, enabled = true) => {
-        const source = resolveReferencedShaderSource(shaderId, {
-          session: draftSessionRef.current,
-          drafts,
-          liveByKey: liveShaderSourceRef.current,
-          resolvedByKey: map,
-        });
-        if (!source) return;
+        const sourceOverride = layerSourceOverrides?.get?.(id);
+        const source =
+          (typeof sourceOverride === "string" && sourceOverride) ||
+          resolveReferencedShaderSource(shaderId, {
+            session: draftSessionRef.current,
+            drafts,
+            liveByKey: liveShaderSourceRef.current,
+            resolvedByKey: map,
+          });
+        if (!source) return false;
         try {
           const loaded = loadModule(source);
+          if (sourceOverride && shaderId) {
+            map.set(shaderId, {
+              ...(map.get(shaderId) || {}),
+              key: shaderId,
+              source,
+              kind: role,
+              features: inferFeatures(source),
+              broken: false,
+            });
+          }
           layers.push({
             id,
             role,
@@ -1746,6 +1884,7 @@ export default function App() {
             props: loaded.props,
             params: mergeValues(loaded.props, values),
           });
+          return true;
         } catch (loadError) {
           rememberResolved([
             {
@@ -1755,18 +1894,48 @@ export default function App() {
               name: loadError.message,
             },
           ]);
+          return false;
+        }
+      };
+      const addFallbackFill = async (fill, fillError) => {
+        fillWarnings.push(fillLoadErrorMessage(fill, fillError));
+        try {
+          const { width, height } = paintSize(host);
+          const bitmap = await rasterizePaintFill(
+            sampleFallbackPaint(defaultInputUrl),
+            width,
+            height,
+          );
+          if (compileGeneration !== compileGenerationRef.current) {
+            bitmap.close?.();
+            return false;
+          }
+          compositionMediaSourcesRef.current.push(bitmap);
+          layers.push({
+            id: fill.id,
+            role: "fill",
+            enabled: true,
+            source: bitmap,
+            sourceType: "image",
+            props: {},
+            params: {},
+          });
+          return true;
+        } catch {
+          return false;
         }
       };
       for (const fill of graph.fills.slice().reverse()) {
         if (!fill.enabled) continue;
         if (fill.type === "shader" && fill.shaderId) {
-          loadLayer(
+          const loaded = loadLayer(
             fill.id,
             "fill",
             fill.shaderId,
             fill.values,
             true
           );
+          if (!loaded) await addFallbackFill(fill);
           continue;
         }
         if (!isPaintFillType(fill.paint?.type)) continue;
@@ -1792,7 +1961,7 @@ export default function App() {
             await waitForVideoFrame(video, "Could not load video fill.");
             if (compileGeneration !== compileGenerationRef.current) {
               video.remove();
-              return;
+              return false;
             }
             compositionMediaSourcesRef.current.push(video);
             layers.push({
@@ -1865,7 +2034,7 @@ export default function App() {
               if (compileGeneration !== compileGenerationRef.current) {
                 video.srcObject = null;
                 video.remove();
-                return;
+                return false;
               }
               compositionMediaSourcesRef.current.push(video);
               layers.push({
@@ -1897,7 +2066,7 @@ export default function App() {
           const bitmap = await rasterizePaintFill(paint, width, height);
           if (compileGeneration !== compileGenerationRef.current) {
             bitmap.close?.();
-            return;
+            return false;
           }
           compositionMediaSourcesRef.current.push(bitmap);
           layers.push({
@@ -1910,7 +2079,7 @@ export default function App() {
             params: {},
           });
         } catch (paintError) {
-          setError(paintError.message || String(paintError));
+          await addFallbackFill(fill, paintError);
         }
       }
       for (const [fillId, cached] of compositionWebcamStreamsRef.current) {
@@ -1929,39 +2098,66 @@ export default function App() {
           effect.enabled
         );
       }
+      const missingEffect = graph.effects.find(
+        (effect) =>
+          effect.enabled &&
+          !layers.some(
+            (layer) => layer.role === "effect" && layer.id === effect.id,
+          ),
+      );
+      if (missingEffect) {
+        setFillsLoading(false);
+        setError(`Effect ${missingEffect.id} could not be loaded.`);
+        return false;
+      }
       const features = collectCompositionFeatures(graph, map);
-      const ok = await host.setComposition(layers, {
-        isFill: layers.some((layer) => layer.role === "fill"),
-        isAnimated: features.isAnimated,
-        usesMouse: features.usesMouse,
-        supportsRenderScale: false,
-      });
+      let ok;
+      try {
+        ok = await host.setComposition(layers, {
+          isFill: layers.some((layer) => layer.role === "fill"),
+          isAnimated: features.isAnimated,
+          usesMouse: features.usesMouse,
+          supportsRenderScale: false,
+        });
+      } catch (compositionError) {
+        if (compileGeneration === compileGenerationRef.current) {
+          setFillsLoading(false);
+          setError(compositionError.message || String(compositionError));
+        }
+        return false;
+      }
       if (
         compileGeneration !== compileGenerationRef.current ||
         hostRef.current !== host
       ) {
-        return;
+        return false;
       }
       if (!ok) {
+        setFillsLoading(false);
         setRunning(false);
-        return;
+        return false;
       }
-      const selected =
-        (sessionKindRef.current === "effect"
-          ? layers.find((layer) => layer.id === EFFECT_PREVIEW_LAYER_ID)
-          : layers.find((layer) => layer.id === selectedLayerIdRef.current)) ||
-        layers[0] ||
-        null;
-      if (selected) {
-        setSelectedLayerId(selected.id);
-        setProps(selected.props);
-        setRuntimeValues(selected.params);
-      } else {
-        setProps({});
-        setRuntimeValues({});
+      setFillsLoading(false);
+      setError(fillWarnings.length ? fillWarnings.join(" ") : null);
+      measurePerf("navigation.compositionCompile", compileStartedAt);
+      if (syncEditorState) {
+        const selected =
+          (sessionKindRef.current === "effect"
+            ? layers.find((layer) => layer.id === EFFECT_PREVIEW_LAYER_ID)
+            : layers.find((layer) => layer.id === selectedLayerIdRef.current)) ||
+          layers[0] ||
+          null;
+        if (selected) {
+          setSelectedLayerId(selected.id);
+          setProps(selected.props);
+          setRuntimeValues(selected.params);
+        } else {
+          setProps({});
+          setRuntimeValues({});
+        }
+        setError(null);
+        setThumbnailRefreshRevision((revision) => revision + 1);
       }
-      setError(null);
-      setThumbnailRefreshRevision((revision) => revision + 1);
       if (playPreferenceRef.current && features.isAnimated) {
         host.setActive(true);
         host.start();
@@ -1970,13 +2166,21 @@ export default function App() {
         host.stop();
         setRunning(false);
       }
+      recordNavigationFirstFrame();
+      return true;
     },
-    [drafts, hydrateCompositionRefs, rememberResolved, setRuntimeValues]
+    [
+      drafts,
+      hydrateCompositionRefs,
+      recordNavigationFirstFrame,
+      rememberResolved,
+      setRuntimeValues,
+    ]
   );
   compileCompositionRef.current = compileComposition;
 
   const compile = useCallback(
-    (nextSource) => {
+    (nextSource, { force = false } = {}) => {
       if (sessionKindRef.current === COMPOSITION_KIND) {
         compileCompositionRef.current?.();
         return;
@@ -1984,6 +2188,7 @@ export default function App() {
       const fillKey = effectFillPreviewKey(effectFillsRef.current);
       if (sessionKindRef.current === "effect" && fillKey) {
         if (
+          !force &&
           lastSuccessfulCompileRef.current.presetId ===
             draftSessionRef.current.presetId &&
           lastSuccessfulCompileRef.current.source === nextSource &&
@@ -1991,29 +2196,59 @@ export default function App() {
         ) {
           return;
         }
+        let loaded;
+        try {
+          loaded = loadModule(nextSource);
+        } catch (compileError) {
+          setError(compileError.message);
+          setRunning(false);
+          return;
+        }
+        const compilePresetId = draftSessionRef.current.presetId;
+        const preferred = pendingValuesRef.current ?? valuesRef.current;
+        pendingValuesRef.current = null;
+        const nextValues = mergeValues(loaded.props, preferred);
         selectedLayerIdRef.current = EFFECT_PREVIEW_LAYER_ID;
-        lastSuccessfulCompileRef.current = {
-          presetId: draftSessionRef.current.presetId,
-          source: nextSource,
-          values: pendingValuesRef.current ?? valuesRef.current,
-          effectFillKey: fillKey,
-        };
-        compileCompositionRef.current?.({
+        setProps(loaded.props);
+        setRuntimeValues(nextValues);
+        setError(null);
+        const compilePromise = compileCompositionRef.current?.({
           fills: effectFillsRef.current,
           effects: [
             {
               id: EFFECT_PREVIEW_LAYER_ID,
-              shaderId: draftSessionRef.current.presetId,
-              values: pendingValuesRef.current ?? valuesRef.current,
+              shaderId: compilePresetId,
+              values: nextValues,
               enabled: true,
             },
           ],
         });
-        return;
+        compilePromise
+          ?.then((ok) => {
+            if (
+              !ok ||
+              draftSessionRef.current.presetId !== compilePresetId ||
+              sourceRef.current !== nextSource ||
+              effectFillPreviewKey(effectFillsRef.current) !== fillKey
+            ) {
+              return;
+            }
+            lastSuccessfulCompileRef.current = {
+              presetId: compilePresetId,
+              source: nextSource,
+              values: valuesRef.current,
+              effectFillKey: fillKey,
+            };
+          })
+          .catch(() => {
+            /* Destroyed hosts / GPU teardown can reject; allow a later retry. */
+          });
+        return compilePromise;
       }
       const host = hostRef.current;
       if (!host?.ready) return;
       if (
+        !force &&
         lastSuccessfulCompileRef.current.presetId ===
           draftSessionRef.current.presetId &&
         lastSuccessfulCompileRef.current.source === nextSource &&
@@ -2043,6 +2278,7 @@ export default function App() {
       setRuntimeValues(nextValues);
       setError(null);
 
+      const moduleCompileStartedAt = perfNow();
       host
         .setModule(
           { setup: loaded.setup, render: loaded.render },
@@ -2071,6 +2307,7 @@ export default function App() {
             values: nextValues,
             effectFillKey: "",
           };
+          measurePerf("navigation.moduleCompile", moduleCompileStartedAt);
           if (
             pendingAgentCheckpointRef.current?.presetId ===
               draftSessionRef.current.presetId &&
@@ -2094,12 +2331,13 @@ export default function App() {
             host.stop();
             setRunning(false);
           }
+          recordNavigationFirstFrame();
         })
         .catch(() => {
           /* Destroyed hosts / GPU teardown can reject; ignore stale work. */
         });
     },
-    [setRuntimeValues]
+    [recordNavigationFirstFrame, setRuntimeValues]
   );
   compileRef.current = compile;
 
@@ -3048,6 +3286,8 @@ export default function App() {
     setEffectFills,
     inputApplyGenRef,
     sessionInputAppliedRef,
+    navigationStartedAtRef,
+    sessionRequestRef,
   });
 
   const openDraft = useCallback(
@@ -3318,35 +3558,50 @@ export default function App() {
         setShaderRoute(shader.id, shader.kind);
         return;
       }
-      // Resolve source before flipping into the editor so host init / compile
-      // never race a placeholder module from the previous session.
-      const fullShader = shader.source
-        ? shader
-        : { ...shader, ...(await getShader(shader.id)) };
-      const hydratedComposition = await hydrateCompositionMediaUrls(
-        fullShader.composition
-      );
-      lastSavedFingerprintRef.current = shaderContentFingerprint({
-        name: fullShader.name,
-        source: fullShader.source,
-        parameterValues: fullShader.parameter_values,
-        features: fullShader.features || inferFeatures(fullShader.source || ""),
-        composition: fullShader.composition,
-      });
+      const requestId = ++sessionRequestRef.current;
+      navigationStartedAtRef.current = perfNow();
       try {
-        await activateShaderSession({
-          sessionId: cloudChoiceId(fullShader.id),
-          routeId: fullShader.id,
+        const fetchStartedAt = perfNow();
+        recordPerf(
+          shader.source
+            ? "navigation.getShader.cacheHit"
+            : "navigation.getShader.request",
+        );
+        const fullShader = shader.source
+          ? shader
+          : { ...shader, ...(await getShader(shader.id)) };
+        measurePerf("navigation.getShader", fetchStartedAt);
+        if (requestId !== sessionRequestRef.current) return;
+        setCloudShaders((current) => cacheFullShaderRow(current, fullShader));
+        lastSavedFingerprintRef.current = shaderContentFingerprint({
           name: fullShader.name,
-          source: fullShader.source || "",
-          kind: fullShader.kind,
-          composition: hydratedComposition,
-          values: fullShader.parameter_values || {},
-          public: fullShader.is_public,
-          cloudShader: fullShader,
+          source: fullShader.source,
+          parameterValues: fullShader.parameter_values,
+          features:
+            fullShader.features || inferFeatures(fullShader.source || ""),
+          composition: fullShader.composition,
         });
-      } catch (mediaError) {
-        setError(mediaError.message || String(mediaError));
+        await activateBeforeHydration({
+          session: {
+            sessionId: cloudChoiceId(fullShader.id),
+            routeId: fullShader.id,
+            name: fullShader.name,
+            source: fullShader.source || "",
+            kind: fullShader.kind,
+            composition: fullShader.composition,
+            values: fullShader.parameter_values || {},
+            public: fullShader.is_public,
+            cloudShader: fullShader,
+            requestId,
+          },
+          activate: activateShaderSession,
+          hydrate: hydrateCompositionMediaUrls,
+          isCurrent: () => requestId === sessionRequestRef.current,
+        });
+      } catch (openError) {
+        if (requestId !== sessionRequestRef.current) return;
+        navigationStartedAtRef.current = 0;
+        setError(openError.message || String(openError));
       }
     },
     [activateShaderSession, setShaderRoute],
@@ -3676,11 +3931,9 @@ export default function App() {
         );
         return;
       }
-      getShader(id)
-        .then(openCloudShader)
-        .catch(() =>
-          setError("This shader is private, missing, or unavailable.")
-        );
+      openCloudShader({ id }).catch(() =>
+        setError("This shader is private, missing, or unavailable.")
+      );
     },
     [
       choosePreset,
@@ -3758,8 +4011,15 @@ export default function App() {
     if (!shaderContextRequest || shaderContextRequest.key !== presetId) return;
     const menu = shaderContextMenuRef.current;
     if (!menu?.showAt) return;
-    menu.showAt(shaderContextRequest.x, shaderContextRequest.y);
-    setShaderContextRequest(null);
+    return afterPointerRelease(() => {
+      shaderContextMenuRef.current?.showAt(
+        shaderContextRequest.x,
+        shaderContextRequest.y,
+      );
+      setShaderContextRequest((current) =>
+        current === shaderContextRequest ? null : current,
+      );
+    });
   }, [presetId, shaderContextRequest]);
 
   const openHomeChoice = useCallback(
@@ -3888,6 +4148,7 @@ export default function App() {
         sourceRef.current,
         currentValues
       );
+      setRuntimeValues(currentValues);
       if (nextSource === sourceRef.current) return;
       setSource(nextSource);
       setDirty(true);
@@ -3896,7 +4157,7 @@ export default function App() {
     } catch (saveError) {
       setError(saveError.message || String(saveError));
     }
-  }, [protectedPreview]);
+  }, [protectedPreview, setRuntimeValues]);
 
   const propertiesMoreMenuRef = useFigMenuChange((value) => {
     if (value === "reset") resetProperties();
@@ -4602,8 +4863,7 @@ export default function App() {
           ...current.filter((item) => item.id !== saved.id),
         ]);
         if (checkpointKind || !currentShader) {
-          const versions = await listAllShaderVersions(saved.id);
-          setShaderVersions(versions);
+          await refreshShaderVersions(saved.id);
         }
         if (saved.thumbnail_path) {
           const url = await getAssetUrl(saved.thumbnail_path);
@@ -4761,6 +5021,27 @@ export default function App() {
     versionPreviewRequestRef.current += 1;
   }, [currentShader?.id]);
 
+  const openShaderVersions = useCallback(() => {
+    if (versionsLoading || shaderVersions.length || !versionsHasMore) return;
+    loadShaderVersions({ reset: true }).catch(onPersistenceError);
+  }, [
+    loadShaderVersions,
+    onPersistenceError,
+    shaderVersions.length,
+    versionsHasMore,
+    versionsLoading,
+  ]);
+
+  const loadMoreShaderVersions = useCallback(() => {
+    if (versionsLoading || !versionsHasMore) return;
+    loadShaderVersions().catch(onPersistenceError);
+  }, [
+    loadShaderVersions,
+    onPersistenceError,
+    versionsHasMore,
+    versionsLoading,
+  ]);
+
   const clearShaderVersionPreview = useCallback(() => {
     const snapshot = versionPreviewSnapshotRef.current;
     const shouldRestore = versionPreviewAppliedRef.current && snapshot;
@@ -4768,11 +5049,10 @@ export default function App() {
     versionPreviewAppliedRef.current = false;
     versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
+    compileGenerationRef.current += 1;
     if (!shouldRestore) return;
-    setProps(snapshot.props);
-    setRuntimeValues(snapshot.values);
-    compile(snapshot.source);
-  }, [compile, setRuntimeValues]);
+    compile(snapshot.source, { force: true });
+  }, [compile]);
 
   const previewShaderVersion = useCallback(
     async (versionId) => {
@@ -4803,6 +5083,13 @@ export default function App() {
           target = await getShaderVersion(currentShader.id, versionId);
           versionPreviewCacheRef.current.set(versionId, target);
         }
+        const hydratedComposition = await hydrateCompositionMediaUrls(
+          target.composition
+        );
+        if (hydratedComposition !== target.composition) {
+          target = { ...target, composition: hydratedComposition };
+          versionPreviewCacheRef.current.set(versionId, target);
+        }
         if (requestId !== versionPreviewRequestRef.current) return;
 
         const host = hostRef.current;
@@ -4812,16 +5099,13 @@ export default function App() {
           if (!versionPreviewSnapshotRef.current) {
             versionPreviewSnapshotRef.current = {
               source: sourceRef.current,
-              props: structuredClone(propsRef.current),
-              values: structuredClone(valuesRef.current),
-              composition: compositionRef.current,
             };
           }
-          compileGenerationRef.current += 1;
           versionPreviewStateRef.current = { versionId };
           versionPreviewAppliedRef.current = true;
-          setComposition(normalizeComposition(target.composition));
-          await compileComposition(target.composition);
+          await compileComposition(target.composition, {
+            syncEditorState: false,
+          });
           return;
         }
 
@@ -4836,7 +5120,46 @@ export default function App() {
           loaded.props,
           target.parameter_values || {}
         );
+        if (!versionPreviewSnapshotRef.current) {
+          versionPreviewSnapshotRef.current = {
+            source: sourceRef.current,
+          };
+        }
+        versionPreviewStateRef.current = { versionId };
+        versionPreviewAppliedRef.current = true;
+
+        if (target.kind === "effect") {
+          const previewFills = readEffectFillsFromComposition(
+            target.composition,
+            effectFillsRef.current
+          );
+          if (usesCompositionHost("effect", previewFills)) {
+            await compileComposition(
+              {
+                fills: previewFills,
+                effects: [
+                  {
+                    id: EFFECT_PREVIEW_LAYER_ID,
+                    shaderId: draftSessionRef.current.presetId,
+                    values: nextValues,
+                    enabled: true,
+                  },
+                ],
+              },
+              {
+                layerSourceOverrides: new Map([
+                  [EFFECT_PREVIEW_LAYER_ID, target.source],
+                ]),
+                syncEditorState: false,
+              }
+            );
+            return;
+          }
+        }
+
         const nextFeatures = inferFeatures(target.source);
+        const previewGeneration = ++compileGenerationRef.current;
+        host.stop();
         const ok = await host.setModule(
           { setup: loaded.setup, render: loaded.render },
           {
@@ -4846,20 +5169,16 @@ export default function App() {
             supportsRenderScale: supportsRenderScale(target.source),
           }
         );
-        if (requestId !== versionPreviewRequestRef.current || !ok) return;
-
-        compileGenerationRef.current += 1;
-        versionPreviewStateRef.current = { versionId };
-        versionPreviewAppliedRef.current = true;
-        if (!versionPreviewSnapshotRef.current) {
-          versionPreviewSnapshotRef.current = {
-            source: sourceRef.current,
-            props: structuredClone(propsRef.current),
-            values: structuredClone(valuesRef.current),
-          };
+        if (
+          requestId !== versionPreviewRequestRef.current ||
+          previewGeneration !== compileGenerationRef.current
+        ) {
+          return;
         }
-        setProps(loaded.props);
-        setRuntimeValues(nextValues);
+        if (!ok) {
+          clearShaderVersionPreview();
+          return;
+        }
         host.setParams(nextValues);
         host.setActive(true);
         if (playPreferenceRef.current && nextFeatures.isAnimated) {
@@ -4873,6 +5192,7 @@ export default function App() {
     },
     [
       clearShaderVersionPreview,
+      compileComposition,
       currentShader,
       dirty,
       runtimeReady,
@@ -4901,7 +5221,10 @@ export default function App() {
       setError(null);
       try {
         const target = await getShaderVersion(restoreShaderId, versionId);
-        const validation = validateModuleSource(target.source);
+        const validation =
+          target.kind === COMPOSITION_KIND
+            ? { ok: true }
+            : validateModuleSource(target.source);
         if (!validation.ok) {
           throw new Error(
             `Version ${target.version_number} cannot be restored: ${validation.reason}`
@@ -4936,15 +5259,30 @@ export default function App() {
           ...current.filter((item) => item.id !== restored.id),
         ]);
         if (draftSessionRef.current.presetId === restorePresetId) {
+          const restoredComposition = await hydrateCompositionMediaUrls(
+            restored.composition
+          );
+          if (draftSessionRef.current.presetId !== restorePresetId) return;
+          const nextComposition =
+            restored.kind === COMPOSITION_KIND
+              ? normalizeComposition(restoredComposition)
+              : null;
+          compositionRef.current = nextComposition;
           pendingValuesRef.current = restored.parameter_values || {};
           setCurrentShader(restored);
           setSource(restored.source || "");
           setSessionKind(restored.kind);
-          setComposition(
-            restored.kind === COMPOSITION_KIND
-              ? normalizeComposition(restored.composition)
-              : null
-          );
+          setComposition(nextComposition);
+          if (restored.kind === "effect") {
+            const restoredFills = readEffectFillsFromComposition(
+              restoredComposition,
+              effectFillsRef.current
+            );
+            effectFillsRef.current = restoredFills;
+            effectFillRef.current = restoredFills[0] || null;
+            setEffectFills(restoredFills);
+            setEffectFill(restoredFills[0] || null);
+          }
           setDirty(false);
           lastSavedFingerprintRef.current = shaderContentFingerprint({
             name: restored.name,
@@ -4953,10 +5291,7 @@ export default function App() {
             features: restored.features || inferFeatures(restored.source || ""),
             composition: restored.composition,
           });
-          const versions = await listAllShaderVersions(restored.id);
-          if (draftSessionRef.current.presetId === restorePresetId) {
-            setShaderVersions(versions);
-          }
+          await refreshShaderVersions(restored.id);
           showNotice(`Restored Version ${target.version_number}.`);
         }
       } catch (restoreError) {
@@ -6394,9 +6729,12 @@ export default function App() {
                   <ShaderVersionSelect
                     versions={shaderVersions}
                     versionsLoading={versionsLoading}
+                    versionsHasMore={versionsHasMore}
                     dirty={dirty}
                     hasUncheckpointedChanges={hasUncheckpointedChanges}
-                    disabled={saving || restoringVersion || versionsLoading}
+                    disabled={saving || restoringVersion}
+                    onOpen={openShaderVersions}
+                    onLoadMore={loadMoreShaderVersions}
                     onPreviewVersion={previewShaderVersion}
                     onChange={restoreSelectedVersion}
                   />
@@ -7274,6 +7612,9 @@ export default function App() {
         videoExportedToastRef={videoExportedToastRef}
         videoExportProgress={videoExportProgress}
         inputLoadingToastRef={inputLoadingToastRef}
+        inputLoadingLabel={
+          fillsLoading && !uploading ? "Loading fills…" : "Loading input…"
+        }
         noticeToastRef={noticeToastRef}
         notice={notice}
         onNoticeClose={() => setNotice(null)}

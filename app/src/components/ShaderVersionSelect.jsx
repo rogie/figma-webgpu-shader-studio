@@ -5,6 +5,7 @@ import {
 } from "../lib/shaderVersions.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
+import { visibleVersionHistory } from "../lib/versionHistory.js";
 import "./ShaderVersionSelect.css";
 
 const opaqueContent = { __html: "" };
@@ -105,9 +106,12 @@ function VersionMenuItem({
 export default function ShaderVersionSelect({
   versions = [],
   versionsLoading = false,
+  versionsHasMore = false,
   dirty = false,
   hasUncheckpointedChanges = false,
   disabled = false,
+  onOpen,
+  onLoadMore,
   onPreviewVersion,
   onChange,
 }) {
@@ -115,7 +119,10 @@ export default function ShaderVersionSelect({
   const popupRef = useRef(null);
   const hoveredVersionRef = useRef(null);
   const [open, setOpen] = useState(false);
-  const groups = useMemo(() => groupVersionsByDay(versions), [versions]);
+  const groups = useMemo(
+    () => groupVersionsByDay(visibleVersionHistory(versions, open)),
+    [open, versions],
+  );
   const pending = pendingRow({ dirty, hasUncheckpointedChanges });
   const currentVersionId = pending ? null : versions[0]?.id || null;
   const { value: selectValue, label: selectLabel } = selectState({
@@ -127,6 +134,10 @@ export default function ShaderVersionSelect({
     () => JSON.stringify([{ value: selectValue, label: selectLabel }]),
     [selectLabel, selectValue]
   );
+
+  useEffect(() => {
+    if (open) onOpen?.();
+  }, [onOpen, open]);
 
   const clearPreview = useCallback(() => {
     onPreviewVersion?.(null);
@@ -208,7 +219,11 @@ export default function ShaderVersionSelect({
       event.stopImmediatePropagation?.();
       if (select.open) select.open = false;
       if (disabled) return;
-      setOpen((value) => !value);
+      if (open) {
+        closePopup();
+        return;
+      }
+      setOpen(true);
     };
 
     const onKeydown = (event) => {
@@ -237,7 +252,7 @@ export default function ShaderVersionSelect({
       trigger?.removeEventListener("keydown", onKeydown, true);
       observer.disconnect();
     };
-  }, [disabled, getSelectTrigger, selectOptions]);
+  }, [closePopup, disabled, getSelectTrigger, open, selectOptions]);
 
   const restore = useCallback(
     (versionId) => {
@@ -279,7 +294,7 @@ export default function ShaderVersionSelect({
         />
       </fig-tooltip>
 
-      {portalToFigOverlay(
+      {open && portalToFigOverlay(
         <dialog
           is="fig-popup"
           ref={popupRef}
@@ -353,6 +368,15 @@ export default function ShaderVersionSelect({
               })}
             </Fragment>
           ))}
+          {versionsHasMore && (
+            <fig-button
+              variant="secondary"
+              disabled={versionsLoading ? "" : undefined}
+              onClick={() => onLoadMore?.()}
+            >
+              {versionsLoading ? "Loading…" : "Load older versions"}
+            </fig-button>
+          )}
         </fig-content>
         </dialog>
       )}

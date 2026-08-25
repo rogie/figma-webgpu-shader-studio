@@ -7,6 +7,16 @@ import { resolvedLibraryKind } from "./composition.js";
 
 export const ANON_YOU_LABEL = "Anon (You)";
 
+export function cacheFullShaderRow(rows, fullShader) {
+  if (!fullShader?.id) return Array.isArray(rows) ? rows : [];
+  const current = Array.isArray(rows) ? rows : [];
+  const existing = current.find((shader) => shader.id === fullShader.id);
+  if (!existing) return [fullShader, ...current];
+  return current.map((shader) =>
+    shader.id === fullShader.id ? { ...shader, ...fullShader } : shader,
+  );
+}
+
 export function figmaLibraryKey(kind, id) {
   return `figma:${kind}:${id}`;
 }

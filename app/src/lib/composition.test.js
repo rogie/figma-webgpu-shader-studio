@@ -15,6 +15,7 @@ import {
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
+  readEffectFillsFromComposition,
   readReferencedShader,
   reorderCompositionEffects,
   reorderCompositionFills,
@@ -263,6 +264,47 @@ test("preserves an explicitly empty fills array", () => {
   });
   assert.deepEqual(graph.fills, []);
   assert.equal(graph.fill, undefined);
+});
+
+test("reads versioned effect fills and only falls back when absent", () => {
+  const fallback = [
+    {
+      id: "live",
+      type: "image",
+      paint: { type: "solid", color: "#FF0000", alpha: 1 },
+    },
+  ];
+
+  assert.deepEqual(
+    readEffectFillsFromComposition(
+      {
+        effectFills: [
+          { id: "saved", type: "shader", shaderId: "saved-fill" },
+        ],
+      },
+      fallback,
+    ).map((fill) => ({ id: fill.id, shaderId: fill.shaderId })),
+    [{ id: "saved", shaderId: "cloud:saved-fill" }],
+  );
+  assert.equal(
+    readEffectFillsFromComposition(
+      { effectFill: { type: "video" } },
+      fallback,
+    )[0].type,
+    "video",
+  );
+  assert.equal(
+    readEffectFillsFromComposition({}, fallback)[0].id,
+    "live",
+  );
+  assert.deepEqual(
+    readEffectFillsFromComposition({ effectFills: [] }, fallback),
+    [],
+  );
+  assert.deepEqual(
+    readEffectFillsFromComposition({ effectFill: null }, fallback),
+    [],
+  );
 });
 
 test("reorders composition effects by index", () => {

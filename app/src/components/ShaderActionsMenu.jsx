@@ -37,7 +37,6 @@ export default function ShaderActionsMenu({
   return (
     <fig-menu
       ref={bindMenu}
-      key={signedIn ? "signed-in" : "signed-out"}
       position={position}
     >
       {showTrigger && (

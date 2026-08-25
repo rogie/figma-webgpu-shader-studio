@@ -2,6 +2,7 @@ import {
   Fragment,
   forwardRef,
   memo,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -74,6 +75,7 @@ const MODEL_STORAGE_KEY = "shader-studio.chatModel";
 const MODE_STORAGE_KEY = "shader-studio.chatMode";
 const MAX_UNDO = 12;
 const MAX_AUTO_HEAL_ATTEMPTS = 2;
+const TOOLTIP_DELAY_MS = 500;
 
 function assistantPhaseLabel(message) {
   switch (message?.phase) {
@@ -155,6 +157,183 @@ function chatActivityLabel(messages) {
   if (latest.applied) return "Applied main.ts";
   return "New AI response";
 }
+
+function useStableEvent(handler) {
+  const handlerRef = useRef(handler);
+  handlerRef.current = handler;
+  return useCallback((...args) => handlerRef.current(...args), []);
+}
+
+const ChatComposer = memo(function ChatComposer({
+  canSend,
+  draft,
+  hasKey,
+  imageInputRef,
+  mode,
+  model,
+  modelControlRef,
+  modelGroups,
+  onAttachmentChosen,
+  onPromptPaste,
+  onSend,
+  onStop,
+  setDraft,
+  setMode,
+  streaming,
+  videoSupported,
+}) {
+  const actionButtonRef = useRef(null);
+  const actionTooltipTimerRef = useRef(0);
+  const [showActionTooltip, setShowActionTooltip] = useState(false);
+  const hideActionTooltip = useCallback(() => {
+    window.clearTimeout(actionTooltipTimerRef.current);
+    actionTooltipTimerRef.current = 0;
+    setShowActionTooltip(false);
+  }, []);
+  const showActionTooltipDelayed = useCallback(() => {
+    if (!streaming) return;
+    window.clearTimeout(actionTooltipTimerRef.current);
+    actionTooltipTimerRef.current = window.setTimeout(() => {
+      actionTooltipTimerRef.current = 0;
+      setShowActionTooltip(true);
+    }, TOOLTIP_DELAY_MS);
+  }, [streaming]);
+
+  useEffect(() => {
+    if (!streaming) {
+      hideActionTooltip();
+      return;
+    }
+    if (actionButtonRef.current?.matches(":hover, :focus")) {
+      showActionTooltipDelayed();
+    }
+  }, [hideActionTooltip, showActionTooltipDelayed, streaming]);
+
+  useEffect(
+    () => () => window.clearTimeout(actionTooltipTimerRef.current),
+    [],
+  );
+
+  const onKeyDown = (event) => {
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      onSend();
+    }
+  };
+
+  return (
+    <>
+      <fig-ai-prompt>
+        <fig-input-text
+          class="chat-input"
+          multiline=""
+          value={draft}
+          placeholder={
+            mode === "plan"
+              ? "Describe what you want to plan…"
+              : "Ask for changes..."
+          }
+          aria-label="Ask for changes"
+          disabled={streaming || !hasKey ? "" : undefined}
+          onInput={(event) => setDraft(event.target.value)}
+          onKeyDown={onKeyDown}
+          onPaste={onPromptPaste}
+          dangerouslySetInnerHTML={{ __html: "" }}
+        />
+        <fig-footer>
+          <fig-tooltip class="chat-attach-button" text="Attach media">
+            <fig-button
+              type="button"
+              variant="ghost"
+              icon="true"
+              aria-label="Attach media"
+              disabled={streaming || !hasKey ? "" : undefined}
+              onClick={() => imageInputRef.current?.click()}
+            >
+              <fig-icon name="add" />
+            </fig-button>
+          </fig-tooltip>
+          <hstack>
+            <fig-tooltip text="Plan mode">
+              <fig-button
+                type="toggle"
+                variant="ghost"
+                icon="true"
+                selected={mode === "plan"}
+                aria-label={
+                  mode === "plan" ? "Disable plan mode" : "Enable plan mode"
+                }
+                disabled={streaming ? "" : undefined}
+                onClick={() =>
+                  setMode((current) =>
+                    current === "plan" ? "agent" : "plan"
+                  )
+                }
+              >
+                <PlanIcon />
+              </fig-button>
+            </fig-tooltip>
+            <fig-tooltip text={`Model: ${model.label}`}>
+              <fig-select
+                ref={modelControlRef}
+                class="chat-model-select"
+                variant="ghost"
+                label="Model"
+                position="top left"
+                value={chatModelValue(model)}
+                disabled={streaming ? "" : undefined}
+              >
+                <fig-select-options>
+                  {modelGroups.map((group) => (
+                    <Fragment key={group.label}>
+                      <fig-separator label={group.label} />
+                      {group.models.map((entry) => (
+                        <fig-select-option
+                          key={chatModelValue(entry)}
+                          value={chatModelValue(entry)}
+                        >
+                          {entry.label}
+                        </fig-select-option>
+                      ))}
+                    </Fragment>
+                  ))}
+                </fig-select-options>
+              </fig-select>
+            </fig-tooltip>
+            <fig-tooltip
+              text={streaming ? "Stop" : "Send"}
+              show={streaming && showActionTooltip ? "" : undefined}
+            >
+              <fig-button
+                ref={actionButtonRef}
+                type="button"
+                variant={streaming ? "ghost" : "primary"}
+                icon="true"
+                aria-label={streaming ? "Stop" : "Send"}
+                disabled={!streaming && !canSend ? "" : undefined}
+                onClick={streaming ? onStop : onSend}
+                onPointerEnter={showActionTooltipDelayed}
+                onPointerLeave={hideActionTooltip}
+                onFocus={showActionTooltipDelayed}
+                onBlur={hideActionTooltip}
+              >
+                {streaming ? <StopIcon /> : <SendIcon />}
+              </fig-button>
+            </fig-tooltip>
+          </hstack>
+        </fig-footer>
+      </fig-ai-prompt>
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept={videoSupported ? "image/*,video/*" : "image/*"}
+        multiple
+        hidden
+        onChange={onAttachmentChosen}
+      />
+    </>
+  );
+});
 
 const ChatPane = forwardRef(function ChatPane(
   {
@@ -609,11 +788,11 @@ const ChatPane = forwardRef(function ChatPane(
     }
   };
 
-  const stop = () => {
+  const stop = useCallback(() => {
     abortRef.current?.abort();
     abortRef.current = null;
     setStreaming(false);
-  };
+  }, []);
 
   const undoLastApply = () => {
     const previous = undoStackRef.current.pop();
@@ -1193,13 +1372,6 @@ ${pendingPlan.content}
     });
   };
 
-  const onKeyDown = (event) => {
-    if (event.key === "Enter" && !event.shiftKey) {
-      event.preventDefault();
-      send();
-    }
-  };
-
   const jumpToLatest = () => {
     followingLatestRef.current = true;
     setLatestActivity("");
@@ -1211,33 +1383,9 @@ ${pendingPlan.content}
     });
   };
 
-  const modelSelect = (
-    <fig-select
-      ref={modelControlRef}
-      class="chat-model-select"
-      variant="ghost"
-      label="Model"
-      position="top left"
-      value={chatModelValue(model)}
-      disabled={streaming ? "" : undefined}
-    >
-      <fig-select-options>
-        {modelGroups.map((group) => (
-          <Fragment key={group.label}>
-            <fig-separator label={group.label} />
-            {group.models.map((entry) => (
-              <fig-select-option
-                key={chatModelValue(entry)}
-                value={chatModelValue(entry)}
-              >
-                {entry.label}
-              </fig-select-option>
-            ))}
-          </Fragment>
-        ))}
-      </fig-select-options>
-    </fig-select>
-  );
+  const handleSend = useStableEvent(send);
+  const handlePromptPaste = useStableEvent(onPromptPaste);
+  const handleAttachmentChosen = useStableEvent(onAttachmentChosen);
 
   return (
     <div className="code-chat" hidden={hidden}>
@@ -1408,7 +1556,7 @@ ${pendingPlan.content}
             pendingApply ||
             pendingPlan ||
             contextActivity) && (
-            <fig-ai-context aria-label="Prompt context">
+            <fig-ai-context key="context" aria-label="Prompt context">
               {attachments.length > 0 && (
                 <fig-attachments ref={pendingAttachmentsRef}>
                   {attachments.map((attachment, index) => (
@@ -1483,97 +1631,24 @@ ${pendingPlan.content}
               )}
             </fig-ai-context>
           )}
-          <fig-ai-prompt>
-            <fig-input-text
-              class="chat-input"
-              multiline=""
-              value={draft}
-              placeholder={
-                mode === "plan"
-                  ? "Describe what you want to plan…"
-                  : "Ask for changes..."
-              }
-              aria-label="Ask for changes"
-              disabled={streaming || !hasKey ? "" : undefined}
-              onInput={(event) => setDraft(event.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={onPromptPaste}
-              dangerouslySetInnerHTML={{ __html: "" }}
-            />
-            <fig-footer>
-              <fig-tooltip class="chat-attach-button" text="Attach media">
-                <fig-button
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Attach media"
-                  disabled={streaming || !hasKey ? "" : undefined}
-                  onClick={() => imageInputRef.current?.click()}
-                >
-                  <fig-icon name="add" />
-                </fig-button>
-              </fig-tooltip>
-              <hstack>
-                <fig-tooltip text="Plan mode">
-                  <fig-button
-                    type="toggle"
-                    variant="ghost"
-                    icon="true"
-                    selected={mode === "plan"}
-                    aria-label={
-                      mode === "plan"
-                        ? "Disable plan mode"
-                        : "Enable plan mode"
-                    }
-                    disabled={streaming ? "" : undefined}
-                    onClick={() =>
-                      setMode((current) =>
-                        current === "plan" ? "agent" : "plan"
-                      )
-                    }
-                  >
-                    <PlanIcon />
-                  </fig-button>
-                </fig-tooltip>
-                <fig-tooltip text={`Model: ${model.label}`}>
-                  {modelSelect}
-                </fig-tooltip>
-                {streaming ? (
-                  <fig-tooltip text="Stop">
-                    <fig-button
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="Stop"
-                      onClick={stop}
-                    >
-                      <StopIcon />
-                    </fig-button>
-                  </fig-tooltip>
-                ) : (
-                  <fig-tooltip text="Send">
-                    <fig-button
-                      type="button"
-                      variant="primary"
-                      icon="true"
-                      aria-label="Send"
-                      disabled={!canSend}
-                      onClick={send}
-                    >
-                      <SendIcon />
-                    </fig-button>
-                  </fig-tooltip>
-                )}
-              </hstack>
-            </fig-footer>
-          </fig-ai-prompt>
-          <input
-            ref={imageInputRef}
-            type="file"
-            accept={videoSupported ? "image/*,video/*" : "image/*"}
-            multiple
-            hidden
-            onChange={onAttachmentChosen}
+          <ChatComposer
+            key="composer"
+            canSend={canSend}
+            draft={draft}
+            hasKey={hasKey}
+            imageInputRef={imageInputRef}
+            mode={mode}
+            model={model}
+            modelControlRef={modelControlRef}
+            modelGroups={modelGroups}
+            onAttachmentChosen={handleAttachmentChosen}
+            onPromptPaste={handlePromptPaste}
+            onSend={handleSend}
+            onStop={stop}
+            setDraft={setDraft}
+            setMode={setMode}
+            streaming={streaming}
+            videoSupported={videoSupported}
           />
           {zoomedAttachment && (
             <dialog

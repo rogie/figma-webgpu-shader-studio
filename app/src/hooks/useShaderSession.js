@@ -19,6 +19,8 @@ import {
   defaultVectorUrl,
   defaultVideoUrl,
 } from "../runtime/sample.js";
+import { measurePerf, perfNow } from "../runtime/perf.js";
+import { beginSessionRequest } from "../lib/sessionRequests.js";
 
 export function useShaderSession({
   persistActiveDraft,
@@ -52,6 +54,8 @@ export function useShaderSession({
   setEffectFill,
   inputApplyGenRef,
   sessionInputAppliedRef,
+  navigationStartedAtRef,
+  sessionRequestRef,
 }) {
   return useCallback(
     async ({
@@ -67,7 +71,13 @@ export function useShaderSession({
       dirty: nextDirty = false,
       cloudShader = null,
       persistPrevious = true,
+      requestId = null,
     }) => {
+      const activationStartedAt = perfNow();
+      if (!beginSessionRequest(sessionRequestRef, requestId)) return;
+      if (navigationStartedAtRef && !navigationStartedAtRef.current) {
+        navigationStartedAtRef.current = activationStartedAt;
+      }
       if (persistPrevious) persistActiveDraft();
       if (inputApplyGenRef) inputApplyGenRef.current += 1;
       const previous = sessionRef?.current;
@@ -122,6 +132,9 @@ export function useShaderSession({
           documentFills: hasDocumentEffectFills
             ? readEffectFillsFromComposition(nextComposition)
             : null,
+          documentAuthoritative: Boolean(
+            cloudShader && hasDocumentEffectFills && !nextDirty,
+          ),
           sampleUrls: {
             image: defaultInputUrl,
             vector: defaultVectorUrl,
@@ -156,6 +169,7 @@ export function useShaderSession({
               "image";
       setInputSource(mediaTypeForSession);
       inputSourceRef.current = mediaTypeForSession;
+      measurePerf("navigation.sessionActivation", activationStartedAt);
 
       const host = hostRef.current;
       if (!host?.ready) return;
@@ -206,10 +220,12 @@ export function useShaderSession({
       effectPaintRef,
       hostRef,
       sessionRef,
+      sessionRequestRef,
       setEffectFills,
       setEffectFill,
       inputSourceRef,
       loadMediaForShader,
+      navigationStartedAtRef,
       pendingValuesRef,
       persistActiveDraft,
       playPreferenceRef,

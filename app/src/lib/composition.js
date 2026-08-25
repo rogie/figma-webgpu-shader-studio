@@ -625,9 +625,21 @@ export function readEffectFillFromComposition(composition) {
   return readEffectFillsFromComposition(composition)[0] || null;
 }
 
-export function readEffectFillsFromComposition(composition) {
+export function readEffectFillsFromComposition(
+  composition,
+  fallbackFills = [],
+) {
   if (Array.isArray(composition?.effectFills)) {
     return normalizeComposition({ fills: composition.effectFills }).fills;
+  }
+  const hasLegacyFill = Object.prototype.hasOwnProperty.call(
+    composition || {},
+    "effectFill",
+  );
+  if (!hasLegacyFill) {
+    return normalizeComposition({
+      fills: Array.isArray(fallbackFills) ? fallbackFills : [],
+    }).fills;
   }
   const stored = composition?.effectFill;
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) {

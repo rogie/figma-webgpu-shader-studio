@@ -239,6 +239,7 @@ export function resolveSessionEffectFills({
   sampleUrls = {},
   documentFills = null,
   documentFill = null,
+  documentAuthoritative = false,
 } = {}) {
   let memoryFills = [];
   let memoryFound = false;
@@ -264,6 +265,9 @@ export function resolveSessionEffectFills({
         : [],
   );
   const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
+  if (documentAuthoritative && documentFillsProvided) {
+    return resolvedDocumentFills;
+  }
   // Empty and missing are different states: an explicitly stored empty stack
   // means the user removed the final fill and must not trigger the sample
   // fallback on navigation or refresh.

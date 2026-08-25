@@ -19,6 +19,19 @@ export function graphTypeForPaint(type) {
   return "image";
 }
 
+export function sampleFallbackPaint(defaultImageUrl) {
+  return {
+    type: "image",
+    image: { url: defaultImageUrl, scaleMode: "fill" },
+  };
+}
+
+export function fillLoadErrorMessage(fill, error) {
+  return `Fill ${fill?.id || "input"} could not load${
+    error?.message ? `: ${error.message}` : ""
+  }. Showing the sample image instead.`;
+}
+
 export function resolvePaintFill(
   fill,
   { defaultImageUrl = "", defaultVideoUrl = "" } = {}

@@ -3,6 +3,7 @@ export default function AppToasts({
   videoExportedToastRef,
   videoExportProgress,
   inputLoadingToastRef,
+  inputLoadingLabel = "Loading input…",
   noticeToastRef,
   notice,
   onNoticeClose,
@@ -39,8 +40,8 @@ export default function AppToasts({
         duration="0"
         offset="24"
       >
-        <fig-spinner aria-label="Loading input" />
-        <span>Loading input…</span>
+        <fig-spinner aria-label={inputLoadingLabel} />
+        <span>{inputLoadingLabel}</span>
       </dialog>
       <dialog
         is="fig-toast"

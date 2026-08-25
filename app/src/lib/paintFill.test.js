@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildGradientCss,
   coverContainRect,
+  fillLoadErrorMessage,
   graphTypeForPaint,
   hexToRgba,
   interpolationClause,
@@ -10,6 +11,7 @@ import {
   paintFillAlpha,
   paintImageSource,
   resolvePaintFill,
+  sampleFallbackPaint,
 } from "./paintFill.js";
 
 test("identifies paint fill types and graph mapping", () => {
@@ -22,6 +24,17 @@ test("identifies paint fill types and graph mapping", () => {
   assert.equal(graphTypeForPaint("webcam"), "video");
   assert.equal(graphTypeForPaint("video"), "video");
   assert.equal(graphTypeForPaint("shader"), "shader");
+});
+
+test("failed media fills expose their layer and use the visible sample fallback", () => {
+  assert.deepEqual(sampleFallbackPaint("/sample.png"), {
+    type: "image",
+    image: { url: "/sample.png", scaleMode: "fill" },
+  });
+  assert.equal(
+    fillLoadErrorMessage({ id: "photo" }, new Error("expired URL")),
+    "Fill photo could not load: expired URL. Showing the sample image instead.",
+  );
 });
 
 test("keeps the picker video shape including poster and colorSpace", () => {
