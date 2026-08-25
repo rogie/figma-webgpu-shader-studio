@@ -5,6 +5,7 @@ export default function ShaderView({
   sidebarRef,
   visualizerRef,
   style,
+  header,
   codeCollapsed = false,
   chatCollapsed = false,
   stacked = false,
@@ -21,6 +22,7 @@ export default function ShaderView({
 }) {
   return (
     <main ref={viewerRef} className="shader-viewer" style={style}>
+      {header}
       <div
         ref={sidebarRef}
         className="shader-viewer-sidebar"

@@ -12,6 +12,12 @@ body,
 
 :root {
   --sidebar-width: 240px;
+  --sidebar-min-width: 12rem;
+  --sidebar-fluid-width: clamp(
+    var(--sidebar-min-width),
+    20cqw,
+    var(--sidebar-width)
+  );
   --code-width: 480px;
   --viewer-radius: 0.5rem;
 }
@@ -27,6 +33,8 @@ body,
     height: 100%;
     min-width: 0;
     min-height: 0;
+    container-type: inline-size;
+    container-name: editor;
 
     &[hidden] {
       display: none;
@@ -36,9 +44,9 @@ body,
   .app-nav {
     --app-nav-width: 240px;
     flex: 0 0 auto;
-    align-self: flex-start;
+    align-self: stretch;
     width: var(--app-nav-width);
-    height: calc(100% - 2rem);
+    height: 100%;
     box-sizing: border-box;
     padding: 0;
     display: flex;
@@ -47,8 +55,7 @@ body,
     align-items: stretch;
     min-width: 12rem;
     min-height: 0;
-    margin: 1rem;
-    margin-right: 0;
+    margin: 0;
     overflow: hidden;
     border: 1px solid var(--figma-color-border);
     border-radius: var(--viewer-radius);
@@ -110,9 +117,9 @@ body,
   .app-nav-resizer {
     position: relative;
     flex: 0 0 var(--spacer-3);
-    align-self: flex-start;
-    height: calc(100% - 2rem);
-    margin-block: 1rem;
+    align-self: stretch;
+    height: 100%;
+    margin: 0;
     cursor: col-resize;
     touch-action: none;
     outline: none;
@@ -136,15 +143,14 @@ body,
   }
 
   :is(.shader-viewer, .composer-viewer) {
-    display: flex;
-    width: 100%;
-    height: calc(100% - 2rem);
+    flex: 1 1 auto;
+    width: auto;
     min-width: 0;
+    height: 100%;
     transition: opacity 180ms ease;
     padding: 0;
     gap: 0;
-    margin: 1rem;
-    margin-left: 0;
+    margin: 0;
 
     .shader-editor-header {
       gap: var(--spacer-1);
@@ -958,10 +964,11 @@ dialog.delete-shader-dialog {
 
 .shader-properties-panel {
   display: flex;
-  flex: 0 0 var(--sidebar-width);
+  flex: 0 1 var(--sidebar-fluid-width);
   flex-direction: column;
-  width: var(--sidebar-width);
-  min-width: var(--sidebar-width);
+  width: var(--sidebar-fluid-width);
+  min-width: var(--sidebar-min-width);
+  max-width: var(--sidebar-width);
   height: 100%;
   min-height: 0;
   margin-left: var(--spacer-3);
@@ -1036,4 +1043,10 @@ dialog.delete-shader-dialog {
   :root {
     --code-width: 380px;
   }
+}
+
+/* Editor-only outer inset. Home uses .home-nav and is not wrapped here. */
+#root > .editor-view {
+  padding: 1rem;
+  box-sizing: border-box;
 }

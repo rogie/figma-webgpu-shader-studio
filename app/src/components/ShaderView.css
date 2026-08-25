@@ -1,15 +1,31 @@
 #root .shader-viewer {
-  display: flex;
+  display: grid;
+  grid-template-columns:
+    var(--code-width)
+    var(--spacer-3)
+    minmax(220px, 1fr)
+    var(--spacer-3)
+    var(--sidebar-fluid-width);
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+
+  > .shader-editor-header {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
 
   .shader-viewer-sidebar {
-    width: var(--code-width);
-    min-width: 320px;
-    height: 100%;
-    margin: 0;
-    padding: 0;
+    grid-column: 1;
+    grid-row: 2;
     display: flex;
     flex-direction: column;
+    min-width: 0;
     min-height: 0;
+    width: auto;
+    height: auto;
+    margin: 0;
+    padding: 0;
   }
 
   .shader-viewer-sidebar:is(
@@ -18,6 +34,29 @@
     )
     .shader-viewer-code {
     margin-bottom: var(--spacer-3);
+  }
+
+  > .pane-resizer:not(.pane-resizer-row) {
+    grid-column: 2;
+    grid-row: 1 / -1;
+  }
+
+  > .shader-preview.shader-viewer-visualizer,
+  > .shader-viewer-visualizer {
+    grid-column: 3;
+    grid-row: 1 / -1;
+    min-width: 0;
+    min-height: 0;
+    width: auto;
+    height: 100%;
+    margin: 0;
+  }
+
+  > .shader-properties-panel {
+    grid-column: 5;
+    grid-row: 1 / -1;
+    box-sizing: border-box;
+    margin-left: 0;
   }
 
   .shader-viewer-code {
@@ -137,7 +176,7 @@
 
   .pane-resizer {
     position: relative;
-    flex: 0 0 var(--spacer-3);
+    width: 100%;
     height: 100%;
     cursor: col-resize;
     touch-action: none;
@@ -165,6 +204,7 @@
       flex: 0 0 var(--spacer-3);
       width: 100%;
       height: auto;
+      min-height: var(--spacer-3);
       cursor: row-resize;
       z-index: 2;
 
@@ -181,62 +221,70 @@
   }
 }
 
-@media (max-width: 900px) {
+@container editor (max-width: 1180px) {
   #root .shader-viewer {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    grid-template-rows: auto auto minmax(280px, 1fr);
+    grid-template-columns:
+      minmax(0, 1fr)
+      minmax(0, 1fr)
+      var(--spacer-3)
+      var(--sidebar-fluid-width);
+    grid-template-rows:
+      auto
+      minmax(180px, auto)
+      var(--spacer-3)
+      minmax(200px, 1fr);
+  }
 
-    .shader-preview.shader-viewer-visualizer,
-    .shader-viewer-visualizer {
-      grid-column: 1;
-      grid-row: 1;
-      flex: none;
-      width: 100%;
-      min-width: 0;
-      height: var(--preview-height, auto);
-      aspect-ratio: 16 / 9;
-    }
+  #root .shader-viewer > .shader-editor-header {
+    grid-column: 1 / 3;
+    grid-row: 1;
+  }
 
-    > .pane-resizer:not(.pane-resizer-row) {
-      grid-column: 1;
-      grid-row: 2;
-      width: 100%;
-      height: var(--spacer-3);
-      min-height: var(--spacer-3);
-      flex: 0 0 var(--spacer-3);
-      cursor: row-resize;
+  #root
+    .shader-viewer
+    > :is(.shader-preview.shader-viewer-visualizer, .shader-viewer-visualizer) {
+    grid-column: 1 / 3;
+    grid-row: 2;
+    width: 100%;
+    min-width: 0;
+    height: var(--preview-height, auto);
+    min-height: 180px;
+    aspect-ratio: 16 / 9;
+  }
 
-      &::after {
-        top: 50%;
-        bottom: auto;
-        left: 0;
-        right: 0;
-        width: auto;
-        height: 2px;
-        transform: translateY(-50%);
-      }
-    }
+  #root .shader-viewer > .pane-resizer:not(.pane-resizer-row) {
+    grid-column: 1 / 3;
+    grid-row: 3;
+    width: 100%;
+    height: 100%;
+    min-height: var(--spacer-3);
+    cursor: row-resize;
 
-    .shader-viewer-sidebar {
-      grid-column: 1;
-      grid-row: 3;
-      position: relative;
-      inset: auto;
-      z-index: auto;
+    &::after {
+      top: 50%;
+      bottom: auto;
+      left: 0;
+      right: 0;
       width: auto;
-      min-width: 0;
-      height: 100%;
-      min-height: 280px;
-      margin: 0;
+      height: 2px;
+      transform: translateY(-50%);
     }
+  }
 
-    .shader-properties-panel {
-      grid-column: 2;
-      grid-row: 1 / 4;
-      height: 100%;
-      margin-right: 0;
-      margin-left: var(--spacer-3);
-    }
+  #root .shader-viewer .shader-viewer-sidebar {
+    grid-column: 1 / 3;
+    grid-row: 4;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  #root .shader-viewer > .shader-properties-panel {
+    grid-column: 4;
+    grid-row: 1 / -1;
+    height: 100%;
+    margin-left: 0;
+    margin-right: 0;
   }
 }

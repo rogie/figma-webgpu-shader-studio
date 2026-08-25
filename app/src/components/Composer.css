@@ -1,4 +1,5 @@
 #root .composer-viewer {
+  display: flex;
   flex-direction: row;
   align-items: stretch;
 }
@@ -24,10 +25,10 @@
 }
 
 #root .composer-viewer > .shader-properties-panel {
-  flex: 0 0 var(--sidebar-width);
+  flex: 0 1 var(--sidebar-fluid-width);
 }
 
-@media (max-width: 900px) {
+@container editor (max-width: 900px) {
   #root .composer-viewer {
     display: flex;
     flex-direction: row;

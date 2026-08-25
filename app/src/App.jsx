@@ -722,6 +722,7 @@ export default function App() {
     userId: user?.id ?? null,
     onError: onPersistenceError,
   });
+  const editorViewRef = useRef(null);
   const {
     appNavWidth,
     codeWidth,
@@ -732,7 +733,7 @@ export default function App() {
     saveCodeWidth,
     saveChatHeight,
     savePreviewHeight,
-  } = usePanelLayout();
+  } = usePanelLayout(editorViewRef);
   const [theme, setTheme] = useState(savedTheme);
   const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
@@ -6578,7 +6579,7 @@ export default function App() {
       )}
 
       {viewMode === "editor" && (
-      <div className="editor-view">
+      <div className="editor-view" ref={editorViewRef}>
         <nav
           className="app-nav"
           style={{ "--app-nav-width": `${appNavWidth}px` }}
@@ -6804,6 +6805,7 @@ export default function App() {
               ? { "--preview-height": `${previewHeight}px` }
               : {}),
           }}
+          header={shaderEditorHeader}
           codeCollapsed={effectiveCodeCollapsed}
           chatCollapsed={protectedPreview ? false : chatCollapsed}
           stacked={stacked}
@@ -6813,8 +6815,6 @@ export default function App() {
           minPreviewHeight={MIN_PREVIEW_HEIGHT}
           sidebar={
             <>
-              {shaderEditorHeader}
-
               <section
                 className="shader-viewer-code"
                 data-collapsed={effectiveCodeCollapsed ? "true" : "false"}

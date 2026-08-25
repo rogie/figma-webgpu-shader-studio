@@ -9,7 +9,8 @@ export const MIN_STACKED_SIDEBAR = 280;
 export const DEFAULT_CHAT_HEIGHT = 260;
 export const MIN_CHAT_HEIGHT = 220;
 export const MIN_CODE_EDITOR_HEIGHT = 140;
-export const STACKED_MEDIA_QUERY = "(max-width: 900px)";
+export const STACKED_BREAKPOINT = 1180;
+export const STACKED_MEDIA_QUERY = `(max-width: ${STACKED_BREAKPOINT}px)`;
 
 export const APP_NAV_WIDTH_STORAGE_KEY =
   "figma-shader-studio:app-nav-width";

@@ -8,25 +8,29 @@ import {
   readChatHeight,
   readCodeWidth,
   readPreviewHeight,
-  STACKED_MEDIA_QUERY,
+  STACKED_BREAKPOINT,
 } from "../lib/layoutStorage.js";
 
-export function usePanelLayout() {
+export function usePanelLayout(editorViewRef) {
   const [appNavWidth, setAppNavWidth] = useState(readAppNavWidth);
   const [codeWidth, setCodeWidth] = useState(readCodeWidth);
   const [chatHeight, setChatHeight] = useState(readChatHeight);
   const [previewHeight, setPreviewHeight] = useState(readPreviewHeight);
-  const [stacked, setStacked] = useState(
-    () => window.matchMedia(STACKED_MEDIA_QUERY).matches,
-  );
+  const [stacked, setStacked] = useState(false);
 
   useEffect(() => {
-    const media = window.matchMedia(STACKED_MEDIA_QUERY);
-    const sync = () => setStacked(media.matches);
+    const root = editorViewRef?.current;
+    if (!root) return;
+
+    const sync = () => {
+      setStacked(root.clientWidth <= STACKED_BREAKPOINT);
+    };
+
     sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
+    const observer = new ResizeObserver(sync);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [editorViewRef]);
 
   const saveAppNavWidth = useCallback((width) => {
     const rounded = Math.round(width);
