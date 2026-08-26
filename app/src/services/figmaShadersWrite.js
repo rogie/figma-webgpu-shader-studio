@@ -1,13 +1,14 @@
 export class FigmaShadersError extends Error {
   /**
    * @param {string} message
-   * @param {{ code?: string, status?: number }} [extra]
+   * @param {{ code?: string, status?: number, details?: Record<string, unknown> }} [extra]
    */
   constructor(message, extra = {}) {
     super(message);
     this.name = "FigmaShadersError";
     this.code = extra.code;
     this.status = extra.status;
+    this.details = extra.details;
   }
 }
 

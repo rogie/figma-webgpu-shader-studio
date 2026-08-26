@@ -581,6 +581,35 @@ async function parseMcpResponse(response: Response): Promise<{
   return { rpc: parseSseJsonRpc(rawText), sessionId, rawText };
 }
 
+type ToolCallDiagnostics = Record<string, string | number>;
+
+function toolCallDiagnostics(
+  tool: string,
+  args: Record<string, unknown>,
+): ToolCallDiagnostics {
+  const details: ToolCallDiagnostics = { tool };
+  if (typeof args.kind === "string") details.kind = args.kind;
+  if (typeof args.id === "string") details.id = args.id;
+  if (typeof args.name === "string") details.nameChars = args.name.length;
+  if (typeof args.description === "string") {
+    details.descriptionChars = args.description.length;
+  }
+  if (typeof args.planKey === "string") {
+    details.planType = args.planKey.split("::", 1)[0] || "unknown";
+  }
+  if (typeof args.mainTs === "string") details.mainTsChars = args.mainTs.length;
+  if (typeof args.commitMessage === "string") {
+    details.commitMessageChars = args.commitMessage.length;
+  }
+  return details;
+}
+
+function formatToolCallDiagnostics(details: ToolCallDiagnostics): string {
+  return Object.entries(details)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(", ");
+}
+
 class McpClient {
   #token: string;
   #sessionId: string | null = null;
@@ -701,10 +730,22 @@ class McpClient {
         .filter((text): text is string => Boolean(text))
         .join("\n")
         .trim();
-      throw Object.assign(new Error(message || `${name} failed`), {
-        code: "figma_mcp_tool_error",
-        status: 502,
+      const details = toolCallDiagnostics(name, args);
+      const toolMessage = message || `${name} failed`;
+      console.error("Figma MCP tool call failed", {
+        ...details,
+        error: toolMessage,
       });
+      throw Object.assign(
+        new Error(
+          `${toolMessage}\nRequest details: ${formatToolCallDiagnostics(details)}`,
+        ),
+        {
+          code: "figma_mcp_tool_error",
+          status: 502,
+          details,
+        },
+      );
     }
     return result;
   }
@@ -1185,6 +1226,7 @@ Deno.serve(async (req) => {
       message?: string;
       code?: string;
       status?: number;
+      details?: ToolCallDiagnostics;
     };
     const status =
       typeof err.status === "number" && err.status >= 400 && err.status < 600
@@ -1193,6 +1235,7 @@ Deno.serve(async (req) => {
     return jsonResponse(status, {
       error: err.message || String(error),
       code: err.code || "figma_proxy_error",
+      ...(err.details ? { details: err.details } : {}),
     });
   }
 });

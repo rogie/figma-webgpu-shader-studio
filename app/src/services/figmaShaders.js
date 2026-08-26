@@ -110,9 +110,23 @@ async function callFigmaShadersRaw(body, options = {}) {
     const message =
       (typeof payload?.error === "string" && payload.error) ||
       `Figma shader request failed (${response.status})`;
+    const details =
+      payload?.details &&
+      typeof payload.details === "object" &&
+      !Array.isArray(payload.details)
+        ? payload.details
+        : undefined;
+    console.error("Figma shader request failed", {
+      operation: typeof body?.op === "string" ? body.op : "unknown",
+      status: response.status,
+      code: typeof payload?.code === "string" ? payload.code : undefined,
+      message,
+      details,
+    });
     throw new FigmaShadersError(message, {
       code: typeof payload?.code === "string" ? payload.code : undefined,
       status: response.status,
+      details,
     });
   }
 
