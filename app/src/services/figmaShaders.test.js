@@ -83,7 +83,7 @@ test("createFigmaShader sends the staging MCP proxy contract", async () => {
   });
 });
 
-test("updateFigmaShader sends source, feature flags, and commit message", async () => {
+test("updateFigmaShader sends only the staging MCP update contract", async () => {
   const calls = [];
   const result = await updateFigmaShader(
     async (body) => {
@@ -94,8 +94,6 @@ test("updateFigmaShader sends source, feature flags, and commit message", async 
       id: "shader-1",
       kind: "fill",
       mainTs: "export default function Fill() {}",
-      isAnimated: true,
-      usesMouse: false,
       commitMessage: "Update Fill from Shader Studio",
     }
   );
@@ -104,8 +102,6 @@ test("updateFigmaShader sends source, feature flags, and commit message", async 
     id: "shader-1",
     kind: "fill",
     mainTs: "export default function Fill() {}",
-    isAnimated: true,
-    usesMouse: false,
     commitMessage: "Update Fill from Shader Studio",
   });
   assert.equal(result.version, "v2");
@@ -132,8 +128,6 @@ test("write requests validate kind, plan, and returned id", async () => {
         id: "shader-1",
         kind: "effect",
         mainTs: "source",
-        isAnimated: false,
-        usesMouse: false,
         commitMessage: "Update",
       }
     ),

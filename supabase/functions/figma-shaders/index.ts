@@ -59,8 +59,6 @@ type RequestBody = {
   description?: string;
   planKey?: string;
   mainTs?: string;
-  isAnimated?: boolean;
-  usesMouse?: boolean;
   commitMessage?: string;
 };
 
@@ -821,16 +819,6 @@ function requireBodySource(value: unknown): string {
   return source;
 }
 
-function requireBodyBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== "boolean") {
-    throw Object.assign(new Error(`${field} must be a boolean`), {
-      code: `invalid_${field.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`)}`,
-      status: 400,
-    });
-  }
-  return value;
-}
-
 async function listFigmaPlans(client: McpClient) {
   const payload = extractToolPayload(await client.callTool("whoami"));
   const plans = Array.isArray(payload.plans) ? payload.plans : [];
@@ -896,8 +884,6 @@ async function updateFigmaShader(
   const kind = requireShaderKind(body.kind);
   const id = requireBodyString(body.id, "id", 256);
   const mainTs = requireBodySource(body.mainTs);
-  const isAnimated = requireBodyBoolean(body.isAnimated, "isAnimated");
-  const usesMouse = requireBodyBoolean(body.usesMouse, "usesMouse");
   const commitMessage = requireBodyString(
     body.commitMessage,
     "commitMessage",
@@ -908,8 +894,6 @@ async function updateFigmaShader(
       id,
       kind,
       mainTs,
-      isAnimated,
-      usesMouse,
       commitMessage,
     }),
   );

@@ -35,8 +35,6 @@ test("create persists the scaffold link before deploying source", async () => {
       description: "A warm glow blooms around the brightest details.",
       kind: "effect",
       mainTs: "export default function Effect() {}",
-      isAnimated: true,
-      usesMouse: false,
     },
     planKey: "organization::123",
     create: async (args) => {
@@ -59,13 +57,12 @@ test("create persists the scaffold link before deploying source", async () => {
     events.find(([event]) => event === "create")[1].description,
     "A warm glow blooms around the brightest details."
   );
-  assert.deepEqual(
-    {
-      isAnimated: events.find(([event]) => event === "update")[1].isAnimated,
-      usesMouse: events.find(([event]) => event === "update")[1].usesMouse,
-    },
-    { isAnimated: true, usesMouse: false }
-  );
+  assert.deepEqual(events.find(([event]) => event === "update")[1], {
+    id: "shader-1",
+    kind: "effect",
+    mainTs: "export default function Effect() {}",
+    commitMessage: "Create Glow from Shader Studio",
+  });
 });
 
 test("Figma creation falls back when no generated description exists", () => {
@@ -83,8 +80,6 @@ test("a failed initial deploy leaves the created link available for retry", asyn
         name: "Glow",
         kind: "effect",
         mainTs: "broken",
-        isAnimated: false,
-        usesMouse: false,
       },
       planKey: "organization::123",
       create: async () => ({ id: "shader-1", kind: "effect" }),

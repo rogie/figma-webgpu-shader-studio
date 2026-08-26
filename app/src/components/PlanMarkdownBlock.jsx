@@ -31,6 +31,12 @@ export default function PlanMarkdownBlock({
     wasPendingRef.current = Boolean(pending);
   }, [pending]);
 
+  useEffect(() => {
+    if (!pending || groupRef.current?.getAttribute("open") === "false") return;
+    const content = groupRef.current?.querySelector(".plan-markdown-content");
+    if (content) content.scrollTop = content.scrollHeight;
+  }, [source, pending]);
+
   if (!source && !pending) return null;
 
   return (
