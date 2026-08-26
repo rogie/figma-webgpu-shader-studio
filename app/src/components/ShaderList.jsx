@@ -64,7 +64,6 @@ const ShaderList = forwardRef(function ShaderList(
           <ShaderListItem
             src={card.thumbnailUrl}
             label={card.name}
-            sublabel={card.description}
             layout={layout}
             showPreview={showPreview}
             selected={card.key === value}
