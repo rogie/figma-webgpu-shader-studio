@@ -1,5 +1,6 @@
 export function shaderContentFingerprint({
   name,
+  description,
   source,
   parameterValues,
   features,
@@ -7,6 +8,7 @@ export function shaderContentFingerprint({
 }) {
   return JSON.stringify({
     name: name || "",
+    description: description || "",
     source: source || "",
     parameterValues: parameterValues || {},
     features: features || {},

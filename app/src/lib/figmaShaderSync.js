@@ -18,6 +18,17 @@ export function figmaShaderSuccessMessage(operation, kind) {
   } in Figma`;
 }
 
+export function figmaShaderDescription(snapshot) {
+  const description =
+    typeof snapshot?.description === "string"
+      ? snapshot.description.replace(/\s+/g, " ").trim().slice(0, 1000)
+      : "";
+  return (
+    description ||
+    `Shader ${figmaShaderKindLabel(snapshot?.kind)} created in Shader Studio.`
+  );
+}
+
 export async function createAndDeployFigmaShader({
   snapshot,
   planKey,
@@ -27,9 +38,7 @@ export async function createAndDeployFigmaShader({
 }) {
   const created = await create({
     name: snapshot.name,
-    description: `Shader ${figmaShaderKindLabel(
-      snapshot.kind
-    )} created in Shader Studio.`,
+    description: figmaShaderDescription(snapshot),
     planKey,
     kind: snapshot.kind,
   });

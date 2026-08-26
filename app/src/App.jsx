@@ -693,6 +693,9 @@ export default function App() {
   } = useAuth();
   const [presetId, setPresetId] = useState(INITIAL.id);
   const [shaderName, setShaderName] = useState(INITIAL.name);
+  const [shaderDescription, setShaderDescription] = useState(
+    typeof INITIAL.description === "string" ? INITIAL.description : ""
+  );
   const [source, setSource] = useState(INITIAL.source);
   const [sessionKind, setSessionKind] = useState(
     () => getAppRoute().kind || INITIAL.kind,
@@ -978,6 +981,7 @@ export default function App() {
   const draftSessionRef = useRef({
     presetId,
     shaderName,
+    shaderDescription,
     source,
     values,
     isPublic,
@@ -998,6 +1002,7 @@ export default function App() {
   draftSessionRef.current = {
     presetId,
     shaderName,
+    shaderDescription,
     source,
     values,
     isPublic,
@@ -1354,6 +1359,7 @@ export default function App() {
               ? {
                   ...draft,
                   name: session.shaderName,
+                  description: session.shaderDescription,
                   source: session.source,
                   kind: session.kind,
                   values: session.values,
@@ -1374,6 +1380,7 @@ export default function App() {
             {
               id: session.presetId,
               name: session.shaderName,
+              description: session.shaderDescription,
               kind: session.kind || detectKind(session.source),
               source: session.source,
               values: session.values,
@@ -3219,6 +3226,7 @@ export default function App() {
           ? {
               ...draft,
               name: session.shaderName,
+              description: session.shaderDescription,
               source: session.source,
               kind: session.kind,
               values: session.values,
@@ -3271,6 +3279,7 @@ export default function App() {
     setPresetId,
     setShaderRoute,
     setShaderName,
+    setShaderDescription,
     setSource,
     setSessionKind,
     setComposition,
@@ -3302,6 +3311,7 @@ export default function App() {
       await activateShaderSession({
         sessionId: draft.id,
         name: draft.name,
+        description: draft.description || "",
         source: draft.source,
         kind: draft.kind,
         composition: draft.composition,
@@ -3322,6 +3332,7 @@ export default function App() {
       const draft = {
         id,
         name: preset.name,
+        description: "",
         kind: preset.kind,
         source: preset.source,
         values: {},
@@ -3333,6 +3344,7 @@ export default function App() {
           id: cloudIdForDraft(id),
           owner_id: user.id,
           name: draft.name,
+          description: draft.description,
           source: draft.source,
           kind: draft.kind,
           parameter_values: {},
@@ -3347,6 +3359,7 @@ export default function App() {
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
           name: saved.name,
+          description: saved.description || "",
           source: saved.source,
           kind: saved.kind,
           values: saved.parameter_values || {},
@@ -3359,6 +3372,7 @@ export default function App() {
       await activateShaderSession({
         sessionId: id,
         name: draft.name,
+        description: draft.description,
         source: draft.source,
         kind: draft.kind,
         dirty: true,
@@ -3374,6 +3388,7 @@ export default function App() {
     const draft = {
       id,
       name: "New Composer",
+      description: "",
       kind: COMPOSITION_KIND,
       source: "",
       values: {},
@@ -3386,6 +3401,7 @@ export default function App() {
       await activateShaderSession({
         sessionId: id,
         name: draft.name,
+        description: draft.description,
         source: "",
         kind: COMPOSITION_KIND,
         composition: graph,
@@ -3399,6 +3415,7 @@ export default function App() {
             id: cloudIdForDraft(id),
             owner_id: user.id,
             name: draft.name,
+            description: draft.description,
             source: "",
             kind: COMPOSITION_KIND,
             parameter_values: {},
@@ -3414,6 +3431,7 @@ export default function App() {
             sessionId: cloudChoiceId(saved.id),
             routeId: saved.id,
             name: saved.name,
+            description: saved.description || "",
             source: "",
             kind: COMPOSITION_KIND,
             composition: saved.composition || graph,
@@ -3447,6 +3465,8 @@ export default function App() {
       const detail = await getFigmaShader(kind, id);
       const sourceText = detail.mainTs;
       const name = detail.name || "Figma Shader";
+      const description =
+        typeof detail.description === "string" ? detail.description : "";
       const shaderKind = detail.kind === "fill" ? "fill" : "effect";
       const link = {
         figma_shader_id: detail.id,
@@ -3463,6 +3483,7 @@ export default function App() {
       setPendingMedia(null);
       setDirty(true);
       setShaderName(name);
+      setShaderDescription(description);
       setSource(sourceText);
       setSessionKind(shaderKind);
       setComposition(null);
@@ -3493,6 +3514,7 @@ export default function App() {
               });
               return updateShader(existing.id, {
                 name,
+                description,
                 ...link,
               });
             });
@@ -3502,6 +3524,7 @@ export default function App() {
           saved = await createShader({
             owner_id: user.id,
             name,
+            description,
             source: sourceText,
             kind: shaderKind,
             parameter_values: {},
@@ -3518,6 +3541,7 @@ export default function App() {
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
           name: saved.name,
+          description: saved.description || "",
           source: saved.source,
           kind: saved.kind,
           values: saved.parameter_values || {},
@@ -3532,6 +3556,7 @@ export default function App() {
       const draft = {
         id: draftId,
         name,
+        description,
         kind: shaderKind,
         source: sourceText,
         values: {},
@@ -3543,6 +3568,7 @@ export default function App() {
       await activateShaderSession({
         sessionId: draftId,
         name,
+        description,
         source: sourceText,
         kind: shaderKind,
         dirty: true,
@@ -3580,6 +3606,7 @@ export default function App() {
         setCloudShaders((current) => cacheFullShaderRow(current, fullShader));
         lastSavedFingerprintRef.current = shaderContentFingerprint({
           name: fullShader.name,
+          description: fullShader.description,
           source: fullShader.source,
           parameterValues: fullShader.parameter_values,
           features:
@@ -3591,6 +3618,7 @@ export default function App() {
             sessionId: cloudChoiceId(fullShader.id),
             routeId: fullShader.id,
             name: fullShader.name,
+            description: fullShader.description || "",
             source: fullShader.source || "",
             kind: fullShader.kind,
             composition: fullShader.composition,
@@ -3717,6 +3745,8 @@ export default function App() {
             id: cloudId,
             owner_id: user.id,
             name: session.shaderName || draft.name || "Untitled Shader",
+            description:
+              session.shaderDescription || draft.description || "",
             source,
             kind: isComposition ? COMPOSITION_KIND : detectKind(source),
             parameter_values: isComposition
@@ -3747,6 +3777,7 @@ export default function App() {
                 });
                 return updateShader(existing.id, {
                   name: payload.name,
+                  description: payload.description,
                   ...figmaShaderLink(editorActive ? session : draft),
                 });
               });
@@ -3870,6 +3901,8 @@ export default function App() {
         sessionId: preset.id,
         routeId: syncUrl ? preset.id : routeId,
         name: preset.name,
+        description:
+          typeof preset.description === "string" ? preset.description : "",
         source: preset.source,
         kind: preset.kind,
       });
@@ -4490,10 +4523,15 @@ export default function App() {
           ? options.sourceOverride
           : sourceRef.current;
       const saveValues = options.valuesOverride || valuesRef.current;
+      const saveDescription =
+        typeof options.descriptionOverride === "string"
+          ? options.descriptionOverride.slice(0, 1000)
+          : shaderDescription;
       const noticeMessage =
         "notice" in options ? options.notice : "Shader saved";
       const saveSnapshot = {
         name: shaderName.trim() || "Untitled Shader",
+        description: saveDescription,
         source: saveSource,
         values: JSON.stringify(saveValues),
         isPublic: publicFlag,
@@ -4588,6 +4626,7 @@ export default function App() {
         const payload = {
           owner_id: user.id,
           name: shaderName.trim() || "Untitled Shader",
+          description: saveDescription,
           source: isComposition ? "" : saveSource,
           kind: isComposition ? COMPOSITION_KIND : detectKind(saveSource),
           parameter_values: isComposition ? {} : saveValues,
@@ -4617,6 +4656,7 @@ export default function App() {
 
         const contentFingerprint = shaderContentFingerprint({
           name: payload.name,
+          description: payload.description,
           source: payload.source,
           parameterValues: payload.parameter_values,
           features: payload.features,
@@ -4664,6 +4704,7 @@ export default function App() {
           });
           const metadataPayload = {
             name: payload.name,
+            description: payload.description,
             ...figmaShaderLink(currentShader || draftLink),
           };
           if (!background) metadataPayload.is_public = publicFlag;
@@ -4844,6 +4885,7 @@ export default function App() {
         const unchanged =
           (latest.shaderName.trim() || "Untitled Shader") ===
             saveSnapshot.name &&
+          latest.shaderDescription === saveSnapshot.description &&
           latest.source === saveSnapshot.source &&
           JSON.stringify(latest.values) === saveSnapshot.values &&
           Boolean(latest.isPublic) === saveSnapshot.isPublic &&
@@ -4937,6 +4979,7 @@ export default function App() {
       cloudShaders,
       refreshShaderVersions,
       setShaderRoute,
+      shaderDescription,
       shaderName,
       shaderVersions,
       showNotice,
@@ -4946,13 +4989,35 @@ export default function App() {
   );
 
   const checkpointAgentVersion = useCallback(
-    ({ source: appliedSource, summary }) => {
-      if (!isOwner || !currentShader?.id || !appliedSource) return;
+    ({ source: appliedSource, summary, description }) => {
+      if (!appliedSource) return;
+      const nextDescription =
+        typeof description === "string" && description.trim()
+          ? description.trim().slice(0, 1000)
+          : draftSessionRef.current.shaderDescription || "";
+      if (nextDescription !== draftSessionRef.current.shaderDescription) {
+        setShaderDescription(nextDescription);
+        draftSessionRef.current = {
+          ...draftSessionRef.current,
+          shaderDescription: nextDescription,
+        };
+        if (isDraftId(presetId)) {
+          setDrafts((current) =>
+            current.map((draft) =>
+              draft.id === presetId
+                ? { ...draft, description: nextDescription }
+                : draft
+            )
+          );
+        }
+      }
+      if (!isOwner || !currentShader?.id) return;
       const checkpoint = {
         presetId,
         shaderId: currentShader.id,
         source: appliedSource,
         summary: summarizeAgentVersion(summary),
+        description: nextDescription,
       };
       if (
         lastSuccessfulCompileRef.current.presetId === presetId &&
@@ -4996,6 +5061,7 @@ export default function App() {
       background: true,
       checkpointKind: "agent",
       checkpointSummary: checkpoint.summary,
+      descriptionOverride: checkpoint.description,
       sourceOverride: checkpoint.source,
       valuesOverride: checkpoint.values,
       notice: null,
@@ -5295,6 +5361,7 @@ export default function App() {
           setDirty(false);
           lastSavedFingerprintRef.current = shaderContentFingerprint({
             name: restored.name,
+            description: restored.description,
             source: restored.source,
             parameterValues: restored.parameter_values,
             features: restored.features || inferFeatures(restored.source || ""),
@@ -5427,6 +5494,7 @@ export default function App() {
       const draft = {
         id,
         name,
+        description: shaderDescription,
         kind: isComposition
           ? COMPOSITION_KIND
           : detectKind(sourceRef.current),
@@ -5444,6 +5512,7 @@ export default function App() {
           id: cloudIdForDraft(id),
           owner_id: user.id,
           name,
+          description: shaderDescription,
           source: draft.source,
           kind: draft.kind,
           parameter_values: draft.values,
@@ -5461,6 +5530,7 @@ export default function App() {
         setPresetId(cloudChoiceId(saved.id));
         setShaderRoute(saved.id, saved.kind);
         setShaderName(name);
+        setShaderDescription(saved.description || "");
         setIsPublic(false);
         setPendingMedia(mediaFile);
         setDirty(true);
@@ -5476,6 +5546,7 @@ export default function App() {
       setPresetId(id);
       setShaderRoute(id, draft.kind);
       setShaderName(name);
+      setShaderDescription(draft.description);
       setIsPublic(false);
       setPendingMedia(mediaFile);
       setDirty(true);
@@ -5494,6 +5565,7 @@ export default function App() {
     pendingMedia,
     persistActiveDraft,
     setShaderRoute,
+    shaderDescription,
     shaderName,
     showNotice,
     user,
@@ -6577,6 +6649,7 @@ export default function App() {
     if (figmaSyncing || sessionKind === COMPOSITION_KIND) return;
     const snapshot = {
       name: shaderName.trim() || "Untitled Shader",
+      description: shaderDescription,
       source: sourceRef.current,
       kind: activeFigmaLink.figma_shader_id
         ? activeFigmaLink.figma_shader_kind ||
@@ -6611,6 +6684,7 @@ export default function App() {
     figmaSyncing,
     runFigmaUpdate,
     sessionKind,
+    shaderDescription,
     shaderName,
     showNotice,
   ]);

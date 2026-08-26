@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   chatApplyTargetStatus,
+  extractAssistantMetadata,
   formatChatError,
+  splitAssistantContent,
   validateModuleSource,
 } from "./chatApply.js";
 
@@ -77,4 +79,35 @@ test("only applies chat output to its unchanged target shader", () => {
     }),
     "source-changed"
   );
+});
+
+test("extracts tagged summary and description from an applied response", () => {
+  const response = `<summary>Adds a softer animated glow.</summary>
+<description>A soft glow moves across the image and blooms around bright details. Amount and speed controls tune its intensity and motion.</description>
+\`\`\`typescript
+export function render(device, frame) {
+  return frame;
+}
+\`\`\``;
+  assert.deepEqual(extractAssistantMetadata(response), {
+    summary: "Adds a softer animated glow.",
+    description:
+      "A soft glow moves across the image and blooms around bright details. Amount and speed controls tune its intensity and motion.",
+  });
+  const parsed = splitAssistantContent(response);
+  assert.equal(parsed.summary, "Adds a softer animated glow.");
+  assert.match(parsed.prose, /A soft glow moves/);
+  assert.doesNotMatch(parsed.prose, /<description>/);
+});
+
+test("keeps legacy untagged responses compatible", () => {
+  const parsed = splitAssistantContent(`Adds a glow.
+\`\`\`typescript
+export function render(device, frame) {
+  return frame;
+}
+\`\`\``);
+  assert.equal(parsed.summary, null);
+  assert.equal(parsed.description, null);
+  assert.equal(parsed.prose, "Adds a glow.");
 });

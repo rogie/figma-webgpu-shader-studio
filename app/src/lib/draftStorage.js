@@ -33,6 +33,10 @@ export function serializeDraft(draft, thumbnail = null) {
   return {
     id: draft.id,
     name: draft.name,
+    description:
+      typeof draft.description === "string"
+        ? draft.description.slice(0, 1000)
+        : "",
     kind: draft.kind,
     source: typeof draft.source === "string" ? draft.source : "",
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
@@ -68,6 +72,10 @@ export function readDrafts(storage = globalThis.localStorage) {
         return {
           id: draft.id,
           name: draft.name,
+          description:
+            typeof draft.description === "string"
+              ? draft.description.slice(0, 1000)
+              : "",
           kind: draft.kind,
           source: typeof draft.source === "string" ? draft.source : "",
           values:

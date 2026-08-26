@@ -815,10 +815,13 @@ const ChatPane = forwardRef(function ChatPane(
     }
     setUndoCount(undoStackRef.current.length);
     onApplySource(pendingApply.source);
-    const { prose } = splitAssistantContent(pendingApply.message.content);
+    const { prose, summary, description } = splitAssistantContent(
+      pendingApply.message.content
+    );
     onAppliedCheckpoint?.({
       source: pendingApply.source,
-      summary: prose,
+      summary: summary || prose,
+      description,
     });
     markPlanApplied(pendingApply.message.buildPlanId);
     updateThread((current) =>
@@ -1055,12 +1058,19 @@ const ChatPane = forwardRef(function ChatPane(
     };
 
     const checkpointAppliedResponse = (text) => {
-      const { prose, source: appliedSource, incomplete } =
+      const {
+        prose,
+        summary,
+        description,
+        source: appliedSource,
+        incomplete,
+      } =
         splitAssistantContent(text);
       if (!appliedSource || incomplete) return;
       onAppliedCheckpoint?.({
         source: appliedSource,
-        summary: prose,
+        summary: summary || prose,
+        description,
       });
     };
 

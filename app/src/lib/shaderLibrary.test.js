@@ -33,6 +33,7 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
       {
         id: "draft:local",
         name: "Draft",
+        description: "A local ripple effect.",
         kind: "effect",
       },
     ],
@@ -41,6 +42,7 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
         id: "private",
         owner_id: "user-1",
         name: "Cloud draft",
+        description: "A luminous gradient fill.",
         author_name: "Owner",
         kind: "fill",
         is_public: false,
@@ -73,6 +75,10 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
       "https://example.com/owner.png",
       "https://example.com/other.png",
     ]
+  );
+  assert.deepEqual(
+    cards.map((card) => card.description),
+    ["A local ripple effect.", "A luminous gradient fill.", ""]
   );
 
   assert.deepEqual(
@@ -151,6 +157,19 @@ test("filters draft and public cards independently", () => {
   assert.deepEqual(filterShaderLibraryCards(cards, { origin: "public" }), [
     cards[1],
   ]);
+});
+
+test("filters library cards by description", () => {
+  const cards = [
+    {
+      name: "Soft light",
+      description: "A drifting iridescent bloom.",
+      authorLabel: "Draft",
+      kind: "fill",
+      origin: "draft",
+    },
+  ];
+  assert.deepEqual(filterShaderLibraryCards(cards, { query: "iridescent" }), cards);
 });
 
 test("marks studio cards linked to a Figma shader", () => {

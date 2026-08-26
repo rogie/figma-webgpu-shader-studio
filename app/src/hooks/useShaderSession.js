@@ -34,6 +34,7 @@ export function useShaderSession({
   setPresetId,
   setShaderRoute,
   setShaderName,
+  setShaderDescription,
   setSource,
   setSessionKind,
   setComposition,
@@ -62,6 +63,7 @@ export function useShaderSession({
       sessionId,
       routeId: nextRouteId = sessionId,
       name,
+      description: nextDescription = "",
       source: nextSource,
       kind: nextKind,
       composition: nextComposition = null,
@@ -103,6 +105,7 @@ export function useShaderSession({
       setPresetId(sessionId);
       setShaderRoute(nextRouteId, nextKind);
       setShaderName(name);
+      setShaderDescription(nextDescription);
       setSource(nextSource);
       setSessionKind(nextKind);
       const graph =
@@ -241,6 +244,7 @@ export function useShaderSession({
       setComposition,
       setSessionKind,
       setShaderName,
+      setShaderDescription,
       setShaderRoute,
       setSource,
     ],

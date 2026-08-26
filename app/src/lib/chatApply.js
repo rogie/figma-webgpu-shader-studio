@@ -4,6 +4,10 @@ const COMPLETE_FENCE_RE =
   /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n([\s\S]*?)```/gi;
 const OPEN_FENCE_RE =
   /```(?:typescript|ts|tsx|javascript|js|jsx)?[^\n]*\n/gi;
+const SUMMARY_TAG_RE = /<summary>\s*([\s\S]*?)\s*<\/summary>/i;
+const DESCRIPTION_TAG_RE =
+  /<description>\s*([\s\S]*?)\s*<\/description>/i;
+const METADATA_TAG_RE = /<\/?(?:summary|description)>/gi;
 
 export function isPlanMode(mode) {
   return mode === "plan";
@@ -11,6 +15,30 @@ export function isPlanMode(mode) {
 
 function normalizeModuleSource(body) {
   return body.replace(/^\uFEFF/, "").replace(/\s+$/, "") + "\n";
+}
+
+function sanitizeMetadataText(value, maxLength) {
+  const text = String(value || "")
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[*_#>`~-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text ? text.slice(0, maxLength).trim() : null;
+}
+
+export function extractAssistantMetadata(text) {
+  const input = String(text || "");
+  const summaryMatch = input.match(SUMMARY_TAG_RE);
+  const descriptionMatch = input.match(DESCRIPTION_TAG_RE);
+  return {
+    summary: sanitizeMetadataText(summaryMatch?.[1], 240),
+    description: sanitizeMetadataText(descriptionMatch?.[1], 1000),
+  };
+}
+
+function displayProse(text) {
+  return String(text || "").replace(METADATA_TAG_RE, "").trim();
 }
 
 /**
@@ -82,16 +110,28 @@ export function validateModuleSource(source) {
 export function splitAssistantContent(text) {
   const source = extractModuleSource(text, { allowIncomplete: true });
   if (!source) {
-    return { prose: text.trim(), source: null, incomplete: false };
+    const metadata = extractAssistantMetadata(text);
+    return {
+      prose: displayProse(text),
+      source: null,
+      incomplete: false,
+      ...metadata,
+    };
   }
   const completeSource = extractModuleSource(text, { allowIncomplete: false });
   const incomplete = completeSource == null;
   OPEN_FENCE_RE.lastIndex = 0;
   const openMatch = OPEN_FENCE_RE.exec(text);
   const fenceIndex = openMatch ? openMatch.index : -1;
-  const prose =
+  const rawProse =
     fenceIndex >= 0 ? text.slice(0, fenceIndex).trim() : text.trim();
-  return { prose, source, incomplete };
+  const metadata = extractAssistantMetadata(rawProse);
+  return {
+    prose: displayProse(rawProse),
+    source,
+    incomplete,
+    ...metadata,
+  };
 }
 
 export function chatApplyTargetStatus({

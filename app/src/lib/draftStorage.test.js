@@ -33,6 +33,7 @@ test("readDrafts filters invalid rows and normalizes legacy values", () => {
       {
         id: "draft:valid",
         name: "Valid",
+        description: "A vivid grain effect.",
         kind: "effect",
         source: "export function render() {}",
         values: null,
@@ -50,6 +51,7 @@ test("readDrafts filters invalid rows and normalizes legacy values", () => {
     {
       id: "draft:valid",
       name: "Valid",
+      description: "A vivid grain effect.",
       kind: "effect",
       source: "export function render() {}",
       values: {},
@@ -68,6 +70,7 @@ test("writeDrafts persists data thumbnails but discards blob URLs", () => {
   const draft = {
     id: "draft:one",
     name: "One",
+    description: "A smooth gradient fill.",
     kind: "fill",
     source: "source",
     values: { amount: 2 },
@@ -77,6 +80,7 @@ test("writeDrafts persists data thumbnails but discards blob URLs", () => {
   writeDrafts([draft], { "draft:one": "data:image/png;base64,kept" }, storage);
   const stored = JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY));
   assert.equal(stored[0].thumbnail, "data:image/png;base64,kept");
+  assert.equal(stored[0].description, "A smooth gradient fill.");
 
   writeDrafts([draft], {}, storage);
   assert.equal(

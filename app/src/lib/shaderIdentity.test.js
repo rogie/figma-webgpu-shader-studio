@@ -39,6 +39,7 @@ test("normalizes optional Figma shader metadata", () => {
 test("content fingerprints include every persisted state field", () => {
   const base = {
     name: "Shader",
+    description: "A subtle animated texture.",
     source: "source",
     parameterValues: { amount: 1 },
     features: { isAnimated: false },
@@ -47,6 +48,13 @@ test("content fingerprints include every persisted state field", () => {
   const fingerprint = shaderContentFingerprint(base);
 
   assert.equal(shaderContentFingerprint({ ...base }), fingerprint);
+  assert.notEqual(
+    shaderContentFingerprint({
+      ...base,
+      description: "A bold animated texture.",
+    }),
+    fingerprint,
+  );
   assert.notEqual(
     shaderContentFingerprint({
       ...base,

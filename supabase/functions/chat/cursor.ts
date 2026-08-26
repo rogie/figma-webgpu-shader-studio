@@ -18,7 +18,7 @@ const CURSOR_WORKSPACE_RULES = [
   "- This is an empty cloud workspace with no useful project files.",
   "- Do not use shell or filesystem tools.",
   "- You may work on different shaders across turns. Always treat the Current module source in this prompt as the only shader that exists. Ignore previous modules.",
-  "- When updating the module, return one complete typescript fenced code block.",
+  "- When updating the module, follow the system prompt's tagged <summary> and <description> contract, then return one complete typescript fenced code block.",
 ].join("\n");
 
 export function isCursorAgentId(value: unknown): value is string {

@@ -31,9 +31,14 @@ export function buildSystemPrompt(ctx: ChatContext): string {
 6. Do not emit a complete shader module or implementation-ready full source. Small focused snippets or pseudocode are allowed only when they materially clarify a difficult part of the plan; do not include code by default.
 7. Do not instruct Shader Studio to apply code. For this turn, these plan-mode rules override any authoring-skill instruction that requests a complete module.`
       : `Response format (required):
-1. Update the module only when the user explicitly requests a change. If updating it, begin with exactly ONE plain-prose sentence in future tense summarizing what you will change — no lists, headings, or extra sentences before the code. Shader Studio saves that sentence as the version summary, so keep it self-contained and under 200 characters. Do not claim the implementation is complete before emitting the fenced module. If no code change is requested, answer normally.
-2. If you update the module, end with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
-3. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.`;
+1. Update the module only when the user explicitly requests a change. If no code change is requested, answer normally.
+2. If updating it, begin with exactly these two tagged metadata blocks and no other prose before the code:
+<summary>One future-tense sentence under 200 characters describing this change.</summary>
+<description>One plain-text paragraph of 2–4 sentences describing what the shader visually produces, its important controls, and how it behaves. Write in present tense for a library audience. Do not mention implementation details, WGSL, WebGPU, or Shader Studio.</description>
+3. Refresh the description to match the complete resulting shader on every module update. The summary describes this specific change; the description describes the shader as a whole.
+4. Do not use Markdown, headings, lists, or nested tags inside either metadata block. Do not claim the implementation is complete before emitting the fenced module.
+5. End with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
+6. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.`;
 
   return `You are an expert Figma WebGPU shader module assistant inside Shader Studio.
 

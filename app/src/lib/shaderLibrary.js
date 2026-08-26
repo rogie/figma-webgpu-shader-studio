@@ -67,6 +67,8 @@ export function buildShaderLibraryCards({
       key: draft.id,
       origin: "draft",
       name,
+      description:
+        typeof draft.description === "string" ? draft.description : "",
       kind: resolvedLibraryKind(draft),
       thumbnailUrl: thumbnails[draft.id] || null,
       authorId: user?.id ?? null,
@@ -93,6 +95,8 @@ export function buildShaderLibraryCards({
       key,
       origin: privateDraft ? "draft" : "public",
       name: liveNames[key] || shader.name,
+      description:
+        typeof shader.description === "string" ? shader.description : "",
       kind: resolvedLibraryKind(shader),
       thumbnailUrl:
         thumbnails[key] ||
@@ -119,6 +123,7 @@ export function buildShaderLibraryCards({
       key,
       origin: "figma",
       name: liveNames[key] || shader.name,
+      description: shader.description || "",
       kind,
       thumbnailUrl: thumbnails[key] || null,
       authorId: null,
@@ -158,6 +163,7 @@ export function filterShaderLibraryCards(
     if (!needle) return true;
     return (
       card.name.toLowerCase().includes(needle) ||
+      String(card.description || "").toLowerCase().includes(needle) ||
       card.authorLabel.toLowerCase().includes(needle)
     );
   });

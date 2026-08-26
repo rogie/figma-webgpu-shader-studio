@@ -78,7 +78,9 @@ test("agent prompt retains the complete-module apply contract", () => {
     mode: "agent",
   });
 
-  assert.match(prompt, /exactly ONE plain-prose sentence in future tense/);
+  assert.match(prompt, /<summary>One future-tense sentence/);
+  assert.match(prompt, /<description>One plain-text paragraph/);
+  assert.match(prompt, /Refresh the description to match the complete resulting shader/);
   assert.match(prompt, /primary intent is to get information or to change/);
   assert.match(prompt, /what may be missing, answer directly/);
   assert.match(prompt, /Update the module only when the user explicitly requests/);

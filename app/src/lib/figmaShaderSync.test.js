@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createAndDeployFigmaShader,
   figmaShaderActionLabel,
+  figmaShaderDescription,
   figmaShaderProgressMessage,
   figmaShaderSuccessMessage,
 } from "./figmaShaderSync.js";
@@ -31,6 +32,7 @@ test("create persists the scaffold link before deploying source", async () => {
   const result = await createAndDeployFigmaShader({
     snapshot: {
       name: "Glow",
+      description: "A warm glow blooms around the brightest details.",
       kind: "effect",
       mainTs: "export default function Effect() {}",
       isAnimated: true,
@@ -53,12 +55,23 @@ test("create persists the scaffold link before deploying source", async () => {
     ["create", "persist", "update", "persist"]
   );
   assert.equal(result.figma_shader_version, "v2");
+  assert.equal(
+    events.find(([event]) => event === "create")[1].description,
+    "A warm glow blooms around the brightest details."
+  );
   assert.deepEqual(
     {
       isAnimated: events.find(([event]) => event === "update")[1].isAnimated,
       usesMouse: events.find(([event]) => event === "update")[1].usesMouse,
     },
     { isAnimated: true, usesMouse: false }
+  );
+});
+
+test("Figma creation falls back when no generated description exists", () => {
+  assert.equal(
+    figmaShaderDescription({ kind: "fill", description: "  " }),
+    "Shader fill created in Shader Studio."
   );
 });
 
