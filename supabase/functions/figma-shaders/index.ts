@@ -3,10 +3,10 @@
  *
  * Figma REST (api.figma.com/v1) does not expose shader source list/get yet.
  * This function talks to the official Figma MCP HTTP endpoint with the caller's
- * token, mirroring list_shader_* / get_shader_* + resources/read.
- *
- * Write ops stay 501 until Figma ships create/update.
+ * token, mirroring shader read resources and create/update tools.
  */
+
+import { updateShaderToolArguments } from "./shaderWriteContract.mjs";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -598,6 +598,16 @@ function toolCallDiagnostics(
     details.planType = args.planKey.split("::", 1)[0] || "unknown";
   }
   if (typeof args.mainTs === "string") details.mainTsChars = args.mainTs.length;
+  if (Array.isArray(args.files)) {
+    details.files = args.files.length;
+    const mainFile = args.files.find((file) =>
+      file && typeof file === "object" &&
+      (file as Record<string, unknown>).path === "main.ts"
+    ) as Record<string, unknown> | undefined;
+    if (typeof mainFile?.content === "string") {
+      details.mainTsChars = mainFile.content.length;
+    }
+  }
   if (typeof args.commitMessage === "string") {
     details.commitMessageChars = args.commitMessage.length;
   }
@@ -931,12 +941,12 @@ async function updateFigmaShader(
     500,
   );
   const payload = extractToolPayload(
-    await client.callTool("update_shader", {
+    await client.callTool("update_shader", updateShaderToolArguments({
       id,
       kind,
       mainTs,
       commitMessage,
-    }),
+    })),
   );
   return {
     id: stringField(payload, "id", "shaderId", "shader_id") || id,
