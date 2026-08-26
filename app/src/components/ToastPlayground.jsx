@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { CopyableErrorToastMessage } from "./AppToasts.jsx";
 import "../chat.css";
 
 /**
@@ -69,13 +70,14 @@ const TOAST_STATES = [
     className: "notice-toast",
     dismiss: true,
     examples: [
+      "Invalid tool call. Figma Debug UUID: 7eebeeb6-cb08-4684-92d6-e19df8974d86 Request details: tool=update_shader, kind=fill, id=4511d813-58a8-4912-9b43-8f229a0d37ae, mainTsChars=26732, commitMessageChars=42",
       "Publish failed",
       "Could not duplicate shader",
       "Could not copy code",
       "Automatic repair failed: Unexpected token",
       "Add your API key in Settings before chatting.",
     ],
-    body: (message) => <span>{message}</span>,
+    body: (message) => <CopyableErrorToastMessage message={message} />,
   },
   {
     id: "notice-danger-warning-icon",
@@ -93,7 +95,7 @@ const TOAST_STATES = [
       "Automatic repair failed: Unexpected token",
       "Could not copy code",
     ],
-    body: (message) => <span>{message}</span>,
+    body: (message) => <CopyableErrorToastMessage message={message} />,
   },
   {
     id: "video-exporting",

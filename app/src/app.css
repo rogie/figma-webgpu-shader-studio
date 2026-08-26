@@ -897,6 +897,20 @@ dialog[is="fig-toast"].publish-toast {
   }
 }
 
+dialog[is="fig-toast"].notice-toast .notice-toast-error-message {
+  display: block;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: min(32rem, 60vw);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+dialog[is="fig-toast"] fig-button {
+  flex-shrink: 0;
+}
+
 dialog.export-dialog {
   width: 320px;
 

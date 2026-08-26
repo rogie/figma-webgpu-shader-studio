@@ -1,3 +1,33 @@
+import { useRef } from "react";
+
+export function CopyableErrorToastMessage({ message, onCopied }) {
+  const fullMessage = String(message || "");
+  const copyMessage = async () => {
+    try {
+      await navigator.clipboard.writeText(fullMessage);
+      onCopied?.();
+    } catch {
+      // Keep the error toast open when clipboard access fails.
+    }
+  };
+
+  return (
+    <>
+      <span className="notice-toast-error-message" title={fullMessage}>
+        {fullMessage}
+      </span>
+      <fig-button
+        type="button"
+        variant="secondary"
+        size="small"
+        onClick={copyMessage}
+      >
+        Copy
+      </fig-button>
+    </>
+  );
+}
+
 export default function AppToasts({
   videoExportToastRef,
   videoExportedToastRef,
@@ -14,6 +44,13 @@ export default function AppToasts({
   figmaSyncToast,
   onFigmaSyncToastClose,
 }) {
+  const copiedToastRef = useRef(null);
+  const handleErrorCopied = () => {
+    noticeToastRef.current?.hideToast?.();
+    onNoticeClose?.();
+    copiedToastRef.current?.showToast?.();
+  };
+
   return (
     <>
       <dialog
@@ -71,7 +108,25 @@ export default function AppToasts({
         dismiss={notice?.error ? "" : undefined}
         onClose={onNoticeClose}
       >
-        <span>{notice?.message}</span>
+        {notice?.error ? (
+          <CopyableErrorToastMessage
+            message={notice.message}
+            onCopied={handleErrorCopied}
+          />
+        ) : (
+          <span>{notice?.message}</span>
+        )}
+      </dialog>
+      <dialog
+        is="fig-toast"
+        ref={copiedToastRef}
+        class="clipboard-copied-toast"
+        theme="brand"
+        live="polite"
+        duration="3200"
+        offset="24"
+      >
+        <span>Copied to clipboard</span>
       </dialog>
       <dialog
         is="fig-toast"
