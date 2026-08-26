@@ -1,5 +1,7 @@
+import { useState } from "react";
 import defaultInput from "../assets/default-input.png";
 import "../chat.css";
+import PlanReadyAction from "./PlanReadyAction.jsx";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 
@@ -23,6 +25,8 @@ const MOCK_ATTACHMENTS = [
  *   Status copy rendered as `fig-shimmer` inside `fig-ai-context` (lab "Status").
  * @param {boolean} [props.pendingApply]
  *   A generated module the agent could not apply, offered with an Apply button.
+ * @param {boolean} [props.pendingPlan]
+ *   A completed plan offered with Build and Dismiss actions.
  */
 function Composer({
   draft = "",
@@ -33,6 +37,8 @@ function Composer({
   latestActivity = "",
   status = "",
   pendingApply = false,
+  pendingPlan = false,
+  onDismissPlan,
   context = false,
 }) {
   const canSend =
@@ -96,11 +102,17 @@ function Composer({
       </hstack>
     ) : null;
 
+  const pendingPlanRow =
+    context && pendingPlan ? (
+      <PlanReadyAction onBuild={() => {}} onDismiss={onDismissPlan} />
+    ) : null;
+
   const contextChildren = [
     attachmentRow,
     statusRow,
     actionNeededRow,
     pendingApplyRow,
+    pendingPlanRow,
     // App-specific "View latest" chip — not in FigUI3 lab, but useful to compare.
     context ? activityRow : null,
   ].filter(Boolean);
@@ -203,6 +215,17 @@ function StateExample({ title, description, children }) {
       </header>
       <div className="chat-composer-playground-stage">{children}</div>
     </article>
+  );
+}
+
+function PendingPlanExample() {
+  const [visible, setVisible] = useState(true);
+  return (
+    <Composer
+      pendingPlan={visible}
+      onDismissPlan={() => setVisible(false)}
+      context
+    />
   );
 }
 
@@ -376,6 +399,13 @@ export default function ChatComposerPlayground() {
               description="The agent finished while another shader was open, so the module waits behind an Apply button."
             >
               <Composer pendingApply context />
+            </StateExample>
+
+            <StateExample
+              title="Plan ready"
+              description="A completed plan can be built or dismissed without deleting it from chat history."
+            >
+              <PendingPlanExample />
             </StateExample>
           </div>
         </div>

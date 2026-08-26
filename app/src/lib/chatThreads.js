@@ -38,6 +38,7 @@ function sanitizeMessage(message) {
     out.buildPlanId = message.buildPlanId;
   }
   if (message.planApplied === true) out.planApplied = true;
+  if (message.planDismissed === true) out.planDismissed = true;
   if (message.role === "assistant" && message.applied === true) {
     out.applied = true;
   }

@@ -67,6 +67,7 @@ import UserAvatar from "./UserAvatar.jsx";
 import MarkdownProse from "./MarkdownProse.jsx";
 import PlanIcon from "./PlanIcon.jsx";
 import PlanMarkdownBlock from "./PlanMarkdownBlock.jsx";
+import PlanReadyAction from "./PlanReadyAction.jsx";
 import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "../chat.css";
@@ -480,7 +481,7 @@ const ChatPane = forwardRef(function ChatPane(
       ) {
         continue;
       }
-      if (!message.planApplied) pendingPlan = message;
+      if (!message.planApplied && !message.planDismissed) pendingPlan = message;
       break;
     }
   }
@@ -1382,6 +1383,15 @@ ${pendingPlan.content}
     });
   };
 
+  const dismissPendingPlan = () => {
+    if (!pendingPlan) return;
+    updateThread((current) =>
+      current.map((entry) =>
+        entry === pendingPlan ? { ...entry, planDismissed: true } : entry
+      )
+    );
+  };
+
   const jumpToLatest = () => {
     followingLatestRef.current = true;
     setLatestActivity("");
@@ -1620,17 +1630,11 @@ ${pendingPlan.content}
                 </hstack>
               )}
               {pendingPlan && !pendingApply && (
-                <hstack className="chat-context-action">
-                  <span>Plan is ready to build</span>
-                  <fig-button
-                    type="button"
-                    variant="primary"
-                    disabled={!hasKey ? "" : undefined}
-                    onClick={buildPendingPlan}
-                  >
-                    Build plan
-                  </fig-button>
-                </hstack>
+                <PlanReadyAction
+                  buildDisabled={!hasKey}
+                  onBuild={buildPendingPlan}
+                  onDismiss={dismissPendingPlan}
+                />
               )}
               {contextActivity && (
                 <div className="chat-latest-activity" aria-live="polite">
