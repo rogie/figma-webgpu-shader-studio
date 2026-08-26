@@ -1,5 +1,4 @@
 import {
-  EMBED_FORMAT_OPTIONS,
   IMAGE_FORMAT_OPTIONS,
   VIDEO_ASPECT_OPTIONS,
   VIDEO_FORMAT_OPTIONS,
@@ -36,16 +35,23 @@ export default function ExportDialog({
   videoBitrateRef,
   embedFormatRef,
   embedCode,
+  embedLinkAvailable,
+  iframeEmbedAvailable,
+  iframeEmbedUnavailableMessage,
   onClose,
   onExportImage,
   onExportVideo,
   onDownloadEmbed,
   onCopyEmbed,
+  onCopyEmbedLink,
   onDurationInput,
   onImageQualityInput,
 }) {
   const showAspect = settings.resolution !== "current";
   const showImageQuality = imageExportHasQuality(settings.imageFormat);
+  const iframeEmbedSelected = settings.embedFormat === "iframe";
+  const embedActionsDisabled =
+    iframeEmbedSelected && !iframeEmbedAvailable;
 
   return (
     <dialog
@@ -211,14 +217,26 @@ export default function ExportDialog({
         <fig-tab-content id="export-tab-embed">
           <fig-field direction="horizontal" columns="thirds">
             <label>Format</label>
-            <fig-select
+            <fig-segmented-control
               ref={embedFormatRef}
               value={settings.embedFormat}
-              position="bottom right"
               full=""
-              options={JSON.stringify(EMBED_FORMAT_OPTIONS)}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
+              sizing="equal"
+              aria-label="Embed format"
+            >
+              <fig-segment
+                value="code"
+                selected={settings.embedFormat === "code"}
+              >
+                HTML
+              </fig-segment>
+              <fig-segment
+                value="iframe"
+                selected={settings.embedFormat === "iframe"}
+              >
+                iFrame
+              </fig-segment>
+            </fig-segmented-control>
           </fig-field>
           <fig-field>
             <textarea
@@ -231,15 +249,46 @@ export default function ExportDialog({
               onFocus={(event) => event.currentTarget.select()}
             />
           </fig-field>
+          {iframeEmbedSelected ? (
+            <fig-field>
+              {!iframeEmbedAvailable ? (
+                <p>{iframeEmbedUnavailableMessage}</p>
+              ) : null}
+              <p>
+                Private embeds render only for viewers whose Shader Studio
+                session can access the item. Viewers should authenticate in a
+                top-level tab first; browsers that partition third-party
+                storage or block Access cookies may still block the embed.
+              </p>
+            </fig-field>
+          ) : null}
         </fig-tab-content>
       </fig-content>
       <fig-footer>
         {tab === "embed" ? (
           <>
-            <fig-button type="button" variant="secondary" onClick={onDownloadEmbed}>
+            <fig-button
+              type="button"
+              variant="link"
+              disabled={!embedLinkAvailable ? "" : undefined}
+              onClick={onCopyEmbedLink}
+            >
+              Copy link
+            </fig-button>
+            <fig-button
+              type="button"
+              variant="secondary"
+              disabled={embedActionsDisabled ? "" : undefined}
+              onClick={onDownloadEmbed}
+            >
               Download
             </fig-button>
-            <fig-button type="button" variant="primary" onClick={onCopyEmbed}>
+            <fig-button
+              type="button"
+              variant="primary"
+              disabled={embedActionsDisabled ? "" : undefined}
+              onClick={onCopyEmbed}
+            >
               Copy
             </fig-button>
           </>

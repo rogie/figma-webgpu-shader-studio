@@ -1,4 +1,8 @@
-import { appItemPathname, parseAppRoute } from "../lib/appRoutes.js";
+import {
+  appEmbedPathname,
+  appItemPathname,
+  parseAppRoute,
+} from "../lib/appRoutes.js";
 import { supabase } from "../lib/supabase.js";
 import { formatSupabaseError } from "../lib/supabaseFetch.js";
 import { shaderPlanPath } from "../lib/chatPlans.js";
@@ -344,5 +348,11 @@ export function getShaderRouteId() {
 export function makeShareUrl(id, kind) {
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);
   if (id) url.pathname = appItemPathname(id, kind, appBasePathname());
+  return url.toString();
+}
+
+export function makeEmbedUrl(id, kind) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  if (id) url.pathname = appEmbedPathname(id, kind, appBasePathname());
   return url.toString();
 }

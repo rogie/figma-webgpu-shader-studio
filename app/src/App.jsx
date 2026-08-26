@@ -237,6 +237,7 @@ import {
   getShaderRouteId,
   listShaderVersions,
   listShaders,
+  makeEmbedUrl,
   makeHomeUrl,
   makeShareUrl,
   MAX_MEDIA_BYTES,
@@ -642,11 +643,27 @@ function mergeValues(definitions, candidate = {}) {
   return defaults;
 }
 
-function replaceShaderUrl(id, kind) {
+function compositionCloudIds(graph) {
+  const ids = referencedShaderKeys(graph).map((key) => {
+    const parsed = parseCompositionShaderId(key);
+    if (!parsed) return null;
+    if (parsed.origin === "cloud") return parsed.id;
+    return parsed.id.startsWith("draft:")
+      ? parsed.id.slice("draft:".length)
+      : null;
+  });
+  return ids.includes(null) ? null : [...new Set(ids)];
+}
+
+function replaceShaderUrl(id, kind, embed = false) {
   window.history.replaceState(
     {},
     "",
-    id ? makeShareUrl(id, kind) : makeHomeUrl()
+    id
+      ? embed
+        ? makeEmbedUrl(id, kind)
+        : makeShareUrl(id, kind)
+      : makeHomeUrl()
   );
 }
 
@@ -827,6 +844,11 @@ export default function App() {
   const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [routeKind, setRouteKind] = useState(() => getAppRoute().kind);
+  const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
+  const [routeEmbed, setRouteEmbed] = useState(routeEmbedRef.current);
+  const [embedStatus, setEmbedStatus] = useState(() =>
+    routeEmbedRef.current ? "loading" : "idle"
+  );
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
@@ -858,12 +880,18 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(
     () => savedSidebarSections().chatCollapsed
   );
-  const viewMode = routeId ? "editor" : "home";
+  const viewMode = routeEmbed && routeId ? "embed" : routeId ? "editor" : "home";
 
-  const setShaderRoute = useCallback((id, kind) => {
-    replaceShaderUrl(id, kind);
+  const setShaderRoute = useCallback((id, kind, options = {}) => {
+    const nextEmbed = Boolean(
+      id && (options.embed ?? routeEmbedRef.current)
+    );
+    routeEmbedRef.current = nextEmbed;
+    replaceShaderUrl(id, kind, nextEmbed);
     setRouteId(id || null);
     setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
+    setRouteEmbed(nextEmbed);
+    if (!nextEmbed) setEmbedStatus("idle");
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
     const initial = {};
@@ -1168,17 +1196,20 @@ export default function App() {
   }, [protectedPreview, renaming]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     document.documentElement.style.colorScheme = theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
-  }, [theme]);
+  }, [routeEmbed, theme]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
-  }, [canvasTheme]);
+  }, [canvasTheme, routeEmbed]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, libraryView);
-  }, [libraryView]);
+  }, [libraryView, routeEmbed]);
 
   useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) {
@@ -1274,22 +1305,23 @@ export default function App() {
   }, [figmaImportOpen, figmaLibraryLoading, figmaTokenConfigured]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     localStorage.setItem(
       SIDEBAR_SECTIONS_STORAGE_KEY,
       JSON.stringify({ codeCollapsed, chatCollapsed })
     );
-  }, [codeCollapsed, chatCollapsed]);
+  }, [chatCollapsed, codeCollapsed, routeEmbed]);
 
   useEffect(() => {
-    if (user) return;
+    if (routeEmbed || user) return;
     const timer = window.setTimeout(() => {
       writeDrafts(drafts, thumbnailDataUrlsRef.current);
     }, 500);
     return () => window.clearTimeout(timer);
-  }, [drafts, thumbnails, user]);
+  }, [drafts, routeEmbed, thumbnails, user]);
 
   useEffect(() => {
-    if (user) return;
+    if (routeEmbed || user) return;
     if (!isDraftId(presetId)) {
       localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
       return;
@@ -1341,6 +1373,7 @@ export default function App() {
     isPublic,
     pendingMedia,
     presetId,
+    routeEmbed,
     sessionKind,
     shaderName,
     source,
@@ -1350,6 +1383,7 @@ export default function App() {
 
   useEffect(() => {
     const flush = () => {
+      if (routeEmbedRef.current) return;
       const session = draftSessionRef.current;
       if (!isDraftId(session.presetId)) return;
       const current = savedDrafts();
@@ -1535,7 +1569,7 @@ export default function App() {
     aspectSelect?.addEventListener("change", onAspect);
     frameRateSelect?.addEventListener("change", onFrameRate);
     bitrateSelect?.addEventListener("change", onBitrate);
-    embedFormatSelect?.addEventListener("change", onEmbedFormat);
+    embedFormatSelect?.addEventListener("input", onEmbedFormat);
     return () => {
       imageFormatSelect?.removeEventListener("change", onImageFormat);
       formatSelect?.removeEventListener("change", onFormat);
@@ -1545,7 +1579,7 @@ export default function App() {
       aspectSelect?.removeEventListener("change", onAspect);
       frameRateSelect?.removeEventListener("change", onFrameRate);
       bitrateSelect?.removeEventListener("change", onBitrate);
-      embedFormatSelect?.removeEventListener("change", onEmbedFormat);
+      embedFormatSelect?.removeEventListener("input", onEmbedFormat);
     };
   }, [videoExportSettings.resolution]);
 
@@ -1687,7 +1721,7 @@ export default function App() {
   }, []);
 
   const hydrateCompositionRefs = useCallback(
-    async (graph) => {
+    async (graph, { remoteOnly = routeEmbedRef.current } = {}) => {
       const keys = referencedShaderKeys(graph);
       const latest = {};
       const found = [];
@@ -1727,11 +1761,13 @@ export default function App() {
         if (parsed.origin === "draft" && cloudKey) {
           draftAliases.set(cloudKey, key);
         }
-        const live = readReferencedShader(key, {
-          session: draftSessionRef.current,
-          drafts,
-          liveByKey: liveShaderSourceRef.current,
-        });
+        const live = remoteOnly
+          ? null
+          : readReferencedShader(key, {
+              session: draftSessionRef.current,
+              drafts,
+              liveByKey: liveShaderSourceRef.current,
+            });
         const liveCloud = cloudId
           ? cloudShaders.find((item) => item.id === cloudId)
           : null;
@@ -1757,15 +1793,19 @@ export default function App() {
           const byId = new Map(rows.map((row) => [row.id, row]));
           for (const id of cloudIds) {
             const key = `cloud:${id}`;
-            const live = readReferencedShader(key, {
-              session: draftSessionRef.current,
-              drafts,
-              liveByKey: liveShaderSourceRef.current,
-            });
+            const live = remoteOnly
+              ? null
+              : readReferencedShader(key, {
+                  session: draftSessionRef.current,
+                  drafts,
+                  liveByKey: liveShaderSourceRef.current,
+                });
             const row = byId.get(id);
             const source = live?.source || row?.source;
             const next =
-              !row || row.kind === COMPOSITION_KIND || !source
+              !row ||
+              row.kind === COMPOSITION_KIND ||
+              !source
                 ? {
                     key,
                     id,
@@ -1864,9 +1904,11 @@ export default function App() {
         const source =
           (typeof sourceOverride === "string" && sourceOverride) ||
           resolveReferencedShaderSource(shaderId, {
-            session: draftSessionRef.current,
-            drafts,
-            liveByKey: liveShaderSourceRef.current,
+            session: routeEmbedRef.current ? null : draftSessionRef.current,
+            drafts: routeEmbedRef.current ? [] : drafts,
+            liveByKey: routeEmbedRef.current
+              ? null
+              : liveShaderSourceRef.current,
             resolvedByKey: map,
           });
         if (!source) return false;
@@ -3016,7 +3058,7 @@ export default function App() {
   }, [kind, runtimeReady, applyPaintFill, clearObjectUrl, reapplyPreferredInput]);
 
   useEffect(() => {
-    if (viewMode !== "editor" || initedRef.current || !canvasRef.current) return;
+    if (viewMode === "home" || initedRef.current || !canvasRef.current) return;
     let cancelled = false;
     initedRef.current = true;
     const host = new ShaderHost(canvasRef.current, {
@@ -3584,8 +3626,14 @@ export default function App() {
   );
 
   const openCloudShader = useCallback(
-    async (shader) => {
-      if (draftSessionRef.current.presetId === cloudChoiceId(shader.id)) {
+    async (
+      shader,
+      { requireAccessible = false, expectedKind = undefined } = {}
+    ) => {
+      if (
+        !requireAccessible &&
+        draftSessionRef.current.presetId === cloudChoiceId(shader.id)
+      ) {
         setShaderRoute(shader.id, shader.kind);
         return;
       }
@@ -3598,11 +3646,46 @@ export default function App() {
             ? "navigation.getShader.cacheHit"
             : "navigation.getShader.request",
         );
-        const fullShader = shader.source
+        const fullShader = !requireAccessible && shader.source
           ? shader
           : { ...shader, ...(await getShader(shader.id)) };
         measurePerf("navigation.getShader", fetchStartedAt);
         if (requestId !== sessionRequestRef.current) return;
+        if (requireAccessible) {
+          const expectedComposition = expectedKind === COMPOSITION_KIND;
+          const actualComposition = fullShader.kind === COMPOSITION_KIND;
+          if (
+            (expectedKind !== undefined &&
+              expectedComposition !== actualComposition) ||
+            (!actualComposition && !fullShader.source)
+          ) {
+            throw new Error("The requested embed is unavailable.");
+          }
+          if (actualComposition) {
+            const dependencyIds = compositionCloudIds(fullShader.composition);
+            if (!dependencyIds) {
+              throw new Error("The requested embed is unavailable.");
+            }
+            const dependencies = dependencyIds.length
+              ? await getShadersByIds(dependencyIds)
+              : [];
+            const dependenciesById = new Map(
+              dependencies.map((row) => [row.id, row])
+            );
+            if (
+              dependencyIds.some((id) => {
+                const row = dependenciesById.get(id);
+                return (
+                  !row ||
+                  row.kind === COMPOSITION_KIND ||
+                  !row.source
+                );
+              })
+            ) {
+              throw new Error("The requested embed is unavailable.");
+            }
+          }
+        }
         setCloudShaders((current) => cacheFullShaderRow(current, fullShader));
         lastSavedFingerprintRef.current = shaderContentFingerprint({
           name: fullShader.name,
@@ -3634,6 +3717,7 @@ export default function App() {
       } catch (openError) {
         if (requestId !== sessionRequestRef.current) return;
         navigationStartedAtRef.current = 0;
+        if (requireAccessible) throw openError;
         setError(openError.message || String(openError));
       }
     },
@@ -3698,10 +3782,12 @@ export default function App() {
   }, [authConfigured, showNotice, userId]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     refreshLibrary();
-  }, [refreshLibrary]);
+  }, [refreshLibrary, routeEmbed]);
 
   useEffect(() => {
+    if (routeEmbed) return;
     if (!user) {
       migratedUserRef.current = null;
       return;
@@ -3888,6 +3974,7 @@ export default function App() {
     authLoading,
     drafts,
     refreshLibrary,
+    routeEmbed,
     setShaderRoute,
     user,
   ]);
@@ -3983,25 +4070,71 @@ export default function App() {
     ]
   );
 
+  const openEmbedRouteId = useCallback(
+    async (id, expectedKind) => {
+      if (!id) return;
+      setEmbedStatus("loading");
+      setError(null);
+      try {
+        await openCloudShader(
+          { id },
+          { requireAccessible: true, expectedKind }
+        );
+        const activeRoute = getAppRoute();
+        if (activeRoute.embed && activeRoute.id === id) {
+          setEmbedStatus("ready");
+        }
+      } catch {
+        const activeRoute = getAppRoute();
+        if (activeRoute.embed && activeRoute.id === id) {
+          setError(null);
+          setEmbedStatus("unavailable");
+        }
+      }
+    },
+    [openCloudShader]
+  );
+
   useEffect(() => {
     if (!runtimeReady || authLoading || sharedLoadedRef.current) return;
     sharedLoadedRef.current = true;
-    const { id, kind: nextKind } = getAppRoute();
+    const { id, kind: nextKind, embed } = getAppRoute();
+    routeEmbedRef.current = Boolean(embed);
     setRouteId(id);
     setRouteKind(nextKind);
-    if (id) openRouteId(id);
-  }, [authLoading, openRouteId, runtimeReady]);
+    setRouteEmbed(Boolean(embed));
+    if (id && embed) {
+      openEmbedRouteId(id, nextKind);
+    } else if (id) {
+      setEmbedStatus("idle");
+      openRouteId(id);
+    }
+  }, [
+    authLoading,
+    openEmbedRouteId,
+    openRouteId,
+    runtimeReady,
+  ]);
 
   useEffect(() => {
     const onPopState = () => {
-      const { id, kind: nextKind } = getAppRoute();
+      const { id, kind: nextKind, embed } = getAppRoute();
+      routeEmbedRef.current = Boolean(embed);
       setRouteId(id);
       setRouteKind(nextKind);
-      if (id) openRouteId(id);
+      setRouteEmbed(Boolean(embed));
+      if (id && embed) {
+        openEmbedRouteId(id, nextKind);
+      } else if (id) {
+        setEmbedStatus("idle");
+        openRouteId(id);
+      } else {
+        setEmbedStatus("idle");
+      }
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [openRouteId]);
+  }, [openEmbedRouteId, openRouteId]);
 
   const chooseItem = useCallback(
     (id) => {
@@ -5403,7 +5536,16 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!user || !currentShader || !isOwner || !dirty || saving) return;
+    if (
+      routeEmbed ||
+      !user ||
+      !currentShader ||
+      !isOwner ||
+      !dirty ||
+      saving
+    ) {
+      return;
+    }
     if (Boolean(isPublic) !== Boolean(currentShader.is_public)) return;
     const delay = Math.max(
       BACKGROUND_AUTOSAVE_MS,
@@ -5415,7 +5557,16 @@ export default function App() {
       });
     }, delay);
     return () => window.clearTimeout(timer);
-  }, [currentShader, dirty, isOwner, isPublic, saveShader, saving, user]);
+  }, [
+    currentShader,
+    dirty,
+    isOwner,
+    isPublic,
+    routeEmbed,
+    saveShader,
+    saving,
+    user,
+  ]);
 
   const publishShader = useCallback(async () => {
     if (!user) {
@@ -5649,10 +5800,24 @@ export default function App() {
     setExportOpen(true);
   }, []);
 
+  const iframeEmbedSelected =
+    videoExportSettings.embedFormat === "iframe";
+  const iframeEmbedAvailable = Boolean(currentShader?.id && !dirty);
+  const iframeEmbedUnavailableMessage = !currentShader
+    ? "Save this item before creating an iframe embed."
+    : dirty
+      ? "Save your changes before creating an iframe embed."
+      : "";
   const embedUrl = currentShader
-    ? makeShareUrl(currentShader.id, currentShader.kind)
-    : window.location.href;
-  const iframeEmbedCode = `<iframe src="${embedUrl}" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`;
+    ? makeEmbedUrl(currentShader.id, currentShader.kind)
+    : "";
+  const iframeEmbedCode = iframeEmbedAvailable
+    ? `<iframe src="${embedUrl}" title="${
+        currentShader.kind === COMPOSITION_KIND
+          ? "Composition preview"
+          : "Shader preview"
+      }" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`
+    : "";
   const standaloneEmbedCode = useMemo(() => {
     if (!exportOpen) return "";
     if (kind === COMPOSITION_KIND) {
@@ -5671,26 +5836,53 @@ export default function App() {
     });
   }, [composition, exportOpen, kind, resolvedByKey, source, values]);
   const embedCode =
-    videoExportSettings.embedFormat === "iframe"
+    iframeEmbedSelected
       ? iframeEmbedCode
       : standaloneEmbedCode;
 
+  const copyEmbedLink = useCallback(async () => {
+    if (!embedUrl) {
+      showNotice("Save this item before copying an embed link.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(embedUrl);
+      showNotice("Embed link copied");
+    } catch (copyError) {
+      setError(copyError.message || String(copyError));
+    }
+  }, [embedUrl, showNotice]);
+
   const copyEmbedCode = useCallback(async () => {
+    if (iframeEmbedSelected && !iframeEmbedAvailable) {
+      showNotice(iframeEmbedUnavailableMessage);
+      return;
+    }
     try {
       await navigator.clipboard.writeText(embedCode);
       showNotice("Embed code copied");
     } catch (copyError) {
       setError(copyError.message || String(copyError));
     }
-  }, [embedCode, showNotice]);
+  }, [
+    embedCode,
+    iframeEmbedAvailable,
+    iframeEmbedSelected,
+    iframeEmbedUnavailableMessage,
+    showNotice,
+  ]);
 
   const downloadEmbedCode = useCallback(() => {
+    if (iframeEmbedSelected && !iframeEmbedAvailable) {
+      showNotice(iframeEmbedUnavailableMessage);
+      return;
+    }
     const fileName = shaderModuleFileName(presetId, shaderName).replace(
       /\.ts$/,
       ".html"
     );
     const url = URL.createObjectURL(
-      new Blob([standaloneEmbedCode], { type: "text/html;charset=utf-8" })
+      new Blob([embedCode], { type: "text/html;charset=utf-8" })
     );
     const link = document.createElement("a");
     link.href = url;
@@ -5699,7 +5891,15 @@ export default function App() {
     link.click();
     link.remove();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-  }, [presetId, shaderName, standaloneEmbedCode]);
+  }, [
+    embedCode,
+    iframeEmbedAvailable,
+    iframeEmbedSelected,
+    iframeEmbedUnavailableMessage,
+    presetId,
+    shaderName,
+    showNotice,
+  ]);
 
   const resizeAppNav = useCallback((event) => {
     if (event.button !== 0) return;
@@ -5892,7 +6092,7 @@ export default function App() {
 
   useEffect(() => {
     const gen = ++thumbnailCaptureGenRef.current;
-    if (protectedPreview) return undefined;
+    if (viewMode !== "editor" || protectedPreview) return undefined;
 
     const host = hostRef.current;
     if (!host?.ready || !runtimeReady) return undefined;
@@ -6897,13 +7097,15 @@ export default function App() {
           htmlInputRef={htmlInputRef}
           onStageSize={onStageSize}
           onPointerSurface={onPointerSurface}
-          onPickFile={onPreviewFile}
-          onDropError={setError}
+          onPickFile={routeEmbed ? undefined : onPreviewFile}
+          onDropError={routeEmbed ? undefined : setError}
           dropTarget={isComposerView ? "fill" : "input"}
           showCanvasControls={
-            !isComposerView || compositionPropsLayerId != null
+            !routeEmbed &&
+            (!isComposerView || compositionPropsLayerId != null)
           }
           canvasTheme={canvasTheme}
+          interactive={!routeEmbed}
         />
       )}
     </>
@@ -6959,6 +7161,36 @@ export default function App() {
             </fig-tooltip>
           </div>
   );
+
+  const embedItemLabel =
+    routeKind === COMPOSITION_KIND ? "composition" : "shader";
+  const embedStateMessage = fatal
+    ? fatal
+    : embedStatus === "loading"
+      ? `Loading ${embedItemLabel}…`
+      : embedStatus === "unavailable"
+        ? `This ${embedItemLabel} is unavailable.`
+        : embedStatus === "ready" && error
+          ? `This ${embedItemLabel} could not be rendered.`
+          : "";
+
+  if (viewMode === "embed") {
+    return (
+      <main
+        className="embed-view shader-viewer"
+        aria-label={`${embedItemLabel} preview`}
+      >
+        <div className="shader-viewer-visualizer">
+          {previewCanvas}
+          {embedStateMessage ? (
+            <div className="embed-state" role="status" aria-live="polite">
+              {embedStateMessage}
+            </div>
+          ) : null}
+        </div>
+      </main>
+    );
+  }
 
   return (
     <>
@@ -7432,6 +7664,9 @@ export default function App() {
         videoBitrateRef={videoBitrateRef}
         embedFormatRef={embedFormatRef}
         embedCode={embedCode}
+        embedLinkAvailable={Boolean(embedUrl)}
+        iframeEmbedAvailable={iframeEmbedAvailable}
+        iframeEmbedUnavailableMessage={iframeEmbedUnavailableMessage}
         onClose={() => setExportOpen(false)}
         onExportImage={() => {
           downloadPreviewImage().catch((downloadError) => {
@@ -7446,6 +7681,7 @@ export default function App() {
         }}
         onDownloadEmbed={downloadEmbedCode}
         onCopyEmbed={copyEmbedCode}
+        onCopyEmbedLink={copyEmbedLink}
         onDurationInput={(event) =>
           setVideoExportSettings((settings) => ({
             ...settings,

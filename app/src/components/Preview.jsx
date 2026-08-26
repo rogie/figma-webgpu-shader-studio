@@ -65,6 +65,7 @@ function Preview({
   inputSource = "image",
   htmlInputRef,
   canvasTheme = "light",
+  interactive = true,
 }) {
   const stageRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -249,7 +250,7 @@ function Preview({
 
   useEffect(() => {
     const stage = stageRef.current;
-    if (!stage) return;
+    if (!stage || !interactive) return;
 
     const onWheel = (event) => {
       event.preventDefault();
@@ -268,7 +269,7 @@ function Preview({
 
     stage.addEventListener("wheel", onWheel, { passive: false });
     return () => stage.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [interactive]);
 
   const onDrop = (e) => {
     e.preventDefault();
@@ -330,26 +331,42 @@ function Preview({
       full=""
       checkerboard=""
       aspect-ratio="auto"
-      onDrop={onDrop}
-      onDragEnter={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setDragging(true);
-      }}
-      onDragOver={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.dataTransfer.dropEffect = "copy";
-        setDragging(true);
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault();
-        if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false);
-      }}
-      onDoubleClick={(e) => {
-        if (e.target.closest("fig-handle, fig-canvas-control, svg")) return;
-        setView({ zoom: 1, x: 0, y: 0 });
-      }}
+      onDrop={interactive ? onDrop : undefined}
+      onDragEnter={
+        interactive
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(true);
+            }
+          : undefined
+      }
+      onDragOver={
+        interactive
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              e.dataTransfer.dropEffect = "copy";
+              setDragging(true);
+            }
+          : undefined
+      }
+      onDragLeave={
+        interactive
+          ? (e) => {
+              e.preventDefault();
+              if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false);
+            }
+          : undefined
+      }
+      onDoubleClick={
+        interactive
+          ? (e) => {
+              if (e.target.closest("fig-handle, fig-canvas-control, svg")) return;
+              setView({ zoom: 1, x: 0, y: 0 });
+            }
+          : undefined
+      }
     >
       <div
         className="canvas-frame"

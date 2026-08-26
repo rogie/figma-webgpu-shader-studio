@@ -71,9 +71,20 @@ That edge policy is still GitHub-only (`@figma.com`). In-app sign-in can use
 Figma or GitHub; people without GitHub still need Access to be opened or
 bypass-listed before they can reach the Figma sign-in button.
 
+Canvas-only iframe routes remain behind that same employee-only Access policy.
+Public items load for any employee who can reach the app. Private items load
+only when the viewer's Shader Studio session is authorized by Supabase RLS,
+normally the owner. Cloudflare's login page cannot run inside an iframe, so
+viewers must first open Shader Studio in a top-level tab and authenticate.
+Browsers that partition third-party storage or block the `CF_Authorization`
+cookie can still prevent a session-only iframe from loading.
+
 The home view lives at `/`. Shader effects and fills use `/shader/<id>`
 (preset id or saved shader id). Compositions use `/composer/<id>`. Legacy
-single-segment links like `/dither` still load.
+single-segment links like `/dither` still load. Saved canvas-only embeds use
+`/shader/<id>/embed` and `/composer/<id>/embed`. Local drafts are unavailable;
+private items and private composition dependencies require an authorized
+Shader Studio session.
 
 ## How it works
 
