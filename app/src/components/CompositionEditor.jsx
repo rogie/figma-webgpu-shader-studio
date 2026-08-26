@@ -670,6 +670,55 @@ export function ExportPropertiesPane({ disabled = false, onExport }) {
   );
 }
 
+export function FigmaPropertiesPane({ id, features }) {
+  const textFields = [
+    ["name", features?.name || "Shader"],
+    ["version", String(features?.version ?? 2)],
+  ];
+  const booleanFields = [
+    ["isAnimated", Boolean(features?.isAnimated)],
+    ["usesMouse", Boolean(features?.usesMouse)],
+  ];
+
+  return (
+    <div className="properties-pane grouped-properties-pane">
+      <fig-group name="Figma" collapsible="">
+        <fig-field direction="horizontal" columns="half">
+          <label>id</label>
+          <fig-input-text
+            value={id}
+            readonly=""
+            full=""
+            dangerouslySetInnerHTML={{ __html: "" }}
+          />
+        </fig-field>
+        {textFields.map(([key, value]) => (
+          <fig-field key={key} direction="horizontal" columns="half">
+            <label>{key}</label>
+            <fig-input-text
+              value={value}
+              readonly=""
+              full=""
+              dangerouslySetInnerHTML={{ __html: "" }}
+            />
+          </fig-field>
+        ))}
+        {booleanFields.map(([key, checked]) => (
+          <fig-field key={key} direction="horizontal" columns="half">
+            <label>{key}</label>
+            <fig-switch
+              checked={checked ? "" : undefined}
+              disabled=""
+              aria-label={`${key}: ${checked}`}
+              dangerouslySetInnerHTML={{ __html: "" }}
+            />
+          </fig-field>
+        ))}
+      </fig-group>
+    </div>
+  );
+}
+
 function FillLayerEditor({
   fill,
   readOnly = false,

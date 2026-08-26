@@ -9,6 +9,7 @@ import {
 } from "react";
 import CompositionEditor, {
   ExportPropertiesPane,
+  FigmaPropertiesPane,
 } from "./components/CompositionEditor.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
@@ -1005,6 +1006,13 @@ export default function App() {
     isDraftId(presetId)
       ? drafts.find((draft) => draft.id === presetId)
       : currentShader
+  );
+  const activeFigmaFeatures = useMemo(
+    () =>
+      activeFigmaLink.figma_shader_id
+        ? buildFigmaShaderPackage(source, shaderName).features
+        : null,
+    [activeFigmaLink.figma_shader_id, shaderName, source]
   );
   const draftSessionRef = useRef({
     presetId,
@@ -6680,26 +6688,31 @@ export default function App() {
               disabled={Boolean(videoExportProgress)}
               onExport={() => openExportDialog(exportTab)}
             />
+            {activeFigmaLink.figma_shader_id && activeFigmaFeatures && (
+              <FigmaPropertiesPane
+                id={activeFigmaLink.figma_shader_id}
+                features={activeFigmaFeatures}
+              />
+            )}
             {user && !protectedPreview && (
-              <div className="sharing-controls properties-pane">
-                <fig-header borderless="">
-                  <h3>Visibility</h3>
-                </fig-header>
-                <fig-field label="Public" direction="horizontal">
-                  <fig-switch
-                    checked={isPublic}
-                    label={
-                      isPublic
-                        ? "Anyone with the link can view the source and input."
-                        : "Only you can open this cloud shader."
-                    }
-                    onInput={(event) => {
-                      setIsPublic(event.target.checked);
-                      setDirty(true);
-                    }}
-                    dangerouslySetInnerHTML={{ __html: "" }}
-                  />
-                </fig-field>
+              <div className="sharing-controls properties-pane grouped-properties-pane">
+                <fig-group name="Visibility" collapsible="">
+                  <fig-field label="Public" direction="horizontal">
+                    <fig-switch
+                      checked={isPublic}
+                      label={
+                        isPublic
+                          ? "Anyone with the link can view the source and input."
+                          : "Only you can open this cloud shader."
+                      }
+                      onInput={(event) => {
+                        setIsPublic(event.target.checked);
+                        setDirty(true);
+                      }}
+                      dangerouslySetInnerHTML={{ __html: "" }}
+                    />
+                  </fig-field>
+                </fig-group>
               </div>
             )}
           </>

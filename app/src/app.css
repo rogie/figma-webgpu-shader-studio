@@ -1052,6 +1052,10 @@ dialog.delete-shader-dialog {
     padding-top: var(--spacer-3);
   }
 
+  .properties-pane.grouped-properties-pane {
+    padding: 0;
+  }
+
   .properties-pane:has(> fig-header:only-child) {
     padding-bottom: 0;
   }
