@@ -63,6 +63,38 @@ test("persists one Cursor agent for the whole app", () => {
   assert.equal(loadCursorAgent(), null);
 });
 
+test("reuses a stored agent across Cursor model aliases and keeps runId", () => {
+  memory.clear();
+  saveCursorAgent({
+    agentId: "bc-11111111-2222-3333-4444-555555555555",
+    modelId: "composer-2.5",
+    runId: "run-first",
+  });
+  assert.equal(
+    cursorAgentIdForModel({
+      provider: "cursor",
+      id: "composer-2",
+      aliases: ["composer-2.5", "composer"],
+    }),
+    "bc-11111111-2222-3333-4444-555555555555"
+  );
+  saveCursorAgent({
+    agentId: "bc-11111111-2222-3333-4444-555555555555",
+    modelId: "composer-2",
+  });
+  assert.deepEqual(loadCursorAgent(), {
+    agentId: "bc-11111111-2222-3333-4444-555555555555",
+    modelId: "composer-2",
+    runId: "run-first",
+  });
+  saveCursorAgent({
+    agentId: "bc-11111111-2222-3333-4444-555555555555",
+    modelId: "composer-2",
+    runId: "run-second",
+  });
+  assert.equal(loadCursorAgent().runId, "run-second");
+});
+
 test("rejects malformed Cursor agent ids", () => {
   memory.clear();
   saveCursorAgent({ agentId: "not-an-agent", modelId: "composer-2.5" });

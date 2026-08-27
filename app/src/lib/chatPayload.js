@@ -91,6 +91,17 @@ export function buildChatRequest({
   return request;
 }
 
+export function chatStreamCompletionEvent(provider, { sawDone, sawError } = {}) {
+  if (sawDone || sawError) return null;
+  if (provider === "cursor") {
+    return {
+      type: "error",
+      message: "Cursor stream ended before the agent finished. Try again.",
+    };
+  }
+  return { type: "done" };
+}
+
 export function createChatSseParser() {
   let buffer = "";
 
@@ -122,11 +133,18 @@ export function createChatSseParser() {
             typeof event.agentId === "string" &&
             event.agentId
           ) {
-            events.push({ type: "cursor-agent", agentId: event.agentId });
+            const next = { type: "cursor-agent", agentId: event.agentId };
+            if (typeof event.runId === "string" && event.runId) {
+              next.runId = event.runId;
+            }
+            events.push(next);
           } else if (event.type === "done") {
             const done = { type: "done" };
             if (typeof event.agentId === "string" && event.agentId) {
               done.agentId = event.agentId;
+            }
+            if (typeof event.runId === "string" && event.runId) {
+              done.runId = event.runId;
             }
             events.push(done);
           } else if (event.type === "error") {

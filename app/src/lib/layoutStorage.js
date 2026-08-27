@@ -22,6 +22,8 @@ export const SIDEBAR_SECTIONS_STORAGE_KEY =
   "figma-shader-studio:sidebar-sections";
 export const THEME_STORAGE_KEY = "figma-shader-studio:theme";
 export const CANVAS_THEME_STORAGE_KEY = "figma-shader-studio:canvas-theme";
+export const CANVAS_CONTROLS_STORAGE_KEY =
+  "figma-shader-studio:show-canvas-handles";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
 
@@ -93,6 +95,10 @@ export function readCanvasTheme(storage = globalThis.localStorage) {
   return storage?.getItem(CANVAS_THEME_STORAGE_KEY) === "dark"
     ? "dark"
     : "light";
+}
+
+export function readCanvasControlsVisible(storage = globalThis.localStorage) {
+  return storage?.getItem(CANVAS_CONTROLS_STORAGE_KEY) !== "false";
 }
 
 export function readPlayState(storage = globalThis.localStorage) {

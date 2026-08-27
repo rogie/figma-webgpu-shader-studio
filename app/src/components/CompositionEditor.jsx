@@ -18,6 +18,7 @@ import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import { syncOverflowFade } from "../lib/overflowFade.js";
 import { loadModule } from "../runtime/loader.js";
+import { valuesMatchDefaults } from "../runtime/params.js";
 import defaultInputUrl from "../assets/default-input.png";
 import { defaultVideoUrl } from "../runtime/sample.js";
 import Controls from "./Controls.jsx";
@@ -238,16 +239,24 @@ function OpenShaderButton({
   );
 }
 
-function ResetPropertiesButton({ disabled = false, onReset }) {
-  if (disabled) return null;
+function ResetPropertiesButton({
+  hidden = false,
+  disabled = false,
+  onReset,
+}) {
+  if (hidden) return null;
   return (
     <fig-tooltip text="Reset properties">
       <fig-button
         type="button"
         variant="ghost"
         icon="true"
+        disabled={disabled ? "" : undefined}
         aria-label="Reset properties"
-        onClick={onReset}
+        onClick={() => {
+          if (disabled) return;
+          onReset?.();
+        }}
       >
         <fig-icon name="reset" />
       </fig-button>
@@ -325,6 +334,7 @@ function ShaderFillMode({
   disabled = false,
   emptyLibrary = false,
   properties = null,
+  resetDisabled = true,
   onChoose,
   onOpenShader,
   onResetProperties,
@@ -431,7 +441,8 @@ function ShaderFillMode({
             onOpen={onOpenShader}
           />
           <ResetPropertiesButton
-            disabled={disabled}
+            hidden={disabled}
+            disabled={resetDisabled}
             onReset={onResetProperties}
           />
         </hstack>
@@ -458,6 +469,7 @@ function ImageFillInput({
   shaderThumbnail = "",
   shaderLibraryEmpty = false,
   properties = null,
+  resetDisabled = true,
   onChooseShader,
   onOpenShader,
   onResetProperties,
@@ -480,6 +492,7 @@ function ImageFillInput({
     disabled,
     emptyLibrary: shaderLibraryEmpty,
     properties,
+    resetDisabled,
     onChoose: onChooseShader,
     onOpenShader,
     onResetProperties,
@@ -494,6 +507,7 @@ function ImageFillInput({
     disabled,
     emptyLibrary: shaderLibraryEmpty,
     properties,
+    resetDisabled,
     onChoose: onChooseShader,
     onOpenShader,
     onResetProperties,
@@ -600,6 +614,7 @@ function ImageFillInput({
     shaderName,
     shaderThumbnail,
     properties,
+    resetDisabled,
   ]);
 
   useEffect(() => {
@@ -783,6 +798,10 @@ function FillLayerEditor({
     () => mergeLayerValues(fillLayerProps || {}, fill.values),
     [fill.values, fillLayerProps]
   );
+  const fillPropertiesAtDefaults = useMemo(
+    () => valuesMatchDefaults(fillLayerProps, fill.values),
+    [fillLayerProps, fill.values]
+  );
 
   const onFillPropInput = useCallback(
     (name, value) => {
@@ -962,6 +981,7 @@ function FillLayerEditor({
         shaderThumbnail={shaderFillCard?.thumbnailUrl || ""}
         shaderLibraryEmpty={shaderFillCards.length === 0}
         properties={fillProperties}
+        resetDisabled={fillPropertiesAtDefaults}
         onChooseShader={() => onChooseShader?.(fill.id)}
         onOpenShader={(shaderId) => {
           onSelect?.(fill.id);
@@ -1067,6 +1087,33 @@ export default function CompositionEditor({
   );
   const propertiesEffect = normalized.effects.find(
     (effect) => effect.id === propertiesLayerId
+  );
+  const propertiesShaderId = propertiesFill
+    ? propertiesFill.type === "shader"
+      ? propertiesFill.shaderId
+      : null
+    : propertiesEffect?.shaderId ?? null;
+  const propertiesLayerSource = useMemo(() => {
+    if (!propertiesShaderId) return null;
+    return resolveReferencedShaderSource(propertiesShaderId, {
+      resolvedByKey,
+    });
+  }, [propertiesShaderId, resolvedByKey]);
+  const propertiesLayerProps = useMemo(() => {
+    if (!propertiesLayerSource) return null;
+    try {
+      return loadModule(propertiesLayerSource).props || {};
+    } catch {
+      return null;
+    }
+  }, [propertiesLayerSource]);
+  const propertiesAtDefaults = useMemo(
+    () =>
+      valuesMatchDefaults(
+        propertiesLayerProps,
+        propertiesFill?.values ?? propertiesEffect?.values
+      ),
+    [propertiesEffect, propertiesFill, propertiesLayerProps]
   );
   const propertiesLayerEnabled = propertiesFill
     ? propertiesFill.enabled
@@ -1408,11 +1455,6 @@ export default function CompositionEditor({
     };
   }, [fillPicker.open, fillPicker.source, fillPicker.targetId]);
   const propertiesNoun = propertiesFill ? "fill" : "effect";
-  const propertiesShaderId = propertiesFill
-    ? propertiesFill.type === "shader"
-      ? propertiesFill.shaderId
-      : null
-    : propertiesEffect?.shaderId ?? null;
   const propertiesTitle = propertiesLayerId
     ? compositionLayerName(
         propertiesShaderId,
@@ -1630,7 +1672,8 @@ export default function CompositionEditor({
                   />
                 )}
                 <ResetPropertiesButton
-                  disabled={readOnly}
+                  hidden={readOnly}
+                  disabled={propertiesAtDefaults}
                   onReset={() => {
                     if (propertiesLayerId) onSelectLayer?.(propertiesLayerId);
                     onResetLayer?.(propertiesLayerId);

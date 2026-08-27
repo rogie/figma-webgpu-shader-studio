@@ -645,7 +645,7 @@ body,
           display: flex;
           align-items: center;
           justify-content: center;
-          gap: var(--spacer-1);
+          gap: 0;
           pointer-events: none;
           font-variant-numeric: tabular-nums;
           color: var(--figma-color-text-tertiary);

@@ -5,7 +5,6 @@ import {
   highlightRanges,
   loadLanguageSupport,
 } from "../lib/pastedHighlight.js";
-import CodeBlockIcon from "./CodeBlockIcon.jsx";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import "./PastedText.css";
 
@@ -71,7 +70,6 @@ export default function PastedText({
     >
       <fig-header class="pasted-text-header" borderless compact="">
         <h3 className="pasted-text-title">
-          <span className="pasted-text-extension">{pastedExtension(language)}</span>
           <span className="pasted-text-filename">Pasted {displayLabel}</span>
         </h3>
         {onRemove ? (
@@ -86,11 +84,7 @@ export default function PastedText({
             <fig-icon name="close" size="small" />
           </fig-button>
         ) : (
-          <CodeBlockIcon
-            class="pasted-text-status"
-            size="small"
-            aria-label={`Pasted ${displayLabel}`}
-          />
+          <span className="pasted-text-extension">{pastedExtension(language)}</span>
         )}
       </fig-header>
       <pre ref={sourceFadeRef} className="pasted-text-source">

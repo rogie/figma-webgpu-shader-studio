@@ -13,6 +13,7 @@ import CompositionEditor, {
 } from "./components/CompositionEditor.jsx";
 import AccountMenu from "./components/AccountMenu.jsx";
 import AppToasts from "./components/AppToasts.jsx";
+import CanvasControlsIcon from "./components/CanvasControlsIcon.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import ExportDialog from "./components/ExportDialog.jsx";
 import FigmaPlanDialog from "./components/FigmaPlanDialog.jsx";
@@ -140,6 +141,7 @@ import {
 } from "./lib/mediaFiles.js";
 import { createRafCssWriter } from "./lib/panelResize.js";
 import {
+  CANVAS_CONTROLS_STORAGE_KEY,
   CANVAS_THEME_STORAGE_KEY,
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
@@ -154,6 +156,7 @@ import {
   MIN_PREVIEW_WIDTH,
   MIN_STACKED_SIDEBAR,
   PLAY_STORAGE_KEY,
+  readCanvasControlsVisible as savedCanvasControlsVisible,
   readCanvasTheme as savedCanvasTheme,
   readLibraryView as savedLibraryView,
   readPlayState as savedPlayState,
@@ -843,6 +846,9 @@ export default function App() {
   } = usePanelLayout(editorViewRef);
   const [theme, setTheme] = useState(savedTheme);
   const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
+  const [showCanvasHandles, setShowCanvasHandles] = useState(
+    savedCanvasControlsVisible,
+  );
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [routeKind, setRouteKind] = useState(() => getAppRoute().kind);
   const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
@@ -1213,6 +1219,14 @@ export default function App() {
     if (routeEmbed) return;
     localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
   }, [canvasTheme, routeEmbed]);
+
+  useEffect(() => {
+    if (routeEmbed) return;
+    localStorage.setItem(
+      CANVAS_CONTROLS_STORAGE_KEY,
+      String(showCanvasHandles),
+    );
+  }, [routeEmbed, showCanvasHandles]);
 
   useEffect(() => {
     if (routeEmbed) return;
@@ -6427,7 +6441,28 @@ export default function App() {
     }
   }, [figmaImportCards, figmaImportCheckedKeys, openFigmaShader]);
 
-  const renderPropertyHeaderActions = (noun) => {
+  const canvasControlsLabel = showCanvasHandles
+    ? "Hide canvas handles"
+    : "Show canvas handles";
+  const canvasControlsToggle = (
+    <fig-tooltip text={canvasControlsLabel}>
+      <fig-button
+        type="button"
+        variant="ghost"
+        icon="true"
+        aria-label={canvasControlsLabel}
+        onClick={() =>
+          setShowCanvasHandles((visible) => !visible)
+        }
+      >
+        <CanvasControlsIcon
+          color={showCanvasHandles ? undefined : "tertiary"}
+        />
+      </fig-button>
+    </fig-tooltip>
+  );
+
+  const renderPropertyHeaderActions = (noun, leading = null) => {
     const visibilityLabel = effectVisible ? `Hide ${noun}` : `Show ${noun}`;
     return (
       <hstack
@@ -6436,40 +6471,45 @@ export default function App() {
           "--hstack-gap": "var(--spacer-1)",
         }}
       >
-        <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
-          <fig-tooltip text="More">
-            <fig-button
-              fig-menu-trigger=""
-              type="button"
-              variant="ghost"
-              icon="true"
-              aria-label={`More ${noun} property actions`}
-            >
-              <fig-icon name="more" />
-            </fig-button>
-          </fig-tooltip>
-          <fig-menu-item value="reset">Reset to default</fig-menu-item>
-          <fig-menu-item
-            value="save-defaults"
-            disabled={protectedPreview ? "" : undefined}
-          >
-            Save as default
-          </fig-menu-item>
-        </fig-menu>
-        <fig-tooltip text={visibilityLabel}>
-          <fig-button
-            type="button"
-            variant="ghost"
-            icon="true"
-            aria-label={visibilityLabel}
-            onClick={() => {
-              hostRef.current?.setActive(true);
-              setEffectVisible((visible) => !visible);
-            }}
-          >
-            <fig-icon name={effectVisible ? "visible" : "hidden"} />
-          </fig-button>
-        </fig-tooltip>
+        {leading}
+        {noun ? (
+          <>
+            <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
+              <fig-tooltip text="More">
+                <fig-button
+                  fig-menu-trigger=""
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label={`More ${noun} property actions`}
+                >
+                  <fig-icon name="more" />
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item value="reset">Reset to default</fig-menu-item>
+              <fig-menu-item
+                value="save-defaults"
+                disabled={protectedPreview ? "" : undefined}
+              >
+                Save as default
+              </fig-menu-item>
+            </fig-menu>
+            <fig-tooltip text={visibilityLabel}>
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label={visibilityLabel}
+                onClick={() => {
+                  hostRef.current?.setActive(true);
+                  setEffectVisible((visible) => !visible);
+                }}
+              >
+                <fig-icon name={effectVisible ? "visible" : "hidden"} />
+              </fig-button>
+            </fig-tooltip>
+          </>
+        ) : null}
       </hstack>
     );
   };
@@ -6482,7 +6522,12 @@ export default function App() {
     >
       <fig-header>
         <h2>{propertiesPanelTitle}</h2>
-        {isShaderFillPanel ? renderPropertyHeaderActions("fill") : null}
+        {isComposerView
+          ? null
+          : renderPropertyHeaderActions(
+              isShaderFillPanel ? "fill" : null,
+              canvasControlsToggle,
+            )}
       </fig-header>
 
       <fig-content
@@ -7115,6 +7160,7 @@ export default function App() {
           dropTarget={isComposerView ? "fill" : "input"}
           showCanvasControls={
             !routeEmbed &&
+            showCanvasHandles &&
             (!isComposerView || compositionPropsLayerId != null)
           }
           canvasTheme={canvasTheme}
@@ -7151,6 +7197,12 @@ export default function App() {
                 showFps={!isComposerView || compositionPlayable}
               />
             )}
+            {isComposerView ? (
+              <>
+                <fig-separator direction="vertical" />
+                {canvasControlsToggle}
+              </>
+            ) : null}
             <fig-separator direction="vertical" />
             <fig-tooltip
               text={

@@ -133,7 +133,11 @@ function isEmptyAssistant(message) {
 function rememberCursorAgent(event, model) {
   if (model?.provider !== "cursor") return;
   if (typeof event?.agentId === "string" && event.agentId) {
-    saveCursorAgent({ agentId: event.agentId, modelId: model.id });
+    saveCursorAgent({
+      agentId: event.agentId,
+      modelId: model.id,
+      runId: event.runId,
+    });
   }
 }
 

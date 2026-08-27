@@ -1,6 +1,7 @@
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import {
   buildChatRequest,
+  chatStreamCompletionEvent,
   createChatSseParser,
 } from "../lib/chatPayload.js";
 
@@ -146,6 +147,7 @@ export async function* streamChat({
     provider === "cursor" ? CURSOR_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS;
   const idleSeconds = Math.round(idleTimeoutMs / 1000);
   let sawDone = false;
+  let sawError = false;
   let receivedEvent = false;
 
   while (true) {
@@ -182,10 +184,12 @@ export async function* streamChat({
     for (const event of events) {
       receivedEvent = true;
       if (event.type === "done") sawDone = true;
+      if (event.type === "error") sawError = true;
       yield event;
     }
     if (done) break;
   }
 
-  if (!sawDone) yield { type: "done" };
+  const completion = chatStreamCompletionEvent(provider, { sawDone, sawError });
+  if (completion) yield completion;
 }

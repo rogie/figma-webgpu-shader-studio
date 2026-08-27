@@ -4,7 +4,7 @@
   padding: 0;
   overflow: hidden;
   color: var(--figma-color-text);
-  border-radius: var(--radius-medium);
+  border-radius: var(--radius-large);
 
   &[open]:not([open="false"]) {
     outline: 1px solid var(--figma-color-bordertranslucent);
@@ -13,20 +13,18 @@
 
   & .pasted-text-header {
     background: var(--figma-color-bg-secondary);
-  }
-
-  & .pasted-text-title {
-    gap: 0.35em;
+    padding-left: var(--spacer-2-5);
   }
 
   & .pasted-text-extension {
+    flex: 0 0 auto;
+    margin: var(--spacer-1);
+    margin-right: 0;
     color: var(--figma-color-text-tertiary);
-    font-weight: normal;
+    font-weight: var(--font-weight-medium);
     text-transform: uppercase;
     font-variant: small-caps;
-    font-weight: var(--font-weight-medium);
     font-size: 0.5rem;
-    vertical-align: middle;
     line-height: 1;
     height: 1rem;
     display: inline-flex;
@@ -36,12 +34,6 @@
     padding: 0 0.25rem;
     background-color: var(--figma-color-bg);
     border-radius: var(--radius-small);
-  }
-
-  & .pasted-text-status {
-    margin: var(--spacer-1);
-    margin-right: 0;
-    color: var(--figma-color-text-tertiary);
   }
 
   & .pasted-text-source {

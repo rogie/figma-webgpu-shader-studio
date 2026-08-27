@@ -3,7 +3,7 @@
   padding: 0;
   overflow: hidden;
   color: var(--figma-color-text);
-  border-radius: var(--radius-medium);
+  border-radius: var(--radius-large);
 
   &[open]:not([open="false"]),
   &[data-pending="true"] {
@@ -13,6 +13,7 @@
 
   & .plan-markdown-header {
     background: var(--figma-color-bg-secondary);
+    padding-left: var(--spacer-2-5);
   }
 
   & .plan-markdown-status {

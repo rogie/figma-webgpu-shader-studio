@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import {
   buildChatRequest,
+  chatStreamCompletionEvent,
   createChatSseParser,
   toApiMessages,
   userContentForApi,
@@ -189,8 +190,8 @@ test("SSE parser preserves safe provider status phases", () => {
         'data: {"type":"status","phase":"responding"}\n\n' +
         'data: {"type":"status","phase":"starting"}\n\n' +
         'data: {"type":"status","phase":"private-reasoning"}\n\n' +
-        'data: {"type":"cursor-agent","agentId":"bc-11111111-2222-3333-4444-555555555555"}\n\n' +
-        'data: {"type":"done","agentId":"bc-11111111-2222-3333-4444-555555555555"}\n\n'
+        'data: {"type":"cursor-agent","agentId":"bc-11111111-2222-3333-4444-555555555555","runId":"run-1"}\n\n' +
+        'data: {"type":"done","agentId":"bc-11111111-2222-3333-4444-555555555555","runId":"run-1"}\n\n'
     ),
     [
       { type: "status", phase: "thinking" },
@@ -199,8 +200,29 @@ test("SSE parser preserves safe provider status phases", () => {
       {
         type: "cursor-agent",
         agentId: "bc-11111111-2222-3333-4444-555555555555",
+        runId: "run-1",
       },
-      { type: "done", agentId: "bc-11111111-2222-3333-4444-555555555555" },
+      {
+        type: "done",
+        agentId: "bc-11111111-2222-3333-4444-555555555555",
+        runId: "run-1",
+      },
     ]
   );
+});
+
+test("does not synthesize a done event when a Cursor stream ends early", () => {
+  assert.equal(
+    chatStreamCompletionEvent("cursor", { sawDone: true }),
+    null
+  );
+  assert.equal(
+    chatStreamCompletionEvent("cursor", { sawError: true }),
+    null
+  );
+  assert.deepEqual(chatStreamCompletionEvent("openai"), { type: "done" });
+  assert.deepEqual(chatStreamCompletionEvent("cursor"), {
+    type: "error",
+    message: "Cursor stream ended before the agent finished. Try again.",
+  });
 });

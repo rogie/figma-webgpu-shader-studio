@@ -13,6 +13,9 @@ type ChatMessage = {
 
 const CURSOR_API = "https://api.cursor.com/v1";
 const HEARTBEAT_MS = 10_000;
+const BUSY_POLL_MS = 1_000;
+const BUSY_WAIT_MS = 30_000;
+const BUSY_RETRIES = 1;
 const CURSOR_WORKSPACE_RULES = [
   "Workspace rules:",
   "- This is an empty cloud workspace with no useful project files.",
@@ -182,6 +185,44 @@ export function isCursorAgentMissing(status: number, bodyText: string): boolean 
   return /archived|not_found|agent_not_found|deleted/i.test(bodyText);
 }
 
+export function isCursorAgentBusy(status: number, bodyText: string): boolean {
+  return /agent_busy/i.test(bodyText);
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "FINISHED",
+  "ERROR",
+  "CANCELLED",
+  "EXPIRED",
+]);
+
+export function isCursorRunTerminal(status: unknown): boolean {
+  return typeof status === "string" && TERMINAL_RUN_STATUSES.has(status);
+}
+
+export function readRunStatus(payload: unknown): string {
+  if (!payload || typeof payload !== "object") return "";
+  const record = payload as Record<string, unknown>;
+  if (typeof record.status === "string") return record.status;
+  if (record.run && typeof record.run === "object") {
+    const status = (record.run as { status?: unknown }).status;
+    if (typeof status === "string") return status;
+  }
+  return "";
+}
+
+export function agentAcceptsFollowUp(
+  agentPayload: unknown,
+  runPayload?: unknown,
+): boolean {
+  const agent = agentPayload && typeof agentPayload === "object"
+    ? agentPayload as Record<string, unknown>
+    : {};
+  if (agent.status === "IDLE") return true;
+  if (agent.status === "ARCHIVED") return false;
+  return isCursorRunTerminal(readRunStatus(runPayload));
+}
+
 export function runResultText(payload: unknown): string {
   if (typeof payload === "string") return payload;
   if (!payload || typeof payload !== "object") return "";
@@ -244,6 +285,21 @@ export function buildCursorPromptText(
     .join("\n\n");
 }
 
+export function buildCursorFollowUpPromptText(
+  system: string,
+  messages: ChatMessage[],
+): string {
+  const lastUser = [...messages].reverse().find((message) => message.role === "user");
+  const userText = String(lastUser?.content || "").trim() || "(empty)";
+  return [
+    system.trim(),
+    CURSOR_WORKSPACE_RULES,
+    `Latest user request:\n${userText}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
+
 export function cursorPromptImages(messages: ChatMessage[]) {
   const lastUser = [...messages].reverse().find((message) => message.role === "user");
   return (lastUser?.attachments || [])
@@ -284,19 +340,12 @@ export function mapCursorStreamEvent(
   }
   if (name === "status") {
     const status = typeof payload?.status === "string" ? payload.status : "";
-    if (
-      status === "FINISHED" ||
-      status === "ERROR" ||
-      status === "CANCELLED" ||
-      status === "EXPIRED"
-    ) {
-      return { type: "keepalive" };
-    }
+    if (isCursorRunTerminal(status)) return { type: "done" };
     return { type: "status", phase: "thinking" };
   }
   if (name === "result") {
     const text = typeof payload?.text === "string" ? payload.text : "";
-    return text ? { type: "result", text } : { type: "keepalive" };
+    return text ? { type: "result", text } : { type: "done" };
   }
   if (name === "error") {
     const message =
@@ -355,13 +404,42 @@ function authHeaders(apiKey: string): HeadersInit {
   };
 }
 
-function promptBody(system: string, messages: ChatMessage[]) {
+function promptBody(
+  system: string,
+  messages: ChatMessage[],
+  followUp = false,
+) {
   const images = cursorPromptImages(messages);
   const prompt: Record<string, unknown> = {
-    text: buildCursorPromptText(system, messages),
+    text: followUp
+      ? buildCursorFollowUpPromptText(system, messages)
+      : buildCursorPromptText(system, messages),
   };
   if (images.length) prompt.images = images;
   return prompt;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    let settled = false;
+    const onAbort = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
 }
 
 async function readError(response: Response): Promise<string> {
@@ -375,6 +453,7 @@ async function createAgent(
   mode: "agent" | "plan",
   system: string,
   messages: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<{ agentId: string; runId: string }> {
   const response = await fetch(`${CURSOR_API}/agents`, {
     method: "POST",
@@ -385,11 +464,25 @@ async function createAgent(
       mode,
       prompt: promptBody(system, messages),
     }),
+    signal,
   });
   if (!response.ok) {
     throw new Error(await readError(response));
   }
   return extractAgentAndRun(await response.json());
+}
+
+function annotateCursorError(
+  status: number,
+  bodyText: string,
+): Error & { missing?: boolean; busy?: boolean } {
+  const error = new Error(explainCursorError(status, bodyText)) as Error & {
+    missing?: boolean;
+    busy?: boolean;
+  };
+  error.missing = isCursorAgentMissing(status, bodyText);
+  error.busy = isCursorAgentBusy(status, bodyText);
+  return error;
 }
 
 async function createRun(
@@ -398,21 +491,20 @@ async function createRun(
   mode: "agent" | "plan",
   system: string,
   messages: ChatMessage[],
+  signal?: AbortSignal,
 ): Promise<{ agentId: string; runId: string }> {
   const response = await fetch(`${CURSOR_API}/agents/${agentId}/runs`, {
     method: "POST",
     headers: authHeaders(apiKey),
     body: JSON.stringify({
       mode,
-      prompt: promptBody(system, messages),
+      prompt: promptBody(system, messages, true),
     }),
+    signal,
   });
   const bodyText = await response.text();
   if (!response.ok) {
-    const error = new Error(explainCursorError(response.status, bodyText));
-    (error as Error & { missing?: boolean }).missing =
-      isCursorAgentMissing(response.status, bodyText);
-    throw error;
+    throw annotateCursorError(response.status, bodyText);
   }
   let payload: unknown = {};
   try {
@@ -423,14 +515,145 @@ async function createRun(
   return extractAgentAndRun(payload, agentId);
 }
 
+async function fetchJson(
+  url: string,
+  apiKey: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; status: number; payload: unknown; bodyText: string }> {
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    signal,
+  });
+  const bodyText = await response.text().catch(() => "");
+  let payload: unknown = {};
+  if (bodyText) {
+    try {
+      payload = JSON.parse(bodyText);
+    } catch {
+      payload = {};
+    }
+  }
+  return { ok: response.ok, status: response.status, payload, bodyText };
+}
+
+async function waitForAgentIdle(
+  apiKey: string,
+  agentId: string,
+  options: {
+    signal?: AbortSignal;
+    onWait?: () => void;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? BUSY_WAIT_MS;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (options.signal?.aborted) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    const agent = await fetchJson(
+      `${CURSOR_API}/agents/${agentId}`,
+      apiKey,
+      options.signal,
+    );
+    if (!agent.ok && isCursorAgentMissing(agent.status, agent.bodyText)) {
+      throw annotateCursorError(agent.status, agent.bodyText);
+    }
+    let runPayload: unknown;
+    const latestRunId =
+      agent.payload && typeof agent.payload === "object" &&
+        typeof (agent.payload as { latestRunId?: unknown }).latestRunId === "string"
+        ? (agent.payload as { latestRunId: string }).latestRunId
+        : "";
+    if (latestRunId) {
+      const run = await fetchJson(
+        `${CURSOR_API}/agents/${agentId}/runs/${latestRunId}`,
+        apiKey,
+        options.signal,
+      );
+      if (run.ok) runPayload = run.payload;
+    }
+    if (agentAcceptsFollowUp(agent.payload, runPayload)) return;
+    options.onWait?.();
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) break;
+    await sleep(Math.min(BUSY_POLL_MS, remaining), options.signal);
+  }
+}
+
+async function createRunWaitingIfBusy(
+  apiKey: string,
+  agentId: string,
+  mode: "agent" | "plan",
+  system: string,
+  messages: ChatMessage[],
+  options: { signal?: AbortSignal; onBusyWait?: () => void } = {},
+): Promise<{ agentId: string; runId: string }> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= BUSY_RETRIES; attempt += 1) {
+    try {
+      return await createRun(
+        apiKey,
+        agentId,
+        mode,
+        system,
+        messages,
+        options.signal,
+      );
+    } catch (error) {
+      const tagged = error as Error & { missing?: boolean; busy?: boolean };
+      if (tagged.missing || !tagged.busy || attempt === BUSY_RETRIES) {
+        throw error;
+      }
+      lastError = error;
+      await waitForAgentIdle(apiKey, agentId, {
+        signal: options.signal,
+        onWait: options.onBusyWait,
+      });
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error("Cursor agent is busy. Wait for the current reply to finish.");
+}
+
+async function cancelRun(
+  apiKey: string,
+  agentId: string,
+  runId: string,
+): Promise<void> {
+  if (!agentId || !runId) return;
+  try {
+    await fetch(
+      `${CURSOR_API}/agents/${agentId}/runs/${runId}/cancel`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      },
+    );
+  } catch {
+    // Best-effort: a finished run returns 409 run_not_cancellable.
+  }
+}
+
+function unreadResultDelta(accumulated: string, pendingResult: string): string {
+  if (!pendingResult) return "";
+  if (!accumulated) return pendingResult;
+  if (pendingResult.startsWith(accumulated)) {
+    return pendingResult.slice(accumulated.length);
+  }
+  return "";
+}
+
 async function fetchRunResult(
   apiKey: string,
   agentId: string,
   runId: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const response = await fetch(
     `${CURSOR_API}/agents/${agentId}/runs/${runId}`,
-    { headers: { Authorization: `Bearer ${apiKey}` } },
+    { headers: { Authorization: `Bearer ${apiKey}` }, signal },
   );
   if (!response.ok) return "";
   try {
@@ -452,6 +675,9 @@ export function streamCursorChat(options: {
 }): Response {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
+  const active = { agentId: "", runId: "" };
+  const cancelActiveRun = () =>
+    cancelRun(options.apiKey, active.agentId, active.runId);
 
   return new Response(
     new ReadableStream({
@@ -483,12 +709,22 @@ export function streamCursorChat(options: {
             let runId = "";
             if (agentId && isCursorAgentId(agentId)) {
               try {
-                const followUp = await createRun(
+                const followUp = await createRunWaitingIfBusy(
                   options.apiKey,
                   agentId,
                   options.mode,
                   options.system,
                   options.messages,
+                  {
+                    signal: options.signal,
+                    onBusyWait: () => {
+                      try {
+                        emit({ type: "status", phase: "thinking" });
+                      } catch {
+                        // Client already gone.
+                      }
+                    },
+                  },
                 );
                 agentId = followUp.agentId;
                 runId = followUp.runId;
@@ -503,6 +739,7 @@ export function streamCursorChat(options: {
                   options.mode,
                   options.system,
                   options.messages,
+                  options.signal,
                 );
                 agentId = created.agentId;
                 runId = created.runId;
@@ -514,12 +751,15 @@ export function streamCursorChat(options: {
                 options.mode,
                 options.system,
                 options.messages,
+                options.signal,
               );
               agentId = created.agentId;
               runId = created.runId;
             }
 
-            emit({ type: "cursor-agent", agentId });
+            active.agentId = agentId;
+            active.runId = runId;
+            emit({ type: "cursor-agent", agentId, runId });
             startHeartbeat("thinking");
 
             const stream = await fetch(
@@ -538,9 +778,10 @@ export function streamCursorChat(options: {
                   options.apiKey,
                   agentId,
                   runId,
+                  options.signal,
                 );
                 if (fallback) emit({ type: "delta", text: fallback });
-                emit({ type: "done", agentId });
+                emit({ type: "done", agentId, runId });
                 controller.close();
                 return;
               }
@@ -553,6 +794,7 @@ export function streamCursorChat(options: {
             let accumulated = "";
             let pendingResult = "";
             let sawError = false;
+            let terminal = false;
 
             while (true) {
               if (options.signal?.aborted) {
@@ -584,23 +826,41 @@ export function streamCursorChat(options: {
                   emit({ type: "status", phase: mapped.phase });
                 } else if (mapped.type === "result") {
                   pendingResult = mapped.text;
+                  terminal = true;
+                } else if (mapped.type === "done") {
+                  terminal = true;
                 } else if (mapped.type === "error") {
                   sawError = true;
+                  terminal = true;
                   emit({ type: "error", message: mapped.message });
                 }
               }
-              if (done) break;
+              if (terminal || done) break;
             }
 
-            if (!sawError && !accumulated.trim()) {
-              const fallback = pendingResult ||
-                await fetchRunResult(options.apiKey, agentId, runId);
-              if (fallback) emit({ type: "delta", text: fallback });
+            if (options.signal?.aborted) {
+              await cancelActiveRun();
+              controller.close();
+              return;
             }
-            if (!sawError) emit({ type: "done", agentId });
+
+            if (!sawError) {
+              let unread = unreadResultDelta(accumulated, pendingResult);
+              if (!accumulated.trim() && !unread) {
+                unread = await fetchRunResult(
+                  options.apiKey,
+                  agentId,
+                  runId,
+                  options.signal,
+                );
+              }
+              if (unread) emit({ type: "delta", text: unread });
+              emit({ type: "done", agentId, runId });
+            }
             controller.close();
           } catch (error) {
             if (options.signal?.aborted) {
+              await cancelActiveRun();
               controller.close();
               return;
             }
@@ -619,7 +879,7 @@ export function streamCursorChat(options: {
         })();
       },
       cancel() {
-        // The fetch uses the request signal from Shader Studio.
+        void cancelActiveRun();
       },
     }),
     {

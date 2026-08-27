@@ -4,6 +4,7 @@ import {
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   readAppNavWidth,
+  readCanvasControlsVisible,
   readCanvasTheme,
   readChatHeight,
   readCodeWidth,
@@ -60,6 +61,13 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
   assert.equal(
     readCanvasTheme(storage({ "figma-shader-studio:canvas-theme": "dark" })),
     "dark",
+  );
+  assert.equal(readCanvasControlsVisible(storage()), true);
+  assert.equal(
+    readCanvasControlsVisible(
+      storage({ "figma-shader-studio:show-canvas-handles": "false" }),
+    ),
+    false,
   );
   assert.equal(readPlayState(storage()), true);
   assert.equal(

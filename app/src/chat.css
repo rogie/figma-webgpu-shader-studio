@@ -166,6 +166,10 @@
       }
     }
 
+    fig-chat-message {
+      gap: var(--spacer-3);
+    }
+
     fig-chat-message[from="user"]:has(> fig-tooltip > fig-avatar) {
       position: relative;
       margin-inline-end: calc(var(--spacer-4) + var(--spacer-2));

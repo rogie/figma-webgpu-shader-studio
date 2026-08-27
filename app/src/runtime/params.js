@@ -9,6 +9,19 @@ export function buildDefaults(props) {
   return out;
 }
 
+export function valuesMatchDefaults(props, values = {}) {
+  if (!props) return true;
+  const currentValues = values && typeof values === "object" ? values : {};
+  for (const key in props) {
+    const fallback = props[key] ? props[key].defaultValue : undefined;
+    const current = Object.prototype.hasOwnProperty.call(currentValues, key)
+      ? currentValues[key]
+      : fallback;
+    if (JSON.stringify(current) !== JSON.stringify(fallback)) return false;
+  }
+  return true;
+}
+
 // Effects reference frame.input; fills never bind or sample it.
 export function detectKind(source) {
   const stripped = source.replace(/\/\*[\s\S]*?\*\/|\/\/.*/g, "");
