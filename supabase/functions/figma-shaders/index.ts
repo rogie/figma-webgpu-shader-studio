@@ -24,6 +24,16 @@ const FIGMA_OAUTH_TOKEN =
   Deno.env.get("FIGMA_OAUTH_TOKEN_URL") ||
   "https://api.staging.figma.com/v1/oauth/token";
 const FIGMA_MCP_SCOPE = "mcp:connect";
+const FIGMA_SIGNIN_OAUTH_AUTHORIZE =
+  Deno.env.get("FIGMA_SIGNIN_OAUTH_AUTHORIZE_URL") ||
+  "https://staging.figma.com/oauth";
+const FIGMA_SIGNIN_OAUTH_TOKEN =
+  Deno.env.get("FIGMA_SIGNIN_OAUTH_TOKEN_URL") ||
+  "https://api.staging.figma.com/v1/oauth/token";
+const FIGMA_REST_API =
+  (Deno.env.get("FIGMA_REST_API_URL") || "https://api.staging.figma.com/v1")
+    .replace(/\/$/, "");
+const FIGMA_SIGNIN_SCOPE = "current_user:read";
 const DEFAULT_REDIRECT_URIS = [
   "https://shader-studio.pages.dev/figma/oauth/callback",
   "http://localhost:5173/figma/oauth/callback",
@@ -94,16 +104,54 @@ function getTool(kind: ShaderKind): string {
   return kind === "fill" ? "get_shader_fill" : "get_shader_effect";
 }
 
-function oauthCredentials(): { clientId: string; clientSecret: string } {
-  const clientId = Deno.env.get("FIGMA_OAUTH_CLIENT_ID")?.trim() || "";
-  const clientSecret = Deno.env.get("FIGMA_OAUTH_CLIENT_SECRET")?.trim() || "";
+type OAuthConfig = {
+  authorizeUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  clientSecret: string;
+  scope: string;
+  resource?: string;
+};
+
+function oauthConfig(intent: OAuthIntent): OAuthConfig {
+  const isSignIn = intent === "signin";
+  const clientId = Deno.env.get(
+    isSignIn ? "FIGMA_SIGNIN_OAUTH_CLIENT_ID" : "FIGMA_OAUTH_CLIENT_ID",
+  )?.trim() || "";
+  const clientSecret = Deno.env.get(
+    isSignIn ? "FIGMA_SIGNIN_OAUTH_CLIENT_SECRET" : "FIGMA_OAUTH_CLIENT_SECRET",
+  )?.trim() || "";
   if (!clientId || !clientSecret) {
     throw Object.assign(
-      new Error("Figma OAuth is not configured on the server."),
-      { code: "figma_oauth_not_configured", status: 503 },
+      new Error(
+        isSignIn
+          ? "Figma sign-in OAuth is not configured on the server."
+          : "Figma MCP OAuth is not configured on the server.",
+      ),
+      {
+        code: isSignIn
+          ? "figma_signin_oauth_not_configured"
+          : "figma_oauth_not_configured",
+        status: 503,
+      },
     );
   }
-  return { clientId, clientSecret };
+  return isSignIn
+    ? {
+      authorizeUrl: FIGMA_SIGNIN_OAUTH_AUTHORIZE,
+      tokenUrl: FIGMA_SIGNIN_OAUTH_TOKEN,
+      clientId,
+      clientSecret,
+      scope: FIGMA_SIGNIN_SCOPE,
+    }
+    : {
+      authorizeUrl: FIGMA_OAUTH_AUTHORIZE,
+      tokenUrl: FIGMA_OAUTH_TOKEN,
+      clientId,
+      clientSecret,
+      scope: FIGMA_MCP_SCOPE,
+      resource: MCP_URL,
+    };
 }
 
 function allowedRedirectUris(): string[] {
@@ -116,12 +164,6 @@ function allowedRedirectUris(): string[] {
 
 function readIntent(value?: string): OAuthIntent {
   return value === "signin" ? "signin" : "connect";
-}
-
-function oauthScope(_intent: OAuthIntent): string {
-  // Both connect and sign-in use the MCP token; identity comes from the MCP
-  // `whoami` tool, so no extra REST scope is required.
-  return FIGMA_MCP_SCOPE;
 }
 
 function isFigmaEmail(email: string): boolean {
@@ -140,21 +182,6 @@ function stringField(
     }
   }
   return undefined;
-}
-
-function decodeJwtClaims(token: string): Record<string, unknown> | null {
-  const parts = token.split(".");
-  if (parts.length < 2) return null;
-  try {
-    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = atob(padded.padEnd(Math.ceil(padded.length / 4) * 4, "="));
-    const claims = JSON.parse(json);
-    return claims && typeof claims === "object"
-      ? claims as Record<string, unknown>
-      : null;
-  } catch {
-    return null;
-  }
 }
 
 function identityFromPayload(
@@ -178,39 +205,34 @@ function identityFromPayload(
   };
 }
 
-async function fetchFigmaIdentity(
+async function fetchFigmaRestIdentity(
   accessToken: string,
   fallbackUserId?: string,
 ): Promise<FigmaIdentity> {
-  // The sign-in token is an MCP token (audience-bound to the MCP server), so it
-  // cannot call the Figma REST API. The MCP `whoami` tool returns the same
-  // identity (handle, email) using the token we already hold.
-  let lastError = "";
-  try {
-    const client = new McpClient(accessToken);
-    const result = await client.callTool("whoami");
-    const payload = extractToolPayload(result);
-    const identity = identityFromPayload(payload, fallbackUserId);
-    if (identity) return identity;
-    lastError = "Figma whoami did not include an email address.";
-  } catch (error) {
-    lastError = (error as { message?: string })?.message ||
-      "Figma whoami request failed.";
+  const response = await fetch(`${FIGMA_REST_API}/me`, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  const payload = await readJson(response);
+  if (!response.ok) {
+    const message =
+      stringField(payload, "message", "error_description", "error") ||
+      `Figma profile request failed (${response.status})`;
+    throw Object.assign(new Error(message), {
+      code: "figma_identity_request_failed",
+      status: response.status,
+    });
   }
-
-  const fromJwt = identityFromPayload(
-    decodeJwtClaims(accessToken) || {},
-    fallbackUserId,
-  );
-  if (fromJwt) return fromJwt;
-
-  throw Object.assign(
-    new Error(
-      lastError ||
-        "Figma did not return an email from the MCP whoami tool.",
-    ),
-    { code: "figma_identity_unavailable", status: 502 },
-  );
+  const identity = identityFromPayload(payload, fallbackUserId);
+  if (!identity) {
+    throw Object.assign(
+      new Error("Figma did not return an email address for this account."),
+      { code: "figma_identity_unavailable", status: 502 },
+    );
+  }
+  return identity;
 }
 
 function requireFigmaEmployee(identity: FigmaIdentity): FigmaIdentity {
@@ -482,18 +504,19 @@ function basicAuth(clientId: string, clientSecret: string): string {
 
 async function exchangeOAuthToken(
   params: Record<string, string>,
+  intent: OAuthIntent,
 ): Promise<Record<string, unknown>> {
-  const { clientId, clientSecret } = oauthCredentials();
-  const response = await fetch(FIGMA_OAUTH_TOKEN, {
+  const config = oauthConfig(intent);
+  const response = await fetch(config.tokenUrl, {
     method: "POST",
     headers: {
-      Authorization: basicAuth(clientId, clientSecret),
+      Authorization: basicAuth(config.clientId, config.clientSecret),
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
     },
     body: new URLSearchParams({
       ...params,
-      resource: MCP_URL,
+      ...(config.resource ? { resource: config.resource } : {}),
     }),
   });
   const payload = await response.json().catch(() => ({})) as Record<
@@ -1063,26 +1086,28 @@ Deno.serve(async (req) => {
 
   if (op === "oauth-authorize") {
     try {
-      const { clientId } = oauthCredentials();
       const redirectUri = requireRedirectUri(body.redirectUri);
       const state = body.state?.trim() || "";
       const codeChallenge = body.codeChallenge?.trim() || "";
       const intent = readIntent(body.intent);
+      const config = oauthConfig(intent);
       if (!state || !codeChallenge) {
         return jsonResponse(400, {
           error: "state and codeChallenge are required",
           code: "invalid_oauth_request",
         });
       }
-      const url = new URL(FIGMA_OAUTH_AUTHORIZE);
-      url.searchParams.set("client_id", clientId);
+      const url = new URL(config.authorizeUrl);
+      url.searchParams.set("client_id", config.clientId);
       url.searchParams.set("redirect_uri", redirectUri);
-      url.searchParams.set("scope", oauthScope(intent));
+      url.searchParams.set("scope", config.scope);
       url.searchParams.set("state", state);
       url.searchParams.set("response_type", "code");
       url.searchParams.set("code_challenge", codeChallenge);
       url.searchParams.set("code_challenge_method", "S256");
-      url.searchParams.set("resource", MCP_URL);
+      if (config.resource) {
+        url.searchParams.set("resource", config.resource);
+      }
       return jsonResponse(200, { authorizationUrl: url.toString() });
     } catch (error) {
       const err = error as { message?: string; code?: string; status?: number };
@@ -1104,25 +1129,24 @@ Deno.serve(async (req) => {
           code: "invalid_oauth_exchange",
         });
       }
+      const intent = readIntent(body.intent);
       const tokens = await exchangeOAuthToken({
         grant_type: "authorization_code",
         code,
         code_verifier: codeVerifier,
         redirect_uri: redirectUri,
-      });
-      const intent = readIntent(body.intent);
+      }, intent);
       if (intent !== "signin") {
         return jsonResponse(200, { ...tokens, intent });
       }
       const identity = requireFigmaEmployee(
-        await fetchFigmaIdentity(
+        await fetchFigmaRestIdentity(
           tokens.accessToken as string,
           typeof tokens.userId === "string" ? tokens.userId : undefined,
         ),
       );
       const auth = await mintSupabaseSession(identity);
       return jsonResponse(200, {
-        ...tokens,
         intent,
         auth,
       });
@@ -1147,7 +1171,7 @@ Deno.serve(async (req) => {
       const tokens = await exchangeOAuthToken({
         grant_type: "refresh_token",
         refresh_token: refreshToken,
-      });
+      }, "connect");
       return jsonResponse(200, tokens);
     } catch (error) {
       const err = error as { message?: string; code?: string; status?: number };

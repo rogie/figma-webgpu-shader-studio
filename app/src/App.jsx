@@ -6462,7 +6462,7 @@ export default function App() {
     </fig-tooltip>
   );
 
-  const renderPropertyHeaderActions = (noun, leading = null) => {
+  const renderPropertyHeaderActions = (noun) => {
     const visibilityLabel = effectVisible ? `Hide ${noun}` : `Show ${noun}`;
     return (
       <hstack
@@ -6471,7 +6471,6 @@ export default function App() {
           "--hstack-gap": "var(--spacer-1)",
         }}
       >
-        {leading}
         {noun ? (
           <>
             <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
@@ -6524,10 +6523,7 @@ export default function App() {
         <h2>{propertiesPanelTitle}</h2>
         {isComposerView
           ? null
-          : renderPropertyHeaderActions(
-              isShaderFillPanel ? "fill" : null,
-              canvasControlsToggle,
-            )}
+          : renderPropertyHeaderActions(isShaderFillPanel ? "fill" : null)}
       </fig-header>
 
       <fig-content
@@ -7197,12 +7193,8 @@ export default function App() {
                 showFps={!isComposerView || compositionPlayable}
               />
             )}
-            {isComposerView ? (
-              <>
-                <fig-separator direction="vertical" />
-                {canvasControlsToggle}
-              </>
-            ) : null}
+            <fig-separator direction="vertical" />
+            {canvasControlsToggle}
             <fig-separator direction="vertical" />
             <fig-tooltip
               text={

@@ -313,14 +313,15 @@ async function exchangeFigmaOAuthCallback() {
       redirectUri: callbackUrl(),
       intent,
     });
-    setFigmaOAuthSession({
-      accessToken: payload.accessToken,
-      refreshToken: payload.refreshToken,
-      expiresIn: payload.expiresIn,
-      userId: payload.userId,
-    });
     if (intent === "signin") {
       await establishFigmaStudioSession(payload.auth);
+    } else {
+      setFigmaOAuthSession({
+        accessToken: payload.accessToken,
+        refreshToken: payload.refreshToken,
+        expiresIn: payload.expiresIn,
+        userId: payload.userId,
+      });
     }
     payload.intent = intent;
     const basePath = new URL(import.meta.env.BASE_URL, window.location.origin)

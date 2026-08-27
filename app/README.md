@@ -144,26 +144,30 @@ on the allowlisted staging OAuth client:
 - `https://shader-studio.pages.dev/figma/oauth/callback`
 - `http://localhost:5173/figma/oauth/callback`
 
-Store `FIGMA_OAUTH_CLIENT_ID` and `FIGMA_OAUTH_CLIENT_SECRET` as Supabase Edge
-Function secrets, then deploy the proxy:
+Store the MCP OAuth client's `FIGMA_OAUTH_CLIENT_ID` and
+`FIGMA_OAUTH_CLIENT_SECRET` as Supabase Edge Function secrets. For account
+sign-in, create a separate staging Figma OAuth app with the
+`current_user:read` scope and store its credentials as
+`FIGMA_SIGNIN_OAUTH_CLIENT_ID` and `FIGMA_SIGNIN_OAUTH_CLIENT_SECRET`. Register
+the same callback URLs above on both clients, then deploy the proxy:
 
 ```bash
 supabase functions deploy figma-shaders
 ```
 
 The browser uses authorization code + PKCE. The Edge Function performs token
-exchange and refresh so the client secret is never included in the frontend
-bundle. The OAuth client must be approved for `mcp:connect`. Sign-in uses that
-same scope: the account email comes from the MCP `whoami` tool (called with the
-`mcp:connect` token), so no REST scope such as `current_user:read` is required.
+exchange and refresh so client secrets are never included in the frontend
+bundle. The shader-library OAuth client must be approved for `mcp:connect`.
 
-**Sign in with Figma** reuses this PKCE callback. After token exchange the Edge
-Function calls the MCP `whoami` tool for the account identity, requires an
-`@figma.com` email, upserts the Supabase user, and returns a minted Supabase
-session (access + refresh tokens) that the client applies via
-`supabase.auth.setSession`. The Figma MCP tokens themselves stay on-device for
-the shader library. **Connect to Figma** in Settings only stores those tokens
-and does not change the Shader Studio session.
+**Sign in with Figma** reuses the PKCE callback but uses regular staging Figma
+OAuth rather than MCP OAuth. After token exchange the Edge Function reads the
+account identity from the REST API's `/v1/me` endpoint, requires an `@figma.com`
+email, upserts the Supabase user, and returns a minted Supabase session (access
++ refresh tokens) that the client applies via `supabase.auth.setSession`. The
+Figma OAuth tokens used for sign-in are not sent to or stored by the browser.
+**Connect to Figma** in Settings remains a separate MCP OAuth flow; its MCP
+tokens stay on-device for the shader library and do not change the Shader
+Studio session.
 
 Accounts are keyed by the verified `@figma.com` email: one email maps to one
 Shader Studio user. Signing in with Figma and GitHub using the same address

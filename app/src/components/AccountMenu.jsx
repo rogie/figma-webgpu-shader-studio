@@ -320,7 +320,16 @@ export default function AccountMenu({
               />
               <fig-truncate>{accountName}</fig-truncate>
             </>
-          ) : null}
+          ) : (
+            <fig-button
+              type="button"
+              variant="ghost"
+              disabled={loading || !configured ? "" : undefined}
+              onClick={() => onOpenChange(true)}
+            >
+              Sign in
+            </fig-button>
+          )}
         </div>
       ) : null}
       <fig-menu ref={accountMenuRef} position={position}>
@@ -603,7 +612,7 @@ export default function AccountMenu({
           </fig-group>
 
           {FIGMA_LIBRARY_UI_ENABLED && (
-            <fig-group name="Figma" collapsible="" open="">
+            <fig-group name="Figma MCP" collapsible="" open="">
               <p>
                 Connect with OAuth to browse and import your Figma shader effects
                 and fills.

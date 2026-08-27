@@ -50,6 +50,25 @@ function modelId(entry) {
   return typeof entry === "string" ? entry : entry?.id;
 }
 
+const CURSOR_MODEL_SHORTLIST = [
+  ["Auto (default)", "Auto"],
+  ["Claude Haiku 4.5"],
+  ["Claude Opus 5"],
+  ["Claude Sonnet 5"],
+  ["Codex 5.3"],
+  ["Composer 2.5"],
+  ["Cursor Grok 4.6"],
+  ["Gemini 3.1 Pro"],
+  ["Gemini 3.5 Flash"],
+  ["GPT-5.4 Mini"],
+  ["GPT-5.4 Nano"],
+  ["GPT-5.5"],
+  ["GPT-5.6 Luna"],
+  ["GPT-5.6 Sol"],
+  ["GPT-5.6 Terra"],
+  ["Kimi K3"],
+];
+
 function cursorModelLabel(id, label) {
   if (typeof label === "string" && label.trim()) return label.trim();
   if (id === "auto" || id === "auto-smart") return "Auto";
@@ -114,6 +133,18 @@ function collapseCursorModels(models) {
   });
 }
 
+function shortlistCursorModels(models) {
+  const byLabel = new Map(
+    models.map((model) => [model.label.toLowerCase(), model])
+  );
+  return CURSOR_MODEL_SHORTLIST.flatMap((labels) => {
+    const match = labels
+      .map((label) => byLabel.get(label.toLowerCase()))
+      .find(Boolean);
+    return match ? [match] : [];
+  });
+}
+
 function discoveredCursorModels(available) {
   if (!Array.isArray(available) || available.length === 0) return [];
   const seen = new Set();
@@ -133,7 +164,7 @@ function discoveredCursorModels(available) {
       ...(aliases.length ? { aliases } : {}),
     });
   }
-  return collapseCursorModels(models);
+  return shortlistCursorModels(collapseCursorModels(models));
 }
 
 export function groupsForAvailableProviderModels(availableModelsByProvider) {
