@@ -8,7 +8,8 @@
     "build": "vite build",
     "budget": "node scripts/check-bundle-budget.mjs",
     "test": "node --test",
-    "verify": "npm test && npm run build && npm run budget",
+    "test:embed": "playwright test",
+    "verify": "npm test && npm run test:embed && npm run build && npm run budget",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -51,6 +52,7 @@
     "sucrase": "^3.35.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@webgpu/types": "^0.1.52",
     "vite": "^5.4.11"

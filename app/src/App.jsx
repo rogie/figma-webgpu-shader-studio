@@ -659,6 +659,20 @@ function compositionCloudIds(graph) {
   return ids.includes(null) ? null : [...new Set(ids)];
 }
 
+function publicItemsReferencing(shaderId, rows = []) {
+  if (!shaderId) return [];
+  return rows.filter((row) => {
+    if (!row?.is_public || row.id === shaderId) return false;
+    const graph =
+      row.kind === COMPOSITION_KIND
+        ? row.composition
+        : normalizeComposition({
+            fills: readEffectFillsFromComposition(row.composition),
+          });
+    return compositionCloudIds(graph)?.includes(shaderId);
+  });
+}
+
 function replaceShaderUrl(id, kind, embed = false) {
   window.history.replaceState(
     {},
@@ -4141,13 +4155,15 @@ export default function App() {
   useEffect(() => {
     const onPopState = () => {
       const { id, kind: nextKind, embed } = getAppRoute();
+      if (id && embed) {
+        window.location.reload();
+        return;
+      }
       routeEmbedRef.current = Boolean(embed);
       setRouteId(id);
       setRouteKind(nextKind);
       setRouteEmbed(Boolean(embed));
-      if (id && embed) {
-        openEmbedRouteId(id, nextKind);
-      } else if (id) {
+      if (id) {
         setEmbedStatus("idle");
         openRouteId(id);
       } else {
@@ -4695,7 +4711,6 @@ export default function App() {
       const shaderId =
         isOwner && currentShader?.id ? currentShader.id : null;
       if (
-        shaderId &&
         background &&
         !checkpointKind &&
         (shaderSaveQueue.isBusyAny() ||
@@ -4735,12 +4750,18 @@ export default function App() {
           compositionRef.current = graph;
           setComposition(graph);
         }
-        if (makePublic && isComposition) {
+        const publicationGraph = isComposition
+          ? graph
+          : sessionKindRef.current === "effect"
+            ? normalizeComposition({ fills: effectFillsRef.current })
+            : null;
+        if (publicFlag && !background && publicationGraph) {
           let unpublished = unpublishedCompositionRefs(
-            graph,
+            publicationGraph,
             new Map(Object.entries(resolvedShaders)),
             cloudShaders
           );
+          let dependencyRows = cloudShaders;
           if (unpublished.length) {
             const ids = unpublished
               .map((key) => parseCompositionShaderId(key)?.id)
@@ -4751,21 +4772,58 @@ export default function App() {
               )
               .filter(Boolean);
             const fresh = ids.length ? await getShadersByIds(ids) : [];
+            dependencyRows = [...cloudShaders, ...fresh];
             unpublished = unpublishedCompositionRefs(
-              graph,
+              publicationGraph,
               new Map(Object.entries(resolvedShaders)),
-              [...cloudShaders, ...fresh]
+              dependencyRows
             );
           }
           if (unpublished.length) {
-            const names = unpublishedCompositionLabels(
-              unpublished,
-              new Map(Object.entries(resolvedShaders)),
-              [...cloudShaders, ...fresh]
+            const byId = new Map(
+              dependencyRows.map((dependency) => [dependency.id, dependency])
             );
-            throw new Error(
-              `Publish every referenced fill and effect before publishing this composition (${names.join(", ")}).`
+            const publishable = new Map();
+            const blocked = [];
+            for (const key of unpublished) {
+              const parsed = parseCompositionShaderId(key);
+              const id = String(parsed?.id || "").replace(/^draft:/, "");
+              const dependency = byId.get(id);
+              if (
+                dependency &&
+                dependency.owner_id === user.id &&
+                dependency.is_public !== true
+              ) {
+                publishable.set(id, dependency);
+              } else {
+                blocked.push(key);
+              }
+            }
+            if (blocked.length) {
+              const names = unpublishedCompositionLabels(
+                blocked,
+                new Map(Object.entries(resolvedShaders)),
+                dependencyRows
+              );
+              throw new Error(
+                `These referenced fills or effects are unavailable for publishing: ${names.join(", ")}.`
+              );
+            }
+            const publishedDependencies = await Promise.all(
+              [...publishable.keys()].map((id) =>
+                updateShader(id, { is_public: true })
+              )
             );
+            if (publishedDependencies.length) {
+              setCloudShaders((current) =>
+                current.map((item) => {
+                  const published = publishedDependencies.find(
+                    (dependency) => dependency.id === item.id
+                  );
+                  return published ? { ...item, ...published } : item;
+                })
+              );
+            }
           }
         }
         const liveFills = isComposition
@@ -4773,8 +4831,8 @@ export default function App() {
           : sessionKindRef.current === "effect"
             ? effectFillsRef.current
             : [];
+        const stackedMedia = fillMediaEntries(liveFills);
         const persistedFills = persistableEffectFills(liveFills);
-        const stackedMedia = background ? [] : fillMediaEntries(liveFills);
         const graphForSave = isComposition
           ? normalizeComposition({ ...graph, fills: persistedFills })
           : null;
@@ -5624,6 +5682,13 @@ export default function App() {
     }
     if (!isOwner || saving) return;
     try {
+      const rows = await listShaders({ limit: 500 });
+      const parents = publicItemsReferencing(currentShader?.id, rows);
+      if (parents.length) {
+        throw new Error(
+          `Unpublish the referencing ${parents.length === 1 ? "item" : "items"} first: ${parents.map((item) => item.name).join(", ")}.`
+        );
+      }
       const saved = await saveShader({
         makePrivate: true,
         notice: "Shader unpublished",
@@ -5634,7 +5699,7 @@ export default function App() {
       setError(message);
       showNotice(message, { error: true });
     }
-  }, [isOwner, saveShader, saving, showNotice, user]);
+  }, [currentShader?.id, isOwner, saveShader, saving, showNotice, user]);
 
   const duplicateShader = useCallback(async () => {
     if (duplicating) return;
@@ -5748,6 +5813,13 @@ export default function App() {
     async (shader) => {
       if (!user || !shader || shader.owner_id !== user.id) return false;
       try {
+        const rows = await listShaders({ limit: 500 });
+        const parents = publicItemsReferencing(shader.id, rows);
+        if (parents.length) {
+          throw new Error(
+            `Delete or unpublish the referencing ${parents.length === 1 ? "item" : "items"} first: ${parents.map((item) => item.name).join(", ")}.`
+          );
+        }
         await removeShaderPlan(shader.owner_id, shader.id);
         await removeAssets([shader.input_path, shader.thumbnail_path]);
         await deleteShader(shader.id);
@@ -5838,7 +5910,7 @@ export default function App() {
         currentShader.kind === COMPOSITION_KIND
           ? "Composition preview"
           : "Shader preview"
-      }" width="800" height="600" style="border: 0;" loading="lazy" allowfullscreen></iframe>`
+      }" width="800" height="600" style="border: 0;" loading="lazy" allow="webgpu; camera" allowfullscreen></iframe>`
     : "";
   const standaloneEmbedCode = useMemo(() => {
     if (!exportOpen) return "";
@@ -7721,6 +7793,7 @@ export default function App() {
         videoBitrateRef={videoBitrateRef}
         embedFormatRef={embedFormatRef}
         embedCode={embedCode}
+        embedUrl={embedUrl}
         embedLinkAvailable={Boolean(embedUrl)}
         iframeEmbedAvailable={iframeEmbedAvailable}
         iframeEmbedUnavailableMessage={iframeEmbedUnavailableMessage}

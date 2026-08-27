@@ -13,6 +13,8 @@ dist/
 *.log
 .idea/
 .vscode/
+test-results/
+playwright-report/
 
 # Supabase CLI local link metadata
 supabase/.temp/

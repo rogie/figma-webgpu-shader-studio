@@ -1087,6 +1087,43 @@ test("source fills upload static images once and dynamic media every present", (
   ]);
 });
 
+test("HTML source fills use element snapshots and refresh every present", () => {
+  const host = makeHost();
+  const copies = [];
+  host.device = {
+    queue: {
+      copyElementImageToTexture(source, destination) {
+        copies.push({ source, destination });
+      },
+    },
+  };
+  host._ensureLayerTexture = (layer, key, width, height) => {
+    layer[key] ||= { width, height, format: host.format };
+    return layer[key];
+  };
+  const element = {
+    offsetWidth: 960,
+    offsetHeight: 720,
+  };
+  const layer = {
+    id: "html",
+    role: "fill",
+    sourceType: "html",
+    source: element,
+    sourceUploaded: false,
+  };
+
+  host._prepareSourceFill(layer, 960, 720);
+  host._prepareSourceFill(layer, 960, 720);
+
+  assert.equal(copies.length, 2);
+  assert.equal(copies[0].source.source, element);
+  assert.deepEqual(host._sourceDimensions(element), {
+    width: 960,
+    height: 720,
+  });
+});
+
 test("source fill dimensions seed an otherwise unsized composition", () => {
   const host = makeHost();
   host.isFill = false;
@@ -1224,10 +1261,17 @@ test("composition video and webcam sources follow the host play state", () => {
     assert.deepEqual(webcam.state, { plays: 1, pauses: 0 });
     assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 1 });
 
-    host.stop({ resetTime: true });
+    host.setActive(false);
     assert.deepEqual(video.state, { plays: 1, pauses: 1 });
     assert.deepEqual(webcam.state, { plays: 1, pauses: 1 });
-    assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 2 });
+    host.setActive(true);
+    assert.deepEqual(video.state, { plays: 2, pauses: 1 });
+    assert.deepEqual(webcam.state, { plays: 2, pauses: 1 });
+
+    host.stop({ resetTime: true });
+    assert.deepEqual(video.state, { plays: 2, pauses: 2 });
+    assert.deepEqual(webcam.state, { plays: 2, pauses: 2 });
+    assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 4 });
   } finally {
     raf.restore();
   }

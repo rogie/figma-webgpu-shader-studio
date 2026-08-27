@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Embed fixture</title>
+  </head>
+  <body>
+    <script type="module">
+      import { renderEmbedPage } from "/src/embedPage.js";
+      import defaultImageUrl from "/src/assets/default-input.png?url";
+      import defaultVideoUrl from "/src/assets/default-input.mp4?url";
+
+      const mode = new URLSearchParams(location.search).get("mode");
+      const shaderSource =
+        "export function setup() {} export function render() {}";
+      const dependencies = [
+        { id: "fill-top", kind: "fill", source: shaderSource, is_public: true },
+        { id: "fill-bottom", kind: "fill", source: shaderSource, is_public: true },
+        { id: "effect-first", kind: "effect", source: shaderSource, is_public: true },
+        { id: "effect-second", kind: "effect", source: shaderSource, is_public: true },
+      ].map((dependency) =>
+        mode === "private-dependency" && dependency.id === "fill-top"
+          ? { ...dependency, is_public: false }
+          : dependency
+      );
+      const composition =
+        mode === "composition" || mode === "private-dependency"
+          ? {
+              fills: [
+                { id: "top", type: "shader", shaderId: "cloud:fill-top" },
+                { id: "bottom", type: "shader", shaderId: "cloud:fill-bottom" },
+              ],
+              effects: [
+                { id: "first", shaderId: "cloud:effect-first" },
+                { id: "second", shaderId: "cloud:effect-second" },
+              ],
+            }
+          : mode === "legacy-image"
+            ? {
+                fills: [{ id: "image", type: "image" }],
+                effects: [],
+              }
+          : mode === "video"
+            ? {
+                fills: [
+                  {
+                    id: "video",
+                    type: "video",
+                    paint: {
+                      type: "video",
+                      video: { url: defaultVideoUrl, scaleMode: "fit" },
+                    },
+                  },
+                ],
+                effects: [],
+              }
+            : mode === "foreign-asset"
+              ? {
+                  fills: [
+                    {
+                      id: "image",
+                      type: "image",
+                      paint: {
+                        type: "image",
+                        image: { assetPath: "owner/another-shader/input.png" },
+                      },
+                    },
+                  ],
+                  effects: [],
+                }
+              : mode === "html"
+                ? {
+                    fills: [{ id: "html", type: "html" }],
+                    effects: [],
+                  }
+                : {};
+
+      class FakeShaderHost {
+        constructor() {
+          this.device = {};
+          this.stageCssSize = { width: 1, height: 1 };
+        }
+        async init() {}
+        setStageCssSize(width, height) {
+          this.stageCssSize = { width, height };
+        }
+        setActive(active) {
+          window.__embedActive = active;
+        }
+        async setComposition(layers) {
+          window.__embedLayers = layers.map((layer) => ({
+            id: layer.id,
+            role: layer.role,
+            sourceType: layer.sourceType || "shader",
+          }));
+          return true;
+        }
+        start() {
+          window.__embedStarted = true;
+        }
+        destroy() {}
+      }
+
+      const row =
+        mode === "composition" ||
+        mode === "private-dependency" ||
+        mode === "legacy-image" ||
+        mode === "video" ||
+        mode === "foreign-asset" ||
+        mode === "html"
+          ? {
+              id: "fixture",
+              name:
+                mode === "video"
+                  ? "Fixture video composition"
+                  : "Fixture composition",
+              kind: "composition",
+              composition,
+              is_public: true,
+              input_path:
+                mode === "legacy-image" ? "owner/fixture/input.png" : null,
+              input_mime_type:
+                mode === "legacy-image" ? "image/png" : null,
+            }
+          : {
+              id: "fixture",
+              name: "Fixture shader effect",
+              kind: "effect",
+              source: shaderSource,
+              parameter_values: {},
+              composition: {},
+              is_public: true,
+            };
+
+      renderEmbedPage(
+        {
+          id: "fixture",
+          kind:
+            mode === "composition" ||
+            mode === "private-dependency" ||
+            mode === "legacy-image" ||
+            mode === "video" ||
+            mode === "foreign-asset" ||
+            mode === "html"
+              ? "composition"
+              : null,
+        },
+        {
+          ShaderHost: FakeShaderHost,
+          getShader: async () => row,
+          getShadersByIds: async (ids) =>
+            dependencies.filter((dependency) => ids.includes(dependency.id)),
+          getAssetUrls: async (paths) =>
+            Object.fromEntries(
+              paths.map((path) => [
+                path,
+                path === "owner/fixture/input.png" ? defaultImageUrl : "",
+              ])
+            ),
+        }
+      );
+    </script>
+  </body>
+</html>

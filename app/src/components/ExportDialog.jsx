@@ -35,6 +35,7 @@ export default function ExportDialog({
   videoBitrateRef,
   embedFormatRef,
   embedCode,
+  embedUrl,
   embedLinkAvailable,
   iframeEmbedAvailable,
   iframeEmbedUnavailableMessage,
@@ -43,7 +44,6 @@ export default function ExportDialog({
   onExportVideo,
   onDownloadEmbed,
   onCopyEmbed,
-  onCopyEmbedLink,
   onDurationInput,
   onImageQualityInput,
 }) {
@@ -60,7 +60,7 @@ export default function ExportDialog({
       class="export-dialog"
       aria-label="Export"
       modal=""
-      closedby="closerequest"
+      closedby="any"
       position="center center"
       autoresize=""
       onClose={onClose}
@@ -270,10 +270,16 @@ export default function ExportDialog({
             <fig-button
               type="button"
               variant="link"
+              href={embedUrl || undefined}
+              target="_blank"
               disabled={!embedLinkAvailable ? "" : undefined}
-              onClick={onCopyEmbedLink}
+              onClick={() => {
+                if (embedUrl) {
+                  window.open(embedUrl, "_blank", "noopener,noreferrer");
+                }
+              }}
             >
-              Copy link
+              Preview
             </fig-button>
             <fig-button
               type="button"

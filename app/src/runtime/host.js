@@ -11,7 +11,7 @@ import { measurePerf, perfNow, recordPerf } from "./perf.js";
 
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
-const SOURCE_FILL_TYPES = new Set(["image", "video", "webcam"]);
+const SOURCE_FILL_TYPES = new Set(["image", "video", "webcam", "html"]);
 
 function collectShaderModules(value, modules, seen) {
   if (!value || (typeof value !== "object" && typeof value !== "function")) return;
@@ -862,45 +862,50 @@ export class ShaderHost {
   _uploadHtmlFrame() {
     if (!this.htmlElement || !this.inputTexture) return;
     if (!this._htmlFrameDirty) return false;
+    const copied = this._copyElementImageToTexture(
+      this.htmlElement,
+      this.inputTexture
+    );
+    if (copied) {
+      this._htmlFrameDirty = false;
+      recordPerf("input.htmlUpload");
+    }
+    return copied;
+  }
+
+  _copyElementImageToTexture(element, texture) {
     const queue = this.device.queue;
-    const texture = this.inputTexture;
     const width = texture.width;
     const height = texture.height;
     // Chrome 150+: dictionary form with nested destination.texture.
     // Older builds accepted (element, { texture }) or (element, w, h, { texture }).
     try {
       queue.copyElementImageToTexture(
-        { source: this.htmlElement },
+        { source: element },
         {
           destination: { texture, premultipliedAlpha: true },
           width,
           height,
         }
       );
-      this._htmlFrameDirty = false;
-      recordPerf("input.htmlUpload");
       return true;
     } catch {
       /* try legacy signatures below */
     }
     try {
-      queue.copyElementImageToTexture(this.htmlElement, {
+      queue.copyElementImageToTexture(element, {
         texture,
         premultipliedAlpha: true,
       });
-      this._htmlFrameDirty = false;
-      recordPerf("input.htmlUpload");
       return true;
     } catch {
       /* try older 4-arg form */
     }
     try {
-      queue.copyElementImageToTexture(this.htmlElement, width, height, {
+      queue.copyElementImageToTexture(element, width, height, {
         texture,
         premultipliedAlpha: true,
       });
-      this._htmlFrameDirty = false;
-      recordPerf("input.htmlUpload");
       return true;
     } catch {
       // Skip until a paint snapshot exists / API is available.
@@ -1371,12 +1376,16 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       source.videoWidth ||
         source.naturalWidth ||
         source.displayWidth ||
+        source.offsetWidth ||
+        source.clientWidth ||
         source.width
     );
     let height = Number(
       source.videoHeight ||
         source.naturalHeight ||
         source.displayHeight ||
+        source.offsetHeight ||
+        source.clientHeight ||
         source.height
     );
     if (!(width > 0 && height > 0)) return null;
@@ -1877,21 +1886,30 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       { copyDestination: true }
     );
     const dynamic =
-      layer.sourceType === "video" || layer.sourceType === "webcam";
+      layer.sourceType === "video" ||
+      layer.sourceType === "webcam" ||
+      layer.sourceType === "html";
     if (
       this._sourceIsReady(layer) &&
       (dynamic || !layer.sourceUploaded)
     ) {
-      try {
-        this.device.queue.copyExternalImageToTexture(
-          { source: layer.source, flipY: false },
-          { texture: sourceTexture, premultipliedAlpha: true },
-          [sourceTexture.width, sourceTexture.height]
+      if (layer.sourceType === "html") {
+        layer.sourceUploaded = this._copyElementImageToTexture(
+          layer.source,
+          sourceTexture
         );
-        layer.sourceUploaded = true;
-      } catch {
-        // A media element can report ready before its backing frame is
-        // importable. Keep the previous texture and try again next present.
+      } else {
+        try {
+          this.device.queue.copyExternalImageToTexture(
+            { source: layer.source, flipY: false },
+            { texture: sourceTexture, premultipliedAlpha: true },
+            [sourceTexture.width, sourceTexture.height]
+          );
+          layer.sourceUploaded = true;
+        } catch {
+          // A media element can report ready before its backing frame is
+          // importable. Keep the previous texture and try again next present.
+        }
       }
     }
     return { layer, fillTexture, sourceTexture };
