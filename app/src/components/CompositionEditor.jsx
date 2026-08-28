@@ -477,6 +477,7 @@ function ImageFillInput({
   pickerTriggerId,
   dialogAnchor,
   autoOpen = false,
+  onOpenPicker,
   onAutoOpened,
 }) {
   const ref = useRef(null);
@@ -639,13 +640,14 @@ function ImageFillInput({
     // immediately would show the previous tab instead of the new fill type.
     frame = requestAnimationFrame(() => {
       frame = requestAnimationFrame(() => {
+        onOpenPicker?.();
         const picker = ref.current?.querySelector("fig-fill-picker");
         picker?.open?.();
         onAutoOpened?.();
       });
     });
     return () => cancelAnimationFrame(frame);
-  }, [autoOpen, disabled, onAutoOpened]);
+  }, [autoOpen, disabled, onAutoOpened, onOpenPicker]);
 
   return (
     <propskit-fill
@@ -753,6 +755,7 @@ function FillLayerEditor({
   onChangeValues,
   onToggleVisible,
   onRemove,
+  onOpenPicker,
   autoOpen = false,
   onAutoOpened,
 }) {
@@ -995,6 +998,7 @@ function FillLayerEditor({
         pickerTriggerId={fillShaderTriggerId(fill.id)}
         dialogAnchor={fill.id}
         autoOpen={autoOpen}
+        onOpenPicker={onOpenPicker}
         onAutoOpened={onAutoOpened}
       />
     );
@@ -1016,6 +1020,7 @@ function FillLayerEditor({
           className="composition-fill-control"
           onPointerDown={() => onSelect?.(fill.id)}
           onFocusCapture={() => onSelect?.(fill.id)}
+          onClickCapture={onOpenPicker}
         >
           {control}
         </div>
@@ -1174,14 +1179,11 @@ export default function CompositionEditor({
     const popup = propertiesPopupRef.current;
     if (!popup) return undefined;
 
-    const lockDismiss = () => {
-      popup.setAttribute("closedby", "none");
-      if ("closedBy" in popup) popup.closedBy = "none";
-    };
-    lockDismiss();
+    popup.setAttribute("closedby", "any");
+    if ("closedBy" in popup) popup.closedBy = "any";
 
-    const onCancel = (event) => {
-      event.preventDefault();
+    const onCancel = () => {
+      setPropertiesLayerId(null);
     };
     const onClose = () => {
       if (!propertiesLayerIdRef.current) return;
@@ -1214,6 +1216,10 @@ export default function CompositionEditor({
 
   const onEffectPickerOpenChange = useCallback((next) => {
     setEffectPickerOpen(next);
+  }, []);
+  const onFillControlOpen = useCallback(() => {
+    setPropertiesLayerId(null);
+    setEffectPickerOpen(false);
   }, []);
 
   const addEffect = useCallback(
@@ -1543,6 +1549,7 @@ export default function CompositionEditor({
                 onChangeValues={changeFillValues}
                 onToggleVisible={toggleFillVisible}
                 onRemove={removeFill}
+                onOpenPicker={onFillControlOpen}
                 autoOpen={autoOpenFillId === fill.id}
                 onAutoOpened={clearAutoOpenFill}
               />
@@ -1653,13 +1660,13 @@ export default function CompositionEditor({
             class="composition-layer-props"
             position="left"
             popover="manual"
-            closedby="none"
+            closedby="any"
             anchor={
               propertiesLayerId
                 ? `#${layerPropsAnchorId(propertiesLayerId)}`
                 : undefined
             }
-            onCancel={(event) => event.preventDefault()}
+            onCancel={() => setPropertiesLayerId(null)}
           >
             <fig-header>
               <h3>{propertiesTitle}</h3>

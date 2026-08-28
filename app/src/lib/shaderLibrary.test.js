@@ -8,6 +8,7 @@ import {
   figmaLibraryKey,
   nextLibraryCardKey,
   parseFigmaLibraryKey,
+  visibleLibrarySelection,
 } from "./shaderLibrary.js";
 
 test("caches a fetched full shader row for later navigation", () => {
@@ -277,6 +278,19 @@ test("nextLibraryCardKey falls back to the first card when the list is empty of 
     "cloud:keep"
   );
   assert.equal(nextLibraryCardKey([], "cloud:gone"), null);
+});
+
+test("chooser selection stays empty when filters hide the active shader", () => {
+  const visibleCards = [
+    { key: "separator:effect", separatorLabel: "Shader effects" },
+    { key: "cloud:visible" },
+  ];
+
+  assert.equal(
+    visibleLibrarySelection(visibleCards, "cloud:visible"),
+    "cloud:visible",
+  );
+  assert.equal(visibleLibrarySelection(visibleCards, "cloud:hidden"), "");
 });
 
 test("filters published shaders by author", () => {

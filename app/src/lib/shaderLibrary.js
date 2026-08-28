@@ -32,6 +32,15 @@ export function parseFigmaLibraryKey(key) {
   return { kind, id };
 }
 
+export function visibleLibrarySelection(cards, value) {
+  if (!value) return "";
+  return (cards || []).some(
+    (card) => card?.key === value && !card.separatorLabel,
+  )
+    ? value
+    : "";
+}
+
 function hasFigmaShaderLink(shader) {
   return (
     typeof shader?.figma_shader_id === "string" &&
