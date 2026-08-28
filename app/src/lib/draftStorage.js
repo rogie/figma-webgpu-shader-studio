@@ -4,10 +4,39 @@ import {
   normalizeComposition,
   readEffectFillsFromComposition,
 } from "./composition.js";
+import { isTransientDraftMediaUrl } from "./draftMediaStorage.js";
 import { figmaShaderLink, isDraftId } from "./shaderIdentity.js";
 
 export const DRAFTS_STORAGE_KEY = "figma-shader-studio:drafts";
 export const ACTIVE_DRAFT_STORAGE_KEY = "figma-shader-studio:active-draft";
+
+function persistableMediaFill(fill) {
+  const slot =
+    fill?.paint?.type === "video"
+      ? "video"
+      : fill?.paint?.type === "image"
+        ? "image"
+        : null;
+  if (!slot) return fill;
+  const media = { ...(fill.paint?.[slot] || {}) };
+  if (isTransientDraftMediaUrl(media.url)) delete media.url;
+  if (isTransientDraftMediaUrl(media.poster)) delete media.poster;
+  return {
+    ...fill,
+    paint: {
+      ...fill.paint,
+      [slot]: media,
+    },
+  };
+}
+
+function persistableComposition(composition) {
+  const graph = normalizeComposition(composition);
+  return {
+    ...graph,
+    fills: graph.fills.map(persistableMediaFill),
+  };
+}
 
 function effectFillState(draft) {
   let composition = null;
@@ -21,9 +50,10 @@ function effectFillState(draft) {
   }
   if (!composition) return null;
   const effectFills = readEffectFillsFromComposition(composition);
+  const persistedFills = effectFills.map(persistableMediaFill);
   return {
-    effectFills,
-    effectFill: effectFills[0] || null,
+    effectFills: persistedFills,
+    effectFill: persistedFills[0] || null,
   };
 }
 
@@ -41,10 +71,16 @@ export function serializeDraft(draft, thumbnail = null) {
     source: typeof draft.source === "string" ? draft.source : "",
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
     ...(draft.kind === "composition"
-      ? { composition: normalizeComposition(draft.composition) }
+      ? { composition: persistableComposition(draft.composition) }
       : storedEffectFills
         ? { composition: storedEffectFills }
         : {}),
+    dependencySnapshots:
+      draft.dependencySnapshots &&
+      typeof draft.dependencySnapshots === "object" &&
+      !Array.isArray(draft.dependencySnapshots)
+        ? draft.dependencySnapshots
+        : {},
     isPublic: Boolean(draft.isPublic),
     thumbnail: typeof thumbnail === "string" ? thumbnail : null,
     ...figmaShaderLink(draft),
@@ -93,6 +129,12 @@ export function readDrafts(storage = globalThis.localStorage) {
                   effectFill: storedEffectFills.effectFill,
                 }
               : {}),
+          dependencySnapshots:
+            draft.dependencySnapshots &&
+            typeof draft.dependencySnapshots === "object" &&
+            !Array.isArray(draft.dependencySnapshots)
+              ? draft.dependencySnapshots
+              : {},
           isPublic: Boolean(draft.isPublic),
           pendingMedia: null,
           thumbnail:

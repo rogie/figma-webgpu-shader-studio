@@ -72,6 +72,26 @@ test("composition keeps bottom-to-top fills and ordered effects", async ({
   await expect(page.locator("#error")).toBeHidden();
 });
 
+test("composition embeds compile the pinned dependency source", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "gpu", {
+      configurable: true,
+      value: {},
+    });
+  });
+  await page.goto("/e2e/fixtures/embed.html?mode=pinned-dependency");
+  await page.waitForFunction(() =>
+    Array.isArray(window.__embedRenderSources)
+  );
+
+  const sources = await page.evaluate(() => window.__embedRenderSources);
+  expect(sources[1]).toContain("pinned-dependency-marker");
+  expect(sources[1]).not.toContain("live-dependency-marker");
+  await expect(page.locator("#error")).toBeHidden();
+});
+
 test("video fills load as animated composition sources", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, "gpu", {

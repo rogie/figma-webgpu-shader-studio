@@ -1,5 +1,6 @@
 const STORAGE_KEY = "shader-studio.chatThreads.v1";
 const MAX_MESSAGES_PER_THREAD = 80;
+export const CHAT_THREAD_TRANSFER_EVENT = "shader-studio:chat-thread-transfer";
 
 function sanitizePaste(paste) {
   if (!paste || typeof paste !== "object") return null;
@@ -73,10 +74,72 @@ function sanitizeThreads(threads) {
   return out;
 }
 
+function sanitizeMessages(messages) {
+  return (Array.isArray(messages) ? messages : [])
+    .map(sanitizeMessage)
+    .filter(Boolean);
+}
+
+function messageFingerprint(message) {
+  return JSON.stringify(message);
+}
+
+/**
+ * Returns the shortest merged sequence that preserves each thread's ordering.
+ * Exact overlap is shared, while repeated messages already present in either
+ * thread retain their original multiplicity.
+ */
+export function mergeChatThreadMessages(sourceMessages, targetMessages) {
+  const source = sanitizeMessages(sourceMessages);
+  const target = sanitizeMessages(targetMessages);
+  const sourceKeys = source.map(messageFingerprint);
+  const targetKeys = target.map(messageFingerprint);
+  const overlap = Array.from({ length: source.length + 1 }, () =>
+    Array(target.length + 1).fill(0),
+  );
+
+  for (let sourceIndex = source.length - 1; sourceIndex >= 0; sourceIndex -= 1) {
+    for (let targetIndex = target.length - 1; targetIndex >= 0; targetIndex -= 1) {
+      overlap[sourceIndex][targetIndex] =
+        sourceKeys[sourceIndex] === targetKeys[targetIndex]
+          ? overlap[sourceIndex + 1][targetIndex + 1] + 1
+          : Math.max(
+              overlap[sourceIndex + 1][targetIndex],
+              overlap[sourceIndex][targetIndex + 1],
+            );
+    }
+  }
+
+  const merged = [];
+  let sourceIndex = 0;
+  let targetIndex = 0;
+  while (sourceIndex < source.length && targetIndex < target.length) {
+    if (sourceKeys[sourceIndex] === targetKeys[targetIndex]) {
+      merged.push(source[sourceIndex]);
+      sourceIndex += 1;
+      targetIndex += 1;
+    } else if (
+      overlap[sourceIndex + 1][targetIndex] >=
+      overlap[sourceIndex][targetIndex + 1]
+    ) {
+      merged.push(source[sourceIndex]);
+      sourceIndex += 1;
+    } else {
+      merged.push(target[targetIndex]);
+      targetIndex += 1;
+    }
+  }
+  return [
+    ...merged,
+    ...source.slice(sourceIndex),
+    ...target.slice(targetIndex),
+  ];
+}
+
 /** @returns {Record<string, Array<{role: string, content: string, attachments?: object[]}>>} */
-export function loadChatThreads() {
+export function loadChatThreads(storage = globalThis.localStorage) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = storage?.getItem(STORAGE_KEY);
     if (!raw) return {};
     return sanitizeThreads(JSON.parse(raw));
   } catch {
@@ -85,20 +148,109 @@ export function loadChatThreads() {
 }
 
 /** @param {Record<string, Array<object>>} threads */
-export function saveChatThreads(threads) {
+export function saveChatThreads(
+  threads,
+  storage = globalThis.localStorage,
+) {
+  const sanitized = sanitizeThreads(threads);
   try {
-    localStorage.setItem(
-      STORAGE_KEY,
-      JSON.stringify(sanitizeThreads(threads))
-    );
+    storage?.setItem(STORAGE_KEY, JSON.stringify(sanitized));
   } catch (error) {
     console.warn("Failed to persist chat threads", error);
   }
+  return sanitized;
 }
 
-export function clearChatThread(threadId) {
-  const threads = loadChatThreads();
+export function migrateChatThreadKey(
+  sourceThreadId,
+  targetThreadId,
+  storage = globalThis.localStorage,
+) {
+  const threads = loadChatThreads(storage);
+  if (
+    !/^preset:draft:.+/.test(sourceThreadId) ||
+    !/^cloud:.+/.test(targetThreadId)
+  ) {
+    return threads;
+  }
+  if (!threads[sourceThreadId]) {
+    notifyChatThreadTransfer(sourceThreadId, targetThreadId, true, threads);
+    return threads;
+  }
+  const next = {
+    ...threads,
+    [targetThreadId]: mergeChatThreadMessages(
+      threads[sourceThreadId],
+      threads[targetThreadId],
+    ),
+  };
+  delete next[sourceThreadId];
+  const saved = saveChatThreads(next, storage);
+  notifyChatThreadTransfer(sourceThreadId, targetThreadId, true, saved);
+  return saved;
+}
+
+export function copyChatThreadKey(
+  sourceThreadId,
+  targetThreadId,
+  storage = globalThis.localStorage,
+) {
+  const threads = loadChatThreads(storage);
+  if (
+    !sourceThreadId ||
+    !targetThreadId ||
+    sourceThreadId === targetThreadId
+  ) {
+    return threads;
+  }
+  if (!threads[sourceThreadId]) {
+    notifyChatThreadTransfer(sourceThreadId, targetThreadId, false, threads);
+    return threads;
+  }
+  const saved = saveChatThreads(
+    {
+      ...threads,
+      [targetThreadId]: mergeChatThreadMessages(
+        threads[sourceThreadId],
+        threads[targetThreadId],
+      ),
+    },
+    storage,
+  );
+  notifyChatThreadTransfer(sourceThreadId, targetThreadId, false, saved);
+  return saved;
+}
+
+function notifyChatThreadTransfer(
+  sourceThreadId,
+  targetThreadId,
+  removeSource,
+  threads,
+) {
+  if (
+    typeof globalThis.dispatchEvent !== "function" ||
+    typeof globalThis.CustomEvent !== "function"
+  ) {
+    return;
+  }
+  globalThis.dispatchEvent(
+    new CustomEvent(CHAT_THREAD_TRANSFER_EVENT, {
+      detail: {
+        sourceThreadId,
+        targetThreadId,
+        removeSource,
+        targetMessages: threads[targetThreadId] || [],
+      },
+    }),
+  );
+}
+
+export function clearChatThread(
+  threadId,
+  storage = globalThis.localStorage,
+) {
+  const threads = loadChatThreads(storage);
   delete threads[threadId];
-  saveChatThreads(threads);
+  saveChatThreads(threads, storage);
   return threads;
 }

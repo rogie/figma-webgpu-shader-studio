@@ -75,6 +75,24 @@ export function extractModuleSource(text, { allowIncomplete = false } = {}) {
 }
 
 /**
+ * Select code that is safe to auto-apply after a chat stream stops.
+ * A complete fence can survive a missing terminal event, while an open fence
+ * is only trusted after the provider explicitly completed the response.
+ * @param {string} text
+ * @param {{ streamCompleted?: boolean, aborted?: boolean }} [options]
+ * @returns {string|null}
+ */
+export function extractAutoApplyModuleSource(
+  text,
+  { streamCompleted = false, aborted = false } = {}
+) {
+  if (aborted) return null;
+  return extractModuleSource(text, {
+    allowIncomplete: Boolean(streamCompleted),
+  });
+}
+
+/**
  * Light validation before applying into the editor.
  * @param {string} source
  * @returns {{ ok: true } | { ok: false, reason: string }}
@@ -131,6 +149,16 @@ export function splitAssistantContent(text) {
     source,
     incomplete,
     ...metadata,
+  };
+}
+
+export function buildAppliedModuleCheckpoint(text, appliedSource) {
+  if (!appliedSource) return null;
+  const { prose, summary, description } = splitAssistantContent(text);
+  return {
+    source: appliedSource,
+    summary: summary || prose,
+    description,
   };
 }
 

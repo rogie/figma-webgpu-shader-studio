@@ -10,10 +10,23 @@ export function buildDefaults(props) {
 }
 
 export function valuesMatchDefaults(props, values = {}) {
-  if (!props) return true;
+  const definitions =
+    props && typeof props === "object" && !Array.isArray(props) ? props : {};
   const currentValues = values && typeof values === "object" ? values : {};
-  for (const key in props) {
-    const fallback = props[key] ? props[key].defaultValue : undefined;
+
+  for (const key of Object.keys(currentValues)) {
+    if (
+      !Object.prototype.hasOwnProperty.call(definitions, key) &&
+      currentValues[key] !== undefined
+    ) {
+      return false;
+    }
+  }
+
+  for (const key of Object.keys(definitions)) {
+    const fallback = definitions[key]
+      ? definitions[key].defaultValue
+      : undefined;
     const current = Object.prototype.hasOwnProperty.call(currentValues, key)
       ? currentValues[key]
       : fallback;

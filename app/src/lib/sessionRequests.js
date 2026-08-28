@@ -7,6 +7,15 @@ export function beginSessionRequest(sessionRequestRef, requestId = null) {
   return requestId === sessionRequestRef.current;
 }
 
+export async function persistBeforeSessionActivation({
+  persist,
+  sessionRequestRef,
+  requestId,
+}) {
+  await persist();
+  return !sessionRequestRef || requestId === sessionRequestRef.current;
+}
+
 export async function activateBeforeHydration({
   session,
   activate,

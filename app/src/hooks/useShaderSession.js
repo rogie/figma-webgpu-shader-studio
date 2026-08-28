@@ -20,7 +20,10 @@ import {
   defaultVideoUrl,
 } from "../runtime/sample.js";
 import { measurePerf, perfNow } from "../runtime/perf.js";
-import { beginSessionRequest } from "../lib/sessionRequests.js";
+import {
+  beginSessionRequest,
+  persistBeforeSessionActivation,
+} from "../lib/sessionRequests.js";
 
 export function useShaderSession({
   persistActiveDraft,
@@ -51,6 +54,7 @@ export function useShaderSession({
   effectPaintRef,
   effectFillStoreRef,
   sessionRef,
+  activeDependencySnapshotsRef,
   setEffectFills,
   setEffectFill,
   inputApplyGenRef,
@@ -72,15 +76,24 @@ export function useShaderSession({
       media = null,
       dirty: nextDirty = false,
       cloudShader = null,
+      dependencySnapshots,
       persistPrevious = true,
       requestId = null,
     }) => {
       const activationStartedAt = perfNow();
       if (!beginSessionRequest(sessionRequestRef, requestId)) return;
+      const activeRequestId = sessionRequestRef?.current ?? requestId;
       if (navigationStartedAtRef && !navigationStartedAtRef.current) {
         navigationStartedAtRef.current = activationStartedAt;
       }
-      if (persistPrevious) persistActiveDraft();
+      if (persistPrevious) {
+        const current = await persistBeforeSessionActivation({
+          persist: persistActiveDraft,
+          sessionRequestRef,
+          requestId: activeRequestId,
+        });
+        if (!current) return;
+      }
       if (inputApplyGenRef) inputApplyGenRef.current += 1;
       const previous = sessionRef?.current;
       if (previous?.kind === "effect" && previous.presetId) {
@@ -116,6 +129,14 @@ export function useShaderSession({
       setIsPublic(Boolean(nextPublic));
       setPendingMedia(media);
       setDirty(nextDirty);
+      if (activeDependencySnapshotsRef) {
+        const snapshots =
+          dependencySnapshots ?? cloudShader?.dependency_snapshots ?? {};
+        activeDependencySnapshotsRef.current =
+          snapshots && typeof snapshots === "object"
+            ? structuredClone(snapshots)
+            : {};
+      }
 
       let nextEffectFills = [];
       let nextEffectFill = null;
@@ -217,6 +238,7 @@ export function useShaderSession({
     [
       applyMediaBlob,
       applyPaintFill,
+      activeDependencySnapshotsRef,
       clearObjectUrl,
       effectFillStoreRef,
       effectFillsRef,

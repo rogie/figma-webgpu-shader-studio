@@ -4,6 +4,7 @@ import {
   groupVersionsByDay,
   hasUncheckpointedShaderState,
   isShaderStateConflict,
+  resolveAgentCheckpointAfterCompile,
   sanitizeVersionSummary,
   summarizeAgentVersion,
   summarizeManualVersion,
@@ -54,6 +55,36 @@ test("manual summaries describe source and property changes", () => {
   );
 });
 
+test("manual summaries describe complete visual state changes", () => {
+  assert.equal(
+    summarizeManualVersion(
+      {
+        source: "line one",
+        kind: "composition",
+        composition: { fills: [{ id: "old" }], effects: [] },
+        input_path: "owner/old.png",
+        input_name: "old.png",
+        input_mime_type: "image/png",
+        dependency_snapshots: {
+          "cloud:fill": { source: "old source" },
+        },
+      },
+      {
+        source: "line one",
+        kind: "composition",
+        composition: { fills: [{ id: "new" }], effects: [] },
+        input_path: "owner/new.png",
+        input_name: "new.png",
+        input_mime_type: "image/png",
+        dependency_snapshots: {
+          "cloud:fill": { source: "new source" },
+        },
+      },
+    ),
+    "changed layer stack; changed input media; updated pinned dependencies",
+  );
+});
+
 test("uncheckpointed state compares state revision counters", () => {
   assert.equal(
     hasUncheckpointedShaderState({
@@ -68,6 +99,39 @@ test("uncheckpointed state compares state revision counters", () => {
       versioned_state_revision: 4,
     }),
     false
+  );
+});
+
+test("agent checkpoints become saveable after their exact source compiles", () => {
+  const pending = {
+    presetId: "cloud:shader-1",
+    shaderId: "shader-1",
+    source: "export function render() {}\n",
+    summary: "Updated the shader",
+  };
+  assert.deepEqual(
+    resolveAgentCheckpointAfterCompile(pending, {
+      presetId: "cloud:shader-1",
+      source: pending.source,
+      values: { amount: 0.5 },
+    }),
+    { ...pending, values: { amount: 0.5 } }
+  );
+  assert.equal(
+    resolveAgentCheckpointAfterCompile(pending, {
+      presetId: "cloud:shader-2",
+      source: pending.source,
+      values: {},
+    }),
+    null
+  );
+  assert.equal(
+    resolveAgentCheckpointAfterCompile(pending, {
+      presetId: pending.presetId,
+      source: "export function render() { return 1 }\n",
+      values: {},
+    }),
+    null
   );
 });
 

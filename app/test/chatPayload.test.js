@@ -3,6 +3,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import {
+  assistantContentForApi,
   buildChatRequest,
   chatStreamCompletionEvent,
   createChatSseParser,
@@ -55,6 +56,29 @@ test("user pastes are fenced back into API history", () => {
       pastes: [{ language: "text", text: "plain" }],
     }),
     "```\nplain\n```"
+  );
+});
+
+test("provider history omits stale assistant modules but keeps discussion", () => {
+  const oldResponse = `<summary>Will make the shader red.</summary>
+<description>A red shader.</description>
+\`\`\`typescript
+export function render() {
+  return "OLD_ASSISTANT_SOURCE";
+}
+\`\`\``;
+  const messages = toApiMessages([
+    { role: "user", content: "Make it red" },
+    { role: "assistant", content: oldResponse, applied: true },
+    { role: "user", content: "Now make the current version softer" },
+  ]);
+
+  assert.match(messages[1].content, /Will make the shader red/);
+  assert.match(messages[1].content, /Current module source.*authoritative/);
+  assert.doesNotMatch(messages[1].content, /OLD_ASSISTANT_SOURCE/);
+  assert.equal(
+    assistantContentForApi({ content: "Earlier prose-only guidance." }),
+    "Earlier prose-only guidance."
   );
 });
 
@@ -168,6 +192,8 @@ test("Edge Function prompt embeds full source and skills without truncation", ()
   assert.ok(prompt.includes(skills));
   assert.match(prompt, /Kind: fill/);
   assert.match(prompt, /isAnimated=true, usesMouse=false/);
+  assert.match(prompt, /manual edits or a restored saved version/);
+  assert.match(prompt, /Never reconstruct or preserve code.*earlier assistant/);
 });
 
 test("SSE parser preserves split chunks and an unterminated final event", () => {

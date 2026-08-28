@@ -9,6 +9,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
 const CURSOR_IDLE_TIMEOUT_MS = 300_000;
+const CURSOR_START_TIMEOUT_MS = 120_000;
 
 export async function listAvailableProviderModels(
   provider,
@@ -146,11 +147,32 @@ export async function* streamChat({
   const idleTimeoutMs =
     provider === "cursor" ? CURSOR_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS;
   const idleSeconds = Math.round(idleTimeoutMs / 1000);
+  const startedAt = Date.now();
+  let lastOutputAt = startedAt;
+  let receivedOutput = false;
   let sawDone = false;
   let sawError = false;
-  let receivedEvent = false;
 
   while (true) {
+    const outputTimeoutMs =
+      provider === "cursor" && !receivedOutput
+        ? CURSOR_START_TIMEOUT_MS
+        : idleTimeoutMs;
+    const outputElapsedMs =
+      Date.now() - (receivedOutput ? lastOutputAt : startedAt);
+    const remainingOutputMs = Math.max(0, outputTimeoutMs - outputElapsedMs);
+    if (remainingOutputMs === 0) {
+      await reader.cancel();
+      yield {
+        type: "error",
+        message:
+          provider === "cursor" && !receivedOutput
+            ? "Cursor did not start a reply within 2 minutes. It may still be waiting for provider capacity; try again or choose another model/provider."
+            : `The model stopped producing output for ${Math.round(outputTimeoutMs / 1000)} seconds. The partial reply was preserved; try again.`,
+      };
+      return;
+    }
+
     let timeoutId;
     const read = reader.read();
     let result;
@@ -160,7 +182,7 @@ export async function* streamChat({
         new Promise((resolve) => {
           timeoutId = window.setTimeout(
             () => resolve({ timedOut: true }),
-            idleTimeoutMs
+            remainingOutputMs
           );
         }),
       ]);
@@ -171,9 +193,11 @@ export async function* streamChat({
       await reader.cancel();
       yield {
         type: "error",
-        message: receivedEvent
-          ? `The model stopped responding for ${idleSeconds} seconds. The partial reply was preserved; try again.`
-          : `The model did not start responding within ${idleSeconds} seconds. Try again or choose a faster model.`,
+        message: receivedOutput
+          ? `The model stopped producing output for ${idleSeconds} seconds. The partial reply was preserved; try again.`
+          : provider === "cursor"
+            ? "Cursor did not start a reply within 2 minutes. It may still be waiting for provider capacity; try again or choose another model/provider."
+            : `The model did not start responding within ${idleSeconds} seconds. Try again or choose a faster model.`,
       };
       return;
     }
@@ -182,7 +206,10 @@ export async function* streamChat({
       ? parser.push(decoder.decode(), { flush: true })
       : parser.push(decoder.decode(value, { stream: true }));
     for (const event of events) {
-      receivedEvent = true;
+      if (event.type === "delta" && event.text) {
+        receivedOutput = true;
+        lastOutputAt = Date.now();
+      }
       if (event.type === "done") sawDone = true;
       if (event.type === "error") sawError = true;
       yield event;

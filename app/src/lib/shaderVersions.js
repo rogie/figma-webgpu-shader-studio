@@ -54,6 +54,25 @@ export function summarizeManualVersion(previous, next) {
       propertyKeys.length > 4 ? ` +${propertyKeys.length - 4} more` : "";
     parts.push(`changed properties: ${shown}${remaining}`);
   }
+  if (
+    JSON.stringify(previous?.composition || {}) !==
+    JSON.stringify(next?.composition || {})
+  ) {
+    parts.push("changed layer stack");
+  }
+  if (
+    previous?.input_path !== next?.input_path ||
+    previous?.input_name !== next?.input_name ||
+    previous?.input_mime_type !== next?.input_mime_type
+  ) {
+    parts.push("changed input media");
+  }
+  if (
+    JSON.stringify(previous?.dependency_snapshots || {}) !==
+    JSON.stringify(next?.dependency_snapshots || {})
+  ) {
+    parts.push("updated pinned dependencies");
+  }
   return sanitizeVersionSummary(parts.join("; "), "Saved shader state");
 }
 
@@ -61,6 +80,20 @@ export function hasUncheckpointedShaderState(shader) {
   const stateRevision = Number(shader?.state_revision || 0);
   const versionedRevision = Number(shader?.versioned_state_revision || 0);
   return stateRevision > 0 && stateRevision !== versionedRevision;
+}
+
+export function resolveAgentCheckpointAfterCompile(
+  pending,
+  { presetId, source, values }
+) {
+  if (
+    !pending ||
+    pending.presetId !== presetId ||
+    pending.source !== source
+  ) {
+    return null;
+  }
+  return { ...pending, values };
 }
 
 const VERSION_KIND_LABELS = {

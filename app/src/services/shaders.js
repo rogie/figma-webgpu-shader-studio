@@ -62,7 +62,7 @@ export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
     await client
       .from("shaders")
       .select(
-        "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_mime_type, parameter_values, composition, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
+        "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
       .limit(Math.max(1, Math.min(Number(limit) || LIBRARY_SHADER_LIMIT, 500)))
@@ -127,37 +127,79 @@ export async function upsertShader(payload) {
   );
 }
 
-export async function updateShader(id, payload) {
-  const client = requireClient();
-  return unwrap(
-    await client.from("shaders").update(payload).eq("id", id).select().single()
-  );
+function shaderStateConflictError() {
+  const error = new Error("shader_state_conflict");
+  error.code = "40001";
+  return error;
 }
 
-export async function saveShaderState({
-  shaderId,
-  expectedStateRevision,
-  source,
-  kind,
-  parameterValues,
-  features,
-  composition = {},
-  checkpointKind = null,
-  summary = null,
-}) {
+export async function updateShader(
+  id,
+  payload,
+  { expectedStateRevision = null, client: suppliedClient = null } = {},
+) {
+  const client = suppliedClient || requireClient();
+  let query = client.from("shaders").update(payload).eq("id", id);
+  if (expectedStateRevision != null) {
+    query = query.eq("state_revision", expectedStateRevision);
+  }
+  const data = unwrap(await query.select().maybeSingle());
+  if (!data && expectedStateRevision != null) {
+    throw shaderStateConflictError();
+  }
+  return data;
+}
+
+export function buildSaveShaderStateRpcArgs(options = {}) {
+  const {
+    shaderId,
+    expectedStateRevision,
+    source,
+    kind,
+    parameterValues,
+    features,
+    composition = {},
+    inputPath,
+    inputName,
+    inputMimeType,
+    dependencySnapshots,
+    checkpointDependencySnapshots,
+    checkpointKind = null,
+    summary = null,
+  } = options;
+  const inputFieldsPresent = [
+    "inputPath",
+    "inputName",
+    "inputMimeType",
+  ].some((key) => Object.prototype.hasOwnProperty.call(options, key));
+
+  return {
+    p_shader_id: shaderId,
+    p_expected_state_revision: expectedStateRevision ?? null,
+    p_source: source,
+    p_kind: kind,
+    p_parameter_values: parameterValues ?? {},
+    p_features: features ?? {},
+    p_checkpoint_kind: checkpointKind,
+    p_summary: summary,
+    p_composition: composition ?? {},
+    p_input_path: inputPath ?? null,
+    p_input_name: inputName ?? null,
+    p_input_mime_type: inputMimeType ?? null,
+    p_dependency_snapshots: dependencySnapshots ?? null,
+    p_checkpoint_dependency_snapshots:
+      checkpointDependencySnapshots ?? null,
+    p_input_fields_present: inputFieldsPresent,
+  };
+}
+
+export async function saveShaderState(options) {
   const client = requireClient();
   return unwrap(
-    await client.rpc("save_shader_state", {
-      p_shader_id: shaderId,
-      p_expected_state_revision: expectedStateRevision ?? null,
-      p_source: source,
-      p_kind: kind,
-      p_parameter_values: parameterValues || {},
-      p_features: features || {},
-      p_checkpoint_kind: checkpointKind,
-      p_summary: summary,
-      p_composition: composition || {},
-    })
+    await client.rpc(
+      "save_shader_state",
+      buildSaveShaderStateRpcArgs(options)
+    )
   );
 }
 
@@ -178,7 +220,7 @@ export async function listShaderVersions(
   let query = client
     .from("shader_versions")
     .select(
-      "id, shader_id, version_number, state_revision, checkpoint_kind, summary, restored_from_version_id, created_at"
+      "id, shader_id, version_number, state_revision, checkpoint_kind, summary, restored_from_version_id, snapshot_schema_version, created_at"
     )
     .eq("shader_id", shaderId)
     .order("version_number", { ascending: false })
@@ -235,6 +277,63 @@ export async function deleteShader(id) {
   unwrap(await client.from("shaders").delete().eq("id", id));
 }
 
+function assetExtension(fileName, contentType) {
+  const mimeExtensions = {
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "image/svg+xml": "svg",
+    "image/webp": "webp",
+    "video/mp4": "mp4",
+    "video/webm": "webm",
+  };
+  return (
+    mimeExtensions[contentType] ||
+    fileName?.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ||
+    "bin"
+  );
+}
+
+async function sha256Hex(blob, cryptoApi = globalThis.crypto) {
+  if (!cryptoApi?.subtle?.digest) {
+    throw new Error("Secure asset hashing is unavailable in this browser.");
+  }
+  const digest = await cryptoApi.subtle.digest("SHA-256", await blob.arrayBuffer());
+  return [...new Uint8Array(digest)]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+export async function contentAddressedAssetPath({
+  ownerId,
+  shaderId,
+  role,
+  blob,
+  fileName,
+  contentType,
+  cryptoApi = globalThis.crypto,
+}) {
+  const safeRole =
+    String(role || "asset")
+      .replace(/[^a-zA-Z0-9_-]/g, "-")
+      .replace(/^-+|-+$/g, "") || "asset";
+  const extension = assetExtension(
+    fileName,
+    contentType || blob?.type || "application/octet-stream"
+  );
+  const digest = await sha256Hex(blob, cryptoApi);
+  return `${ownerId}/${shaderId}/assets/${safeRole}-${digest}.${extension}`;
+}
+
+function isDuplicateAssetError(error) {
+  const message = String(error?.message || "").toLowerCase();
+  return (
+    error?.statusCode === "409" ||
+    error?.status === 409 ||
+    message.includes("duplicate") ||
+    message.includes("already exists")
+  );
+}
+
 export async function uploadAsset({
   ownerId,
   shaderId,
@@ -242,20 +341,80 @@ export async function uploadAsset({
   blob,
   fileName,
   contentType,
+  cryptoApi = globalThis.crypto,
+  client: suppliedClient = null,
 }) {
-  const client = requireClient();
-  const extension =
-    fileName?.split(".").pop()?.toLowerCase().replace(/[^a-z0-9]/g, "") ||
-    (contentType === "image/webp" ? "webp" : "bin");
-  const path = `${ownerId}/${shaderId}/${role}.${extension}`;
-  unwrap(
-    await client.storage.from(ASSET_BUCKET).upload(path, blob, {
-      upsert: true,
+  const client = suppliedClient || requireClient();
+  const path = await contentAddressedAssetPath({
+    ownerId,
+    shaderId,
+    role,
+    blob,
+    fileName,
+    contentType,
+    cryptoApi,
+  });
+  const result = await client.storage.from(ASSET_BUCKET).upload(path, blob, {
+      upsert: false,
       contentType: contentType || blob.type || "application/octet-stream",
-      cacheControl: role === "thumbnail" ? "3600" : "60",
+      cacheControl: "31536000",
+    });
+  if (result.error && !isDuplicateAssetError(result.error)) unwrap(result);
+  return path;
+}
+
+async function listAssetFolder(client, prefix) {
+  const rows = [];
+  const pageSize = 1000;
+  for (let offset = 0; ; offset += pageSize) {
+    const page = unwrap(
+      await client.storage.from(ASSET_BUCKET).list(prefix, {
+        limit: pageSize,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      })
+    );
+    rows.push(...(page || []));
+    if (!page || page.length < pageSize) break;
+  }
+  const paths = [];
+  for (const row of rows || []) {
+    const path = `${prefix}/${row.name}`;
+    if (row.id || row.metadata) {
+      paths.push(path);
+    } else {
+      paths.push(...(await listAssetFolder(client, path)));
+    }
+  }
+  return paths;
+}
+
+export async function listShaderAssetPaths(ownerId, shaderId) {
+  if (!ownerId || !shaderId) return [];
+  return listAssetFolder(requireClient(), `${ownerId}/${shaderId}`);
+}
+
+export async function listRetainedShaderAssetPaths(shaderId) {
+  if (!shaderId) return [];
+  const paths = unwrap(
+    await requireClient().rpc("retained_shader_asset_paths", {
+      p_shader_id: shaderId,
     })
   );
-  return path;
+  return Array.isArray(paths) ? paths.filter(Boolean) : [];
+}
+
+export async function removeShaderAssets({
+  ownerId,
+  shaderId,
+  retainPaths = [],
+}) {
+  const retained = new Set(retainPaths);
+  const paths = (await listShaderAssetPaths(ownerId, shaderId)).filter(
+    (path) => !retained.has(path)
+  );
+  await removeAssets(paths);
+  return paths;
 }
 
 export async function uploadShaderPlan({ ownerId, shaderId, markdown }) {
@@ -294,7 +453,13 @@ export async function removeAssets(paths) {
   const filtered = paths.filter(Boolean);
   if (!filtered.length) return;
   const client = requireClient();
-  unwrap(await client.storage.from(ASSET_BUCKET).remove(filtered));
+  for (let offset = 0; offset < filtered.length; offset += 1000) {
+    unwrap(
+      await client.storage
+        .from(ASSET_BUCKET)
+        .remove(filtered.slice(offset, offset + 1000))
+    );
+  }
 }
 
 export async function downloadAsset(path) {

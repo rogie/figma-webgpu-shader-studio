@@ -7,6 +7,7 @@ import {
   readEffectFillsFromComposition,
   referencedShaderKeys,
 } from "./lib/composition.js";
+import { dependencySnapshotForKey } from "./lib/compositionDependencies.js";
 import {
   isPaintFillType,
   paintImageSource,
@@ -123,13 +124,29 @@ async function resolveDependencies(
   graph,
   {
     requirePublic = false,
+    dependencySnapshots = {},
     getShadersByIds: loadShadersByIds = getShadersByIds,
   } = {}
 ) {
   const references = referencedShaderKeys(graph);
-  const ids = references.map(dependencyId).filter(Boolean);
+  const ids = references
+    .filter(
+      (reference) =>
+        typeof dependencySnapshotForKey(dependencySnapshots, reference)
+          ?.source !== "string"
+    )
+    .map(dependencyId)
+    .filter(Boolean);
   const dependencies = await loadShadersByIds(ids);
   const resolved = new Map();
+
+  for (const reference of references) {
+    const snapshot = dependencySnapshotForKey(dependencySnapshots, reference);
+    if (typeof snapshot?.source !== "string" || !snapshot.source) continue;
+    for (const alias of compositionRefAliases(reference)) {
+      resolved.set(alias, { ...snapshot, is_public: true });
+    }
+  }
 
   for (const dependency of dependencies) {
     for (const alias of compositionRefAliases(`cloud:${dependency.id}`)) {
@@ -584,6 +601,7 @@ async function startEmbed(route, canvas, showError, services = {}) {
   );
   const resolved = await resolveDependencies(graph, {
     requirePublic: row.is_public,
+    dependencySnapshots: row.dependency_snapshots,
     getShadersByIds: services.getShadersByIds,
   });
   await setComposition(

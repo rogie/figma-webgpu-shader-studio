@@ -65,26 +65,25 @@ export default function ShaderChatSection({
           </fig-tooltip>
         </hstack>
       </fig-header>
-      {!collapsed && (
-        <Suspense fallback={null}>
-          <ChatPane
-            ref={chatPaneRef}
-            sourceRef={sourceRef}
-            kind={kind}
-            fileName={fileName}
-            shaderKey={shaderKey}
-            planOwnerId={planOwnerId}
-            planShaderId={planShaderId}
-            featuresRef={featuresRef}
-            user={user}
-            onApplySource={onApplySource}
-            onAppliedCheckpoint={onAppliedCheckpoint}
-            onOpenSettings={onOpenSettings}
-            onNotice={onNotice}
-            onCanClearChange={onCanClearChange}
-          />
-        </Suspense>
-      )}
+      <Suspense fallback={null}>
+        <ChatPane
+          ref={chatPaneRef}
+          sourceRef={sourceRef}
+          kind={kind}
+          fileName={fileName}
+          shaderKey={shaderKey}
+          planOwnerId={planOwnerId}
+          planShaderId={planShaderId}
+          featuresRef={featuresRef}
+          user={user}
+          onApplySource={onApplySource}
+          onAppliedCheckpoint={onAppliedCheckpoint}
+          onOpenSettings={onOpenSettings}
+          onNotice={onNotice}
+          onCanClearChange={onCanClearChange}
+          hidden={collapsed}
+        />
+      </Suspense>
     </section>
   );
 }

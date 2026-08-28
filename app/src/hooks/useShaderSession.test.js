@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   activateBeforeHydration,
   beginSessionRequest,
+  persistBeforeSessionActivation,
 } from "../lib/sessionRequests.js";
 
 test("stale navigation requests cannot activate a newer session", () => {
@@ -17,6 +18,23 @@ test("local navigation invalidates in-flight cloud requests", () => {
   assert.equal(beginSessionRequest(request), true);
   assert.equal(request.current, 5);
   assert.equal(beginSessionRequest(request, 4), false);
+});
+
+test("navigation that becomes stale while persistence runs cannot activate", async () => {
+  const request = { current: 4 };
+  let release;
+  const persisted = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = persistBeforeSessionActivation({
+    persist: () => persisted,
+    sessionRequestRef: request,
+    requestId: 4,
+  });
+
+  request.current = 5;
+  release();
+  assert.equal(await pending, false);
 });
 
 test("fill metadata activates before media hydration resolves", async () => {

@@ -55,6 +55,7 @@ test("readDrafts filters invalid rows and normalizes legacy values", () => {
       kind: "effect",
       source: "export function render() {}",
       values: {},
+      dependencySnapshots: {},
       isPublic: true,
       pendingMedia: null,
       thumbnail: "data:image/png;base64,abc",
@@ -104,6 +105,14 @@ test("readDrafts round-trips composition drafts", () => {
           ],
           effects: [{ shaderId: "cloud:grain", values: { amount: 1 } }],
         },
+        dependencySnapshots: {
+          "cloud:mesh": {
+            shader_id: "mesh",
+            state_revision: 4,
+            source: "export function render() {}",
+            kind: "fill",
+          },
+        },
       },
     ]),
   });
@@ -117,6 +126,10 @@ test("readDrafts round-trips composition drafts", () => {
   assert.strictEqual(draft.composition.fill, draft.composition.fills[0]);
   assert.equal(draft.composition.fills[1].shaderId, "cloud:mesh");
   assert.equal(draft.composition.effects[0].shaderId, "cloud:grain");
+  assert.equal(
+    draft.dependencySnapshots["cloud:mesh"].state_revision,
+    4,
+  );
 });
 
 test("draft storage round-trips effectFills with effectFill compatibility", () => {
@@ -164,6 +177,47 @@ test("draft storage round-trips effectFills with effectFill compatibility", () =
   assert.strictEqual(
     draft.composition.effectFill,
     draft.composition.effectFills[0],
+  );
+});
+
+test("draft storage removes transient media urls but keeps durable keys", () => {
+  const storage = memoryStorage();
+  writeDrafts(
+    [
+      {
+        id: "draft:media",
+        name: "Media",
+        kind: "composition",
+        source: "",
+        composition: {
+          fills: [
+            {
+              id: "photo",
+              type: "image",
+              paint: {
+                type: "image",
+                image: {
+                  url: "blob:current-document",
+                  localAssetKey:
+                    "local-draft-media:v1:draft%3Amedia/photo",
+                  scaleMode: "fit",
+                },
+              },
+            },
+          ],
+          effects: [],
+        },
+      },
+    ],
+    {},
+    storage,
+  );
+
+  const [raw] = JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY));
+  assert.equal(raw.composition.fills[0].paint.image.url, undefined);
+  assert.equal(
+    raw.composition.fills[0].paint.image.localAssetKey,
+    "local-draft-media:v1:draft%3Amedia/photo",
   );
 });
 

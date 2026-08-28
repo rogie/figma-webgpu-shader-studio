@@ -12,7 +12,9 @@
 
       const mode = new URLSearchParams(location.search).get("mode");
       const shaderSource =
-        "export function setup() {} export function render() {}";
+        'export function setup() {} export function render() { return "live-dependency-marker"; }';
+      const pinnedShaderSource =
+        'export function setup() {} export function render() { return "pinned-dependency-marker"; }';
       const dependencies = [
         { id: "fill-top", kind: "fill", source: shaderSource, is_public: true },
         { id: "fill-bottom", kind: "fill", source: shaderSource, is_public: true },
@@ -24,7 +26,9 @@
           : dependency
       );
       const composition =
-        mode === "composition" || mode === "private-dependency"
+        mode === "composition" ||
+        mode === "pinned-dependency" ||
+        mode === "private-dependency"
           ? {
               fills: [
                 { id: "top", type: "shader", shaderId: "cloud:fill-top" },
@@ -88,6 +92,9 @@
           window.__embedActive = active;
         }
         async setComposition(layers) {
+          window.__embedRenderSources = layers.map((layer) =>
+            String(layer.render || "")
+          );
           window.__embedLayers = layers.map((layer) => ({
             id: layer.id,
             role: layer.role,
@@ -103,6 +110,7 @@
 
       const row =
         mode === "composition" ||
+        mode === "pinned-dependency" ||
         mode === "private-dependency" ||
         mode === "legacy-image" ||
         mode === "video" ||
@@ -121,6 +129,18 @@
                 mode === "legacy-image" ? "owner/fixture/input.png" : null,
               input_mime_type:
                 mode === "legacy-image" ? "image/png" : null,
+              dependency_snapshots:
+                mode === "pinned-dependency"
+                  ? {
+                      "cloud:fill-top": {
+                        shader_id: "fill-top",
+                        kind: "fill",
+                        source: pinnedShaderSource,
+                        parameter_values: {},
+                        features: {},
+                      },
+                    }
+                  : {},
             }
           : {
               id: "fixture",
@@ -137,6 +157,7 @@
           id: "fixture",
           kind:
             mode === "composition" ||
+            mode === "pinned-dependency" ||
             mode === "private-dependency" ||
             mode === "legacy-image" ||
             mode === "video" ||

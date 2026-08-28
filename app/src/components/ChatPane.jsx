@@ -10,7 +10,9 @@ import {
   useState,
 } from "react";
 import {
+  buildAppliedModuleCheckpoint,
   chatApplyTargetStatus,
+  extractAutoApplyModuleSource,
   extractModuleSource,
   formatChatError,
   isPlanMode,
@@ -32,7 +34,9 @@ import {
   reconcileAvailableChatModel,
 } from "../lib/chatModels.js";
 import {
+  CHAT_THREAD_TRANSFER_EVENT,
   loadChatThreads,
+  mergeChatThreadMessages,
   saveChatThreads,
 } from "../lib/chatThreads.js";
 import {
@@ -46,7 +50,11 @@ import {
   getProviderKey,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
-import { cursorAgentIdForModel, saveCursorAgent } from "../lib/cursorAgent.js";
+import {
+  bindCursorAgentToSource,
+  cursorAgentIdForModel,
+  saveCursorAgent,
+} from "../lib/cursorAgent.js";
 import { toApiMessages } from "../lib/chatPayload.js";
 import { splitComposerPaste } from "../lib/pastedText.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
@@ -130,13 +138,15 @@ function isEmptyAssistant(message) {
   );
 }
 
-function rememberCursorAgent(event, model) {
+function rememberCursorAgent(event, model, { threadId, source } = {}) {
   if (model?.provider !== "cursor") return;
   if (typeof event?.agentId === "string" && event.agentId) {
     saveCursorAgent({
       agentId: event.agentId,
       modelId: model.id,
       runId: event.runId,
+      threadId,
+      source,
     });
   }
 }
@@ -391,6 +401,33 @@ const ChatPane = forwardRef(function ChatPane(
     () => pruneEmptyAssistants(threads[threadId] || []),
     [threads, threadId]
   );
+
+  useEffect(() => {
+    const transferThread = (event) => {
+      const {
+        sourceThreadId,
+        targetThreadId,
+        removeSource,
+        targetMessages = [],
+      } = event.detail || {};
+      if (!sourceThreadId || !targetThreadId) return;
+      setThreads((current) => {
+        const sourceMessages = current[sourceThreadId] || [];
+        const next = {
+          ...current,
+          [targetThreadId]: mergeChatThreadMessages(
+            sourceMessages,
+            current[targetThreadId] || targetMessages
+          ),
+        };
+        if (removeSource) delete next[sourceThreadId];
+        return next;
+      });
+    };
+    window.addEventListener(CHAT_THREAD_TRANSFER_EVENT, transferThread);
+    return () =>
+      window.removeEventListener(CHAT_THREAD_TRANSFER_EVENT, transferThread);
+  }, []);
   const openaiApiKey = useMemo(
     () => getProviderKey("openai"),
     [keyVersion]
@@ -1062,31 +1099,18 @@ const ChatPane = forwardRef(function ChatPane(
       });
     };
 
-    const checkpointAppliedResponse = (text) => {
-      const {
-        prose,
-        summary,
-        description,
-        source: appliedSource,
-        incomplete,
-      } =
-        splitAssistantContent(text);
-      if (!appliedSource || incomplete) return;
-      onAppliedCheckpoint?.({
-        source: appliedSource,
-        summary: summary || prose,
-        description,
-      });
+    const checkpointAppliedResponse = (text, appliedSource) => {
+      const checkpoint = buildAppliedModuleCheckpoint(text, appliedSource);
+      if (checkpoint) onAppliedCheckpoint?.(checkpoint);
     };
 
-    const tryApplyModule = (text, { allowIncomplete = false } = {}) => {
-      const moduleSource = extractModuleSource(text, { allowIncomplete });
-      if (!moduleSource || moduleSource === lastApplied) return false;
-      if (moduleSource === baselineSource && !didPushUndo) return false;
+    const tryApplyModule = (moduleSource) => {
+      if (!moduleSource || moduleSource === lastApplied) return null;
+      if (moduleSource === baselineSource && !didPushUndo) return null;
       const validationStartedAt = perfNow();
       const check = validateModuleSource(moduleSource);
       measurePerf("chat.validateModule", validationStartedAt);
-      if (!check.ok) return false;
+      if (!check.ok) return null;
       const targetStatus = chatApplyTargetStatus({
         requestShaderKey: requestThreadId,
         activeShaderKey: activeThreadIdRef.current,
@@ -1096,7 +1120,7 @@ const ChatPane = forwardRef(function ChatPane(
       if (targetStatus !== "current") {
         blockedApplyReason = targetStatus;
         lastApplied = moduleSource;
-        return false;
+        return null;
       }
       if (!didPushUndo) {
         undoStackRef.current.push(baselineSource);
@@ -1109,9 +1133,13 @@ const ChatPane = forwardRef(function ChatPane(
       lastApplied = moduleSource;
       updateLastAssistant({ phase: "applying" });
       onApplySource(moduleSource);
+      bindCursorAgentToSource(model, {
+        threadId: requestThreadId,
+        source: moduleSource,
+      });
       markAssistantApplied();
       markPlanApplied(requestPlanId);
-      return true;
+      return moduleSource;
     };
 
     const autoHealSyntaxError = async (initialSource, initialReason) => {
@@ -1160,10 +1188,16 @@ const ChatPane = forwardRef(function ChatPane(
           fileName,
           features,
           skills,
-          cursorAgentId: cursorAgentIdForModel(model),
+          cursorAgentId: cursorAgentIdForModel(model, {
+            threadId: requestThreadId,
+            source: brokenSource,
+          }),
           signal: controller.signal,
         })) {
-          rememberCursorAgent(event, model);
+          rememberCursorAgent(event, model, {
+            threadId: requestThreadId,
+            source: brokenSource,
+          });
           if (event.type === "error") {
             throw new Error(event.message || "Automatic repair failed.");
           }
@@ -1202,12 +1236,11 @@ const ChatPane = forwardRef(function ChatPane(
         const check = candidate
           ? validateModuleSource(candidate)
           : { ok: false, reason: "Repair did not return a code module." };
-        const applied =
-          check.ok &&
-          tryApplyModule(repairedText, { allowIncomplete: true });
+        const appliedSource = check.ok ? tryApplyModule(candidate) : null;
+        const applied = Boolean(appliedSource);
         finishAssistant(repairedText, { applied });
-        if (applied) {
-          checkpointAppliedResponse(repairedText);
+        if (appliedSource) {
+          checkpointAppliedResponse(repairedText, appliedSource);
           return "applied";
         }
         if (blockedApplyReason) {
@@ -1238,10 +1271,16 @@ const ChatPane = forwardRef(function ChatPane(
         features,
         skills,
         mode: requestMode,
-        cursorAgentId: cursorAgentIdForModel(model),
+        cursorAgentId: cursorAgentIdForModel(model, {
+          threadId: requestThreadId,
+          source: baselineSource,
+        }),
         signal: controller.signal,
       })) {
-        rememberCursorAgent(event, model);
+        rememberCursorAgent(event, model, {
+          threadId: requestThreadId,
+          source: baselineSource,
+        });
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
@@ -1304,9 +1343,12 @@ const ChatPane = forwardRef(function ChatPane(
           );
         }
       } else {
-        const applied = responseComplete
-          ? tryApplyModule(assembled, { allowIncomplete: true }) || didPushUndo
-          : false;
+        const candidate = extractAutoApplyModuleSource(assembled, {
+          streamCompleted: responseComplete,
+          aborted: controller.signal.aborted,
+        });
+        const appliedSource = candidate ? tryApplyModule(candidate) : null;
+        const applied = Boolean(appliedSource);
 
         if (sawError || !assembled.trim()) {
           finishAssistant(assembled.trim() ? assembled : "", { applied });
@@ -1317,43 +1359,51 @@ const ChatPane = forwardRef(function ChatPane(
           }
         } else {
           finishAssistant(assembled, { applied });
-          if (applied) {
-            checkpointAppliedResponse(assembled);
-            onNotice?.("Code updated from chat.");
-          } else {
-            const candidate = extractModuleSource(assembled, {
-              allowIncomplete: true,
-            });
-            if (candidate) {
-              const check = validateModuleSource(candidate);
-              if (!check.ok && check.autoHealable) {
-                onNotice?.("Syntax error detected. Repairing code…");
-                const healed = await autoHealSyntaxError(
-                  candidate,
-                  check.reason
-                );
-                if (healed === "applied") {
-                  onNotice?.("Syntax error fixed automatically.");
-                } else if (healed !== "deferred") {
-                  onNotice?.(
-                    `Automatic repair failed: ${check.reason}`,
-                    { error: true }
-                  );
-                }
-              } else if (!check.ok) {
-                onNotice?.(check.reason, { error: true });
-              } else if (blockedApplyReason) {
-                notifyBlockedApply();
-              }
+        }
+
+        if (appliedSource) {
+          checkpointAppliedResponse(assembled, appliedSource);
+          onNotice?.("Code updated from chat.");
+        } else if (blockedApplyReason) {
+          notifyBlockedApply();
+        } else if (
+          candidate &&
+          !sawError &&
+          !controller.signal.aborted
+        ) {
+          const check = validateModuleSource(candidate);
+          if (!check.ok && check.autoHealable) {
+            onNotice?.("Syntax error detected. Repairing code…");
+            const healed = await autoHealSyntaxError(candidate, check.reason);
+            if (healed === "applied") {
+              onNotice?.("Syntax error fixed automatically.");
+            } else if (healed !== "deferred") {
+              onNotice?.(`Automatic repair failed: ${check.reason}`, {
+                error: true,
+              });
             }
+          } else if (!check.ok) {
+            onNotice?.(check.reason, { error: true });
           }
         }
       }
     } catch (err) {
-      if (err?.name !== "AbortError") {
+      const aborted = err?.name === "AbortError" || controller.signal.aborted;
+      let appliedSource = null;
+      if (!aborted) {
+        const candidate = extractAutoApplyModuleSource(assembled);
+        appliedSource = candidate ? tryApplyModule(candidate) : null;
+      }
+      if (!aborted) {
         setError(err.message || String(err));
       }
-      finishAssistant(assembled, { applied: false });
+      finishAssistant(assembled, { applied: Boolean(appliedSource) });
+      if (appliedSource) {
+        checkpointAppliedResponse(assembled, appliedSource);
+        onNotice?.("Code updated from chat.");
+      } else if (blockedApplyReason) {
+        notifyBlockedApply();
+      }
     } finally {
       abortRef.current = null;
       if (activeRequestRef.current?.threadId === requestThreadId) {

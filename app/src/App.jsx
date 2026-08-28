@@ -87,12 +87,34 @@ import {
   saveLocalPlan,
 } from "./lib/chatPlans.js";
 import {
+  copyChatThreadKey,
+  migrateChatThreadKey,
+} from "./lib/chatThreads.js";
+import {
+  copyCursorAgentThreadKey,
+  migrateCursorAgentThreadKey,
+} from "./lib/cursorAgent.js";
+import {
+  buildShaderDocumentPayload,
+  buildShaderDocumentSnapshot,
+  buildShaderStateSavePayload,
+  editorStateMatchesSnapshot,
+  shaderDocumentFingerprint,
+} from "./lib/shaderDocument.js";
+import {
   hasUncheckpointedShaderState,
   isShaderStateConflict,
+  resolveAgentCheckpointAfterCompile,
   summarizeAgentVersion,
   summarizeManualVersion,
 } from "./lib/shaderVersions.js";
+import { versionPreviewRestoreSnapshot } from "./lib/versionPreview.js";
+import { refreshRestoredRuntime } from "./lib/versionRestoreRuntime.js";
 import { validateModuleSource } from "./lib/chatApply.js";
+import {
+  AUTOSAVE_DISPOSITION,
+  getAutosaveDisposition,
+} from "./lib/autosaveDisposition.js";
 import {
   ANON_YOU_LABEL,
   buildShaderLibraryCards,
@@ -105,6 +127,7 @@ import {
   formatSupabaseError,
   isTransientCloudWriteError,
 } from "./lib/supabaseFetch.js";
+import { resetPropertiesForTarget } from "./lib/propertyReset.js";
 import {
   getFigmaAccessToken,
   subscribeFigmaAccessToken,
@@ -125,6 +148,15 @@ import {
   readDrafts as savedDrafts,
   writeDrafts,
 } from "./lib/draftStorage.js";
+import { orderDraftsForMigration } from "./lib/draftContinuity.js";
+import { removePromotedDraftState } from "./lib/draftPromotionCleanup.js";
+import {
+  annotatePersistedFillMedia,
+  createDraftMediaStore,
+  draftMediaRecordToFile,
+  hydratePersistedFillMediaStack,
+  unresolvedLocalDraftMediaKey,
+} from "./lib/draftMediaStorage.js";
 import { writeInputSource as persistInputSource } from "./lib/inputSourceStorage.js";
 import {
   persistableEffectFills,
@@ -192,6 +224,13 @@ import {
   serializeCompositionExport,
 } from "./lib/composition.js";
 import {
+  buildCompositionDependencySnapshots,
+  dependencyLayerSourceOverrides,
+  dependencySourceForKey,
+  dependencySnapshotForKey,
+  resolvedByKeyWithDependencySnapshots,
+} from "./lib/compositionDependencies.js";
+import {
   graphTypeForPaint,
   fillLoadErrorMessage,
   isPaintFillType,
@@ -206,9 +245,13 @@ import {
   cloudIdForDraft,
   figmaShaderLink,
   isDraftId,
-  shaderContentFingerprint,
 } from "./lib/shaderIdentity.js";
 import { activateBeforeHydration } from "./lib/sessionRequests.js";
+import {
+  expectedStateRevision,
+  rememberStateRevision,
+} from "./lib/stateRevisionBaseline.js";
+import { createOrResumeCloudDraft } from "./lib/cloudDraftPromotion.js";
 import {
   shaderSaveQueue,
   withExclusiveShaderSave,
@@ -231,6 +274,7 @@ import {
   createShader,
   deleteShader,
   downloadAsset,
+  downloadShaderPlan,
   getAssetUrl,
   getAssetUrls,
   getShader,
@@ -239,8 +283,10 @@ import {
   getShaderVersion,
   getAppRoute,
   getShaderRouteId,
+  listShaderAssetPaths,
   listShaderVersions,
   listShaders,
+  listRetainedShaderAssetPaths,
   makeEmbedUrl,
   makeHomeUrl,
   makeShareUrl,
@@ -274,6 +320,22 @@ const CLOUD_WRITE_BACKOFF_MS = 20_000;
 const FILL_ASSET_URL_CACHE_MS = 5 * 60_000;
 const fillAssetUrlCache = new Map();
 const fillAssetBatchPromises = new Map();
+const draftMediaStore = createDraftMediaStore();
+
+function promotePendingAgentCheckpoint(
+  pendingRef,
+  setPending,
+  { presetId, source, values }
+) {
+  const checkpoint = resolveAgentCheckpointAfterCompile(pendingRef.current, {
+    presetId,
+    source,
+    values,
+  });
+  if (!checkpoint) return;
+  pendingRef.current = null;
+  setPending(checkpoint);
+}
 
 const INITIAL_DRAFTS = savedDrafts();
 
@@ -289,6 +351,32 @@ async function migrateLocalPlanToCloud(localKey, ownerId, shaderId) {
     saveLocalPlan(cloudKey, markdown);
     if (cloudKey !== localKey) removeLocalPlan(localKey);
     console.warn("Failed to migrate plan.md to cloud storage", error);
+  }
+}
+
+async function readPlanForCopy({
+  threadKey,
+  ownerId = null,
+  shaderId = null,
+}) {
+  const local = loadLocalPlan(threadKey);
+  if (isPlanDocument(local)) return local;
+  if (!ownerId || !shaderId) return "";
+  try {
+    const cloud = await downloadShaderPlan(ownerId, shaderId);
+    return isPlanDocument(cloud) ? cloud : "";
+  } catch {
+    return "";
+  }
+}
+
+async function copyPlanToCloud(threadKey, markdown, ownerId, shaderId) {
+  if (!isPlanDocument(markdown)) return;
+  try {
+    await uploadShaderPlan({ ownerId, shaderId, markdown });
+    removeLocalPlan(threadKey);
+  } catch {
+    saveLocalPlan(threadKey, markdown);
   }
 }
 
@@ -368,24 +456,176 @@ function fillMediaEntries(fills = []) {
     );
 }
 
+function assertLocalFillMediaAvailable(fills, message) {
+  if ((fills || []).some((fill) => unresolvedLocalDraftMediaKey(fill))) {
+    throw new Error(message);
+  }
+}
+
+function fillMediaSlot(fill) {
+  if (fill?.paint?.type === "video") return "video";
+  if (fill?.paint?.type === "image") return "image";
+  return null;
+}
+
+function annotateLiveDraftFill(fill, draftId) {
+  const slot = fillMediaSlot(fill);
+  if (!slot) return fill;
+  const annotated = annotatePersistedFillMedia(fill, {
+    draftId,
+    roleId: fill.id || "fill",
+  });
+  return {
+    ...annotated,
+    paint: {
+      ...annotated.paint,
+      [slot]: {
+        ...(fill.paint?.[slot] || {}),
+        ...(annotated.paint?.[slot] || {}),
+      },
+    },
+  };
+}
+
+function annotateLocalDraftMediaKeys(draftId, fills = []) {
+  return fills.map((fill) => {
+    const url = fillMediaUrl(fill);
+    return typeof url === "string" &&
+      (url.startsWith("blob:") || url.startsWith("data:"))
+      ? annotateLiveDraftFill(fill, draftId)
+      : fill;
+  });
+}
+
+async function persistLocalDraftMedia(draftId, fills, pendingMedia = null) {
+  const annotatedById = new Map();
+  for (const fill of fills) {
+    const slot = fillMediaSlot(fill);
+    if (!slot) continue;
+    const url = fillMediaUrl(fill);
+    const media = fill.paint?.[slot] || {};
+    const annotated = annotateLiveDraftFill(fill, draftId);
+    let file = await fileFromBlobUrl(url);
+    if (!file && media.assetPath) {
+      try {
+        const blob = await downloadAsset(media.assetPath);
+        const fileName =
+          String(media.assetPath).split("/").pop() ||
+          (slot === "video" ? "input.mp4" : "input.png");
+        file = new File([blob], fileName, {
+          type: blob.type || "application/octet-stream",
+        });
+      } catch {
+        file = null;
+      }
+    }
+    const existingRecord = media.localAssetKey
+      ? await draftMediaStore.get(draftId, fill.id || "fill")
+      : null;
+    if (file) {
+      await draftMediaStore.put({
+        draftId,
+        roleId: fill.id || "fill",
+        blob: file,
+        fileName: file.name,
+        lastModified: file.lastModified,
+      });
+    }
+    if ((file || existingRecord) && !draftMediaStore.isDurable()) {
+      throw new Error(
+        "Local media storage is unavailable. Keep this tab open and try choosing the media again.",
+      );
+    }
+    if (file || existingRecord) {
+      annotatedById.set(fill.id, annotated);
+    }
+  }
+  if (pendingMedia) {
+    await draftMediaStore.put({
+      draftId,
+      roleId: "input",
+      blob: pendingMedia,
+      fileName: pendingMedia.name,
+      lastModified: pendingMedia.lastModified,
+    });
+    if (!draftMediaStore.isDurable()) {
+      throw new Error(
+        "Local media storage is unavailable. Keep this tab open and try choosing the media again.",
+      );
+    }
+  }
+  return fills.map((fill) => annotatedById.get(fill.id) || fill);
+}
+
+async function hydrateLocalDraftMedia(draft) {
+  const storedComposition =
+    draft?.composition && typeof draft.composition === "object"
+      ? draft.composition
+      : {};
+  if (draft?.kind === COMPOSITION_KIND) {
+    const graph = normalizeComposition(storedComposition);
+    return {
+      ...draft,
+      composition: normalizeComposition({
+        ...graph,
+        fills: await hydratePersistedFillMediaStack(
+          graph.fills,
+          draftMediaStore,
+          { draftId: draft.id },
+        ),
+      }),
+      pendingMedia: null,
+    };
+  }
+  if (draft?.kind === "effect") {
+    const fills = readEffectFillsFromComposition(storedComposition);
+    const hydratedFills = await hydratePersistedFillMediaStack(
+      fills,
+      draftMediaStore,
+      { draftId: draft.id },
+    );
+    const inputRecord = await draftMediaStore.get(draft.id, "input");
+    return {
+      ...draft,
+      composition: {
+        effectFills: hydratedFills,
+        effectFill: hydratedFills[0] || null,
+      },
+      effectFills: hydratedFills,
+      effectFill: hydratedFills[0] || null,
+      pendingMedia: draftMediaRecordToFile(inputRecord),
+    };
+  }
+  return draft;
+}
+
+async function removeLocalDraftMedia(draftId) {
+  const records = await draftMediaStore.list(draftId);
+  await Promise.all(
+    records.map((record) => draftMediaStore.delete(draftId, record.roleId))
+  );
+}
+
 function withFillAssetPath(fill, assetPath) {
   const paint = fill?.paint;
   if (!paint || !assetPath) return fill;
   if (paint.type === "video") {
+    const { localAssetKey: _localAssetKey, ...video } = paint.video || {};
     return {
       ...fill,
       paint: {
         ...paint,
-        video: { ...(paint.video || {}), assetPath },
+        video: { ...video, assetPath },
       },
     };
   }
   if (paint.type === "image") {
+    const { localAssetKey: _localAssetKey, ...image } = paint.image || {};
     return {
       ...fill,
       paint: {
         ...paint,
-        image: { ...(paint.image || {}), assetPath },
+        image: { ...image, assetPath },
       },
     };
   }
@@ -396,6 +636,59 @@ function fillMediaAssetPath(fill) {
   return (
     fill?.paint?.image?.assetPath || fill?.paint?.video?.assetPath || ""
   );
+}
+
+async function uploadFillAssetsForTarget({
+  fills,
+  ownerId,
+  shaderId,
+  copyDurableAssets = false,
+}) {
+  let durableFills = persistableEffectFills(fills);
+  let firstInput = { path: null, name: null, mimeType: null };
+  for (const fill of fills) {
+    const slot = fillMediaSlot(fill);
+    if (!slot) continue;
+    const media = fill.paint?.[slot] || {};
+    let file = await fileFromBlobUrl(media.url);
+    if (!file && copyDurableAssets && media.assetPath) {
+      const blob = await downloadAsset(media.assetPath);
+      file = new File(
+        [blob],
+        String(media.assetPath).split("/").pop() ||
+          (slot === "video" ? "input.mp4" : "input.png"),
+        { type: blob.type || "application/octet-stream" }
+      );
+    }
+    if (!file) continue;
+    if (file.size > MAX_MEDIA_BYTES) {
+      throw new Error("Input media must be 25 MB or smaller.");
+    }
+    const contentType = mediaType(file);
+    const roleId = String(fill.id || "fill").replace(
+      /[^a-zA-Z0-9_-]/g,
+      "-"
+    );
+    const assetPath = await uploadAsset({
+      ownerId,
+      shaderId,
+      role: `fill-${roleId}`,
+      blob: file,
+      fileName: file.name,
+      contentType,
+    });
+    durableFills = durableFills.map((item) =>
+      item.id === fill.id ? withFillAssetPath(item, assetPath) : item
+    );
+    if (!firstInput.path) {
+      firstInput = {
+        path: assetPath,
+        name: file.name,
+        mimeType: contentType,
+      };
+    }
+  }
+  return { durableFills, firstInput };
 }
 
 function withFillAssetUrl(fill, urlsByPath) {
@@ -647,6 +940,14 @@ function mergeValues(definitions, candidate = {}) {
   return defaults;
 }
 
+function editorPersistenceFingerprint(document, { name, description } = {}) {
+  return JSON.stringify({
+    document: shaderDocumentFingerprint(document),
+    name: String(name || ""),
+    description: String(description || ""),
+  });
+}
+
 function compositionCloudIds(graph) {
   const ids = referencedShaderKeys(graph).map((key) => {
     const parsed = parseCompositionShaderId(key);
@@ -795,6 +1096,8 @@ export default function App() {
   const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
+  const [autosaveRetryRevision, setAutosaveRetryRevision] = useState(0);
+  const [migrationRetryRevision, setMigrationRetryRevision] = useState(0);
   const [authOpen, setAuthOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
@@ -973,6 +1276,7 @@ export default function App() {
   const deleteDialogRef = useRef(null);
   const editorCardsRef = useRef([]);
   const chooseItemRef = useRef(() => {});
+  const saveBeforeSessionChangeRef = useRef(null);
   const figmaImportDialogRef = useRef(null);
   const figmaPlanDialogRef = useRef(null);
   const figmaImportChooserRef = useRef(null);
@@ -985,6 +1289,7 @@ export default function App() {
     source: INITIAL.source,
     values: INITIAL_VALUES,
   });
+  const agentCheckpointRetryTimerRef = useRef(0);
   const initedRef = useRef(false);
   const sourceRef = useRef(source);
   const compositionRef = useRef(composition);
@@ -1009,10 +1314,23 @@ export default function App() {
   const versionPreviewAppliedRef = useRef(false);
   const versionPreviewSnapshotRef = useRef(null);
   const versionPreviewRequestRef = useRef(0);
+  const versionPreviewMediaCleanupRef = useRef(null);
+  const clearShaderVersionPreviewRef = useRef(() => {});
+  const activeDependencySnapshotsRef = useRef({});
+  const dependencySnapshotShaderIdRef = useRef(null);
+  const draftMediaPersistenceRef = useRef(null);
+  const draftMediaPersistenceErrorRef = useRef(null);
+  const committedStateRevisionsRef = useRef(new Map());
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
   const liveShaderSourceRef = useRef(new Map());
+  const draftsRef = useRef(drafts);
+  const cloudShadersRef = useRef(cloudShaders);
+  const resolvedShadersRef = useRef(resolvedShaders);
+  draftsRef.current = drafts;
+  cloudShadersRef.current = cloudShaders;
+  resolvedShadersRef.current = resolvedShaders;
   const [liveShaderRevision, setLiveShaderRevision] = useState(0);
   const previewParamsRafRef = useRef(0);
   const paintFillRafRef = useRef(0);
@@ -1021,7 +1339,11 @@ export default function App() {
   const compositionWebcamStreamsRef = useRef(new Map());
   const sharedLoadedRef = useRef(false);
   const migratedUserRef = useRef(null);
+  const migrationInFlightUserRef = useRef(null);
+  const migrationRetryTimerRef = useRef(0);
+  const migrationRetryAttemptRef = useRef(0);
   const cloudWriteBackoffUntilRef = useRef(0);
+  const conflictBlockedShaderRef = useRef(null);
   const activeFigmaLink = figmaShaderLink(
     isDraftId(presetId)
       ? drafts.find((draft) => draft.id === presetId)
@@ -1045,6 +1367,7 @@ export default function App() {
     kind: sessionKind,
     composition,
     effectFills,
+    dependencySnapshots: activeDependencySnapshotsRef.current,
     ...activeFigmaLink,
   });
 
@@ -1066,6 +1389,7 @@ export default function App() {
     kind: sessionKind,
     composition,
     effectFills,
+    dependencySnapshots: activeDependencySnapshotsRef.current,
     ...activeFigmaLink,
   };
   const kind = useMemo(
@@ -1173,25 +1497,147 @@ export default function App() {
     if (sessionKind !== "effect" || !presetId) return;
     rememberEffectFills(effectFillByPresetRef.current, presetId, effectFills);
   }, [effectFills, presetId, sessionKind]);
+  useEffect(() => {
+    if (sessionKind !== "effect") return;
+    const graph = normalizeComposition({ fills: effectFills, effects: [] });
+    const retainedPins = {};
+    for (const key of referencedShaderKeys(graph)) {
+      const pin = dependencySnapshotForKey(
+        activeDependencySnapshotsRef.current,
+        key
+      );
+      if (pin) retainedPins[key] = pin;
+    }
+    activeDependencySnapshotsRef.current = retainedPins;
+  }, [effectFills, sessionKind]);
   const resolvedByKey = useMemo(
     () => new Map(Object.entries(resolvedShaders)),
     [resolvedShaders]
   );
+  const pinAwareResolvedByKey = useMemo(
+    () =>
+      resolvedByKeyWithDependencySnapshots(
+        new Map([
+          ...resolvedByKey,
+          ...liveShaderSourceRef.current,
+        ]),
+        activeDependencySnapshotsRef.current,
+      ),
+    [
+      composition,
+      currentShader?.dependency_snapshots,
+      effectFills,
+      liveShaderRevision,
+      presetId,
+      resolvedByKey,
+    ],
+  );
   const compositionPlayable = useMemo(
     () =>
       kind === COMPOSITION_KIND &&
-      isCompositionPlayable(composition, resolvedByKey),
-    [composition, kind, resolvedByKey]
+      isCompositionPlayable(composition, pinAwareResolvedByKey),
+    [composition, kind, pinAwareResolvedByKey]
   );
   const shaderFeatures = useMemo(
     () =>
       kind === COMPOSITION_KIND
-        ? collectCompositionFeatures(composition, resolvedByKey)
+        ? collectCompositionFeatures(composition, pinAwareResolvedByKey)
         : inferFeatures(source),
-    [composition, kind, resolvedByKey, source]
+    [composition, kind, pinAwareResolvedByKey, source]
   );
   const shaderFeaturesRef = useRef(shaderFeatures);
   shaderFeaturesRef.current = shaderFeatures;
+  useEffect(() => {
+    if (currentShader) {
+      rememberStateRevision(
+        committedStateRevisionsRef.current,
+        currentShader,
+      );
+      const sameDirtyShader =
+        dirty &&
+        dependencySnapshotShaderIdRef.current === currentShader.id;
+      if (!sameDirtyShader) {
+        activeDependencySnapshotsRef.current =
+          currentShader.dependency_snapshots &&
+          typeof currentShader.dependency_snapshots === "object"
+            ? structuredClone(currentShader.dependency_snapshots)
+            : {};
+      }
+      dependencySnapshotShaderIdRef.current = currentShader.id;
+    } else if (!isDraftId(presetId)) {
+      activeDependencySnapshotsRef.current = {};
+      dependencySnapshotShaderIdRef.current = null;
+    }
+  }, [currentShader, dirty, presetId]);
+  const captureDocumentSnapshot = useCallback(
+    (overrides = {}) => {
+      const nextSource =
+        typeof overrides.source === "string"
+          ? overrides.source
+          : sourceRef.current;
+      const nextKind =
+        overrides.kind ||
+        (sessionKindRef.current === COMPOSITION_KIND
+          ? COMPOSITION_KIND
+          : detectKind(nextSource));
+      const nextValues =
+        overrides.parameterValues || overrides.values || valuesRef.current;
+      const nextEffectFills =
+        overrides.effectFills || effectFillsRef.current || [];
+      const baseComposition =
+        overrides.composition !== undefined
+          ? overrides.composition
+          : compositionRef.current;
+      const nextComposition =
+        nextKind === COMPOSITION_KIND
+          ? compositionWithLayerValues(
+              baseComposition,
+              overrides.selectedLayerId || selectedLayerIdRef.current,
+              nextValues
+            )
+          : baseComposition;
+      const dependencySnapshots =
+        overrides.dependencySnapshots ??
+        activeDependencySnapshotsRef.current;
+      const features =
+        overrides.features ||
+        (nextKind === COMPOSITION_KIND
+          ? collectCompositionFeatures(
+              nextComposition,
+              resolvedByKeyWithDependencySnapshots(
+                new Map([
+                  ...Object.entries(resolvedShaders),
+                  ...liveShaderSourceRef.current,
+                ]),
+                dependencySnapshots,
+              ),
+            )
+          : inferFeatures(nextSource));
+      const input =
+        overrides.input ||
+        {
+          path: currentShader?.input_path || null,
+          name: currentShader?.input_name || null,
+          mimeType: currentShader?.input_mime_type || null,
+        };
+      return buildShaderDocumentSnapshot({
+        source: nextSource,
+        kind: nextKind,
+        parameterValues: nextValues,
+        features,
+        composition: nextComposition,
+        effectFills: nextEffectFills,
+        input,
+        dependencySnapshots,
+      });
+    },
+    [
+      currentShader?.input_mime_type,
+      currentShader?.input_name,
+      currentShader?.input_path,
+      resolvedShaders,
+    ]
+  );
   const chatShaderKey = currentShader?.id
     ? `cloud:${currentShader.id}`
     : `preset:${presetId}`;
@@ -1357,6 +1803,123 @@ export default function App() {
   }, [drafts, routeEmbed, thumbnails, user]);
 
   useEffect(() => {
+    if (routeEmbed || user || !isDraftId(presetId)) return;
+    const draftId = presetId;
+    const currentFills =
+      sessionKind === COMPOSITION_KIND
+        ? normalizeComposition(composition).fills
+        : sessionKind === "effect"
+          ? effectFills
+          : [];
+    if (!fillMediaEntries(currentFills).length && !pendingMedia) {
+      draftMediaPersistenceErrorRef.current = null;
+      return;
+    }
+    const keyedFills = annotateLocalDraftMediaKeys(draftId, currentFills);
+    const fillsChanged =
+      JSON.stringify(keyedFills) !== JSON.stringify(currentFills);
+    if (fillsChanged) {
+      if (sessionKindRef.current === COMPOSITION_KIND) {
+        const graph = normalizeComposition(compositionRef.current);
+        const next = normalizeComposition({ ...graph, fills: keyedFills });
+        compositionRef.current = next;
+        setComposition(next);
+      } else if (sessionKindRef.current === "effect") {
+        effectFillsRef.current = keyedFills;
+        effectFillRef.current = keyedFills[0] || null;
+        setEffectFills(keyedFills);
+        setEffectFill(keyedFills[0] || null);
+      }
+    }
+
+    const storedDrafts = savedDrafts();
+    const immediatelyDurableDrafts = storedDrafts.map((draft) => {
+      if (draft.id !== draftId) return draft;
+      if (sessionKindRef.current === COMPOSITION_KIND) {
+        return {
+          ...draft,
+          composition: normalizeComposition({
+            ...compositionRef.current,
+            fills: keyedFills,
+          }),
+        };
+      }
+      if (sessionKindRef.current === "effect") {
+        return {
+          ...draft,
+          composition: {
+            effectFills: keyedFills,
+            effectFill: keyedFills[0] || null,
+          },
+          effectFills: keyedFills,
+          effectFill: keyedFills[0] || null,
+        };
+      }
+      return draft;
+    });
+    writeDrafts(immediatelyDurableDrafts, thumbnailDataUrlsRef.current);
+
+    let cancelled = false;
+    draftMediaPersistenceErrorRef.current = null;
+    const persistence = persistLocalDraftMedia(
+      draftId,
+      keyedFills,
+      pendingMedia,
+    );
+    draftMediaPersistenceRef.current = persistence;
+    persistence
+      .then((annotatedFills) => {
+        if (
+          cancelled ||
+          draftSessionRef.current.presetId !== draftId ||
+          JSON.stringify(annotatedFills) === JSON.stringify(keyedFills)
+        ) {
+          return;
+        }
+        if (sessionKindRef.current === COMPOSITION_KIND) {
+          const graph = normalizeComposition(compositionRef.current);
+          const next = normalizeComposition({
+            ...graph,
+            fills: graph.fills.map(
+              (fill) =>
+                annotatedFills.find((item) => item.id === fill.id) || fill
+            ),
+          });
+          compositionRef.current = next;
+          setComposition(next);
+        } else if (sessionKindRef.current === "effect") {
+          effectFillsRef.current = annotatedFills;
+          effectFillRef.current = annotatedFills[0] || null;
+          setEffectFills(annotatedFills);
+          setEffectFill(annotatedFills[0] || null);
+        }
+      })
+      .catch((mediaError) => {
+        draftMediaPersistenceErrorRef.current = mediaError;
+        const message =
+          mediaError.message ||
+          "Local media could not be saved for browser reload.";
+        setError(message);
+      })
+      .finally(() => {
+        if (draftMediaPersistenceRef.current === persistence) {
+          draftMediaPersistenceRef.current = null;
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    composition,
+    effectFills,
+    pendingMedia,
+    presetId,
+    routeEmbed,
+    sessionKind,
+    user,
+  ]);
+
+  useEffect(() => {
     if (routeEmbed || user) return;
     if (!isDraftId(presetId)) {
       localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
@@ -1364,19 +1927,28 @@ export default function App() {
     }
     localStorage.setItem(ACTIVE_DRAFT_STORAGE_KEY, presetId);
     const timer = window.setTimeout(() => {
+      const documentSnapshot = captureDocumentSnapshot();
       setDrafts((current) => {
         const existing = current.find((draft) => draft.id === presetId);
         if (!existing) return current;
         if (
           existing.name === shaderName &&
-          existing.source === source &&
-          existing.kind === sessionKind &&
+          existing.description === shaderDescription &&
+          existing.source === documentSnapshot.source &&
+          existing.kind === documentSnapshot.kind &&
           existing.isPublic === isPublic &&
-          JSON.stringify(existing.values || {}) === JSON.stringify(values) &&
+          JSON.stringify(existing.values || {}) ===
+            JSON.stringify(documentSnapshot.parameterValues) &&
           JSON.stringify(existing.composition || null) ===
-            JSON.stringify(composition) &&
+            JSON.stringify(documentSnapshot.composition) &&
           JSON.stringify(existing.effectFills || null) ===
-            JSON.stringify(effectFills)
+            JSON.stringify(
+              documentSnapshot.kind === "effect"
+                ? documentSnapshot.composition.effectFills
+                : []
+            ) &&
+          JSON.stringify(existing.dependencySnapshots || {}) ===
+            JSON.stringify(documentSnapshot.dependencySnapshots)
         ) {
           return current;
         }
@@ -1385,15 +1957,20 @@ export default function App() {
             ? {
                 ...draft,
                 name: shaderName,
-                source,
-                kind: sessionKind,
-                values,
-                composition:
-                  sessionKind === "effect"
-                    ? { effectFills, effectFill: effectFills[0] || null }
-                    : composition,
-                effectFills,
-                effectFill: effectFills[0] || null,
+                description: shaderDescription,
+                source: documentSnapshot.source,
+                kind: documentSnapshot.kind,
+                values: documentSnapshot.parameterValues,
+                composition: documentSnapshot.composition,
+                effectFills:
+                  documentSnapshot.kind === "effect"
+                    ? documentSnapshot.composition.effectFills
+                    : [],
+                effectFill:
+                  documentSnapshot.kind === "effect"
+                    ? documentSnapshot.composition.effectFill
+                    : null,
+                dependencySnapshots: documentSnapshot.dependencySnapshots,
                 isPublic,
                 pendingMedia,
               }
@@ -1403,6 +1980,7 @@ export default function App() {
     }, 300);
     return () => window.clearTimeout(timer);
   }, [
+    captureDocumentSnapshot,
     composition,
     effectFill,
     effectFills,
@@ -1412,16 +1990,25 @@ export default function App() {
     routeEmbed,
     sessionKind,
     shaderName,
+    shaderDescription,
     source,
     user,
     values,
   ]);
 
   useEffect(() => {
-    const flush = () => {
+    const flush = (event) => {
       if (routeEmbedRef.current) return;
       const session = draftSessionRef.current;
       if (!isDraftId(session.presetId)) return;
+      const documentSnapshot = buildShaderDocumentSnapshot({
+        source: session.source,
+        kind: session.kind,
+        parameterValues: session.values,
+        composition: session.composition,
+        effectFills: session.effectFills,
+        dependencySnapshots: activeDependencySnapshotsRef.current,
+      });
       const current = savedDrafts();
       const next = current.some((draft) => draft.id === session.presetId)
         ? current.map((draft) =>
@@ -1430,17 +2017,15 @@ export default function App() {
                   ...draft,
                   name: session.shaderName,
                   description: session.shaderDescription,
-                  source: session.source,
-                  kind: session.kind,
-                  values: session.values,
-                  composition:
-                    session.kind === "effect"
-                      ? {
-                          effectFills: session.effectFills || [],
-                          effectFill: session.effectFills?.[0] || null,
-                        }
-                      : session.composition,
-                  effectFills: session.effectFills,
+                  source: documentSnapshot.source,
+                  kind: documentSnapshot.kind,
+                  values: documentSnapshot.parameterValues,
+                  composition: documentSnapshot.composition,
+                  effectFills:
+                    documentSnapshot.kind === "effect"
+                      ? documentSnapshot.composition.effectFills
+                      : [],
+                  dependencySnapshots: documentSnapshot.dependencySnapshots,
                   isPublic: session.isPublic,
                   pendingMedia: null,
                 }
@@ -1451,17 +2036,15 @@ export default function App() {
               id: session.presetId,
               name: session.shaderName,
               description: session.shaderDescription,
-              kind: session.kind || detectKind(session.source),
-              source: session.source,
-              values: session.values,
-              composition:
-                session.kind === "effect"
-                  ? {
-                      effectFills: session.effectFills || [],
-                      effectFill: session.effectFills?.[0] || null,
-                    }
-                  : session.composition,
-              effectFills: session.effectFills,
+              kind: documentSnapshot.kind,
+              source: documentSnapshot.source,
+              values: documentSnapshot.parameterValues,
+              composition: documentSnapshot.composition,
+              effectFills:
+                documentSnapshot.kind === "effect"
+                  ? documentSnapshot.composition.effectFills
+                  : [],
+              dependencySnapshots: documentSnapshot.dependencySnapshots,
               isPublic: session.isPublic,
               pendingMedia: null,
               thumbnail: null,
@@ -1471,6 +2054,13 @@ export default function App() {
           ];
       writeDrafts(next, thumbnailDataUrlsRef.current);
       localStorage.setItem(ACTIVE_DRAFT_STORAGE_KEY, session.presetId);
+      if (
+        draftMediaPersistenceRef.current ||
+        draftMediaPersistenceErrorRef.current
+      ) {
+        event?.preventDefault?.();
+        if (event) event.returnValue = "";
+      }
     };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
@@ -1924,6 +2514,10 @@ export default function App() {
       measurePerf("navigation.fillHydration", hydrationStartedAt);
       if (compileGeneration !== compileGenerationRef.current) return false;
       graph = normalizeComposition(hydratedGraph);
+      const pinnedLayerSources = dependencyLayerSourceOverrides(
+        graph,
+        activeDependencySnapshotsRef.current
+      );
       const map = new Map(Object.entries(resolved));
       const layers = [];
       const fillWarnings = [];
@@ -1936,7 +2530,8 @@ export default function App() {
       }
       compositionMediaSourcesRef.current = [];
       const loadLayer = (id, role, shaderId, values, enabled = true) => {
-        const sourceOverride = layerSourceOverrides?.get?.(id);
+        const sourceOverride =
+          layerSourceOverrides?.get?.(id) || pinnedLayerSources.get(id);
         const source =
           (typeof sourceOverride === "string" && sourceOverride) ||
           resolveReferencedShaderSource(shaderId, {
@@ -2326,9 +2921,18 @@ export default function App() {
             lastSuccessfulCompileRef.current = {
               presetId: compilePresetId,
               source: nextSource,
-              values: valuesRef.current,
+              values: nextValues,
               effectFillKey: fillKey,
             };
+            promotePendingAgentCheckpoint(
+              pendingAgentCheckpointRef,
+              setPendingAgentCheckpoint,
+              {
+                presetId: compilePresetId,
+                source: nextSource,
+                values: nextValues,
+              }
+            );
           })
           .catch(() => {
             /* Destroyed hosts / GPU teardown can reject; allow a later retry. */
@@ -2398,17 +3002,15 @@ export default function App() {
             effectFillKey: "",
           };
           measurePerf("navigation.moduleCompile", moduleCompileStartedAt);
-          if (
-            pendingAgentCheckpointRef.current?.presetId ===
-              draftSessionRef.current.presetId &&
-            pendingAgentCheckpointRef.current?.source === nextSource
-          ) {
-            setPendingAgentCheckpoint({
-              ...pendingAgentCheckpointRef.current,
+          promotePendingAgentCheckpoint(
+            pendingAgentCheckpointRef,
+            setPendingAgentCheckpoint,
+            {
+              presetId: draftSessionRef.current.presetId,
+              source: nextSource,
               values: nextValues,
-            });
-            pendingAgentCheckpointRef.current = null;
-          }
+            }
+          );
           // Capture code edits only after the new module has compiled,
           // validated, and presented successfully.
           setThumbnailRefreshRevision((revision) => revision + 1);
@@ -2431,28 +3033,48 @@ export default function App() {
   );
   compileRef.current = compile;
 
-  const syncEffectFillFromCanvasInput = useCallback((paint) => {
-    if (sessionKindRef.current !== "effect") return;
-    if (!isPaintFillType(paint?.type)) return;
-    setEffectFill((current) => {
-      if (current?.type === "shader") return current;
+  const syncEffectFillFromCanvasInput = useCallback(
+    (paint) => {
+      if (sessionKindRef.current !== "effect") return;
+      if (!isPaintFillType(paint?.type)) return;
+      const current = effectFillRef.current;
+      if (current?.type === "shader") return;
       const type = graphTypeForPaint(paint.type);
       if (
         current?.type === type &&
         current?.paint?.type === paint.type &&
         JSON.stringify(current.paint) === JSON.stringify(paint)
       ) {
-        return current;
+        return;
       }
-      return {
+      let next = {
+        id: current?.id || COMPOSITION_FILL_ID,
         type,
         shaderId: current?.shaderId ?? null,
         values: current?.values || {},
         enabled: current?.enabled !== false,
         paint,
       };
-    });
-  }, []);
+      const draftId = draftSessionRef.current.presetId;
+      if (!user && isDraftId(draftId)) {
+        [next] = annotateLocalDraftMediaKeys(draftId, [next]);
+      }
+      const graph = normalizeComposition({
+        fills: effectFillsRef.current,
+      });
+      const fills = normalizeComposition({
+        fills: [
+          next,
+          ...graph.fills.filter((fill) => fill.id !== next.id),
+        ],
+      }).fills;
+      effectFillRef.current = fills[0] || null;
+      effectFillsRef.current = fills;
+      setEffectFill(fills[0] || null);
+      setEffectFills(fills);
+    },
+    [user],
+  );
 
   const setImagePreviewUrl = useCallback((url) => {
     const next = url || defaultInputUrl;
@@ -2464,12 +3086,31 @@ export default function App() {
     setInputImageUrl(next);
   }, []);
 
+  const clearVersionPreviewMedia = useCallback(() => {
+    const cleanup = versionPreviewMediaCleanupRef.current;
+    versionPreviewMediaCleanupRef.current = null;
+    try {
+      cleanup?.();
+    } catch {
+      // Preview resource cleanup must never block restoring the live editor.
+    }
+  }, []);
+
   const applyMediaBlob = useCallback(
-    async (blob, mimeType = blob.type, generation = null) => {
+    async (
+      blob,
+      mimeType = blob.type,
+      generation = null,
+      { previewOnly = false } = {}
+    ) => {
       const host = hostRef.current;
       if (!host?.ready) return false;
       if (!isInputApplyCurrent(generation)) return false;
-      clearObjectUrl();
+      if (previewOnly) clearVersionPreviewMedia();
+      else {
+        clearVersionPreviewMedia();
+        clearObjectUrl();
+      }
       let appliedPaint = null;
 
       if (mimeType.startsWith("video/")) {
@@ -2496,7 +3137,19 @@ export default function App() {
         document.body.appendChild(video);
 
         const url = URL.createObjectURL(blob);
-        mediaUrlRef.current = url;
+        const disposeVideo = () => {
+          video.pause();
+          video.removeAttribute("src");
+          video.load();
+          video.remove();
+          URL.revokeObjectURL(url);
+        };
+        if (previewOnly) {
+          versionPreviewMediaCleanupRef.current = disposeVideo;
+        } else {
+          mediaUrlRef.current = url;
+          videoRef.current = video;
+        }
         video.src = url;
 
         await new Promise((resolve, reject) => {
@@ -2508,13 +3161,12 @@ export default function App() {
           );
         });
         if (!isInputApplyCurrent(generation)) {
-          video.pause();
-          video.removeAttribute("src");
-          video.load();
-          video.remove();
-          if (mediaUrlRef.current === url) {
-            URL.revokeObjectURL(url);
+          disposeVideo();
+          if (!previewOnly && mediaUrlRef.current === url) {
             mediaUrlRef.current = null;
+            videoRef.current = null;
+          } else if (previewOnly) {
+            versionPreviewMediaCleanupRef.current = null;
           }
           return false;
         }
@@ -2539,13 +3191,12 @@ export default function App() {
         }
 
         if (!isInputApplyCurrent(generation)) {
-          video.pause();
-          video.removeAttribute("src");
-          video.load();
-          video.remove();
-          if (mediaUrlRef.current === url) {
-            URL.revokeObjectURL(url);
+          disposeVideo();
+          if (!previewOnly && mediaUrlRef.current === url) {
             mediaUrlRef.current = null;
+            videoRef.current = null;
+          } else if (previewOnly) {
+            versionPreviewMediaCleanupRef.current = null;
           }
           return false;
         }
@@ -2554,15 +3205,14 @@ export default function App() {
           throw new Error("Video input has no decoded frames yet.");
         }
 
-        videoRef.current = video;
         host.setVideoInput(video);
-        setInputSource("video");
+        if (!previewOnly) setInputSource("video");
         const videoPaint = {
           type: "video",
           video: { url, scaleMode: "fit" },
         };
         appliedPaint = videoPaint;
-        syncEffectFillFromCanvasInput(videoPaint);
+        if (!previewOnly) syncEffectFillFromCanvasInput(videoPaint);
       } else {
         const bitmap =
           mimeType === "image/svg+xml"
@@ -2573,20 +3223,27 @@ export default function App() {
           return false;
         }
         host.setImageInput(bitmap);
-        setInputSource("image");
-        const previewUrl = URL.createObjectURL(blob);
-        setImagePreviewUrl(previewUrl);
+        bitmap.close?.();
+        if (!previewOnly) setInputSource("image");
+        const previewUrl = previewOnly ? "" : URL.createObjectURL(blob);
+        if (!previewOnly) setImagePreviewUrl(previewUrl);
         const imagePaint = {
           type: "image",
           image: { url: previewUrl, scaleMode: "fit" },
         };
         appliedPaint = imagePaint;
-        syncEffectFillFromCanvasInput(imagePaint);
+        if (!previewOnly) syncEffectFillFromCanvasInput(imagePaint);
       }
       setPreviewRevision((revision) => revision + 1);
       return appliedPaint;
     },
-    [clearObjectUrl, isInputApplyCurrent, setImagePreviewUrl, syncEffectFillFromCanvasInput]
+    [
+      clearObjectUrl,
+      clearVersionPreviewMedia,
+      isInputApplyCurrent,
+      setImagePreviewUrl,
+      syncEffectFillFromCanvasInput,
+    ]
   );
 
   const applyWebcamFill = useCallback(
@@ -3195,19 +3852,26 @@ export default function App() {
         }
       }
       compositionWebcamStreamsRef.current.clear();
+      clearVersionPreviewMedia();
       clearObjectUrl();
     },
-    [clearObjectUrl]
+    [clearObjectUrl, clearVersionPreviewMedia]
   );
 
   const loadMediaForShader = useCallback(
-    async (shader) => {
+    async (shader, { previewOnly = false } = {}) => {
       if (shader.kind !== "effect" && shader.kind !== COMPOSITION_KIND) {
-        clearObjectUrl();
+        if (previewOnly) clearVersionPreviewMedia();
+        else clearObjectUrl();
         hostRef.current?.clearInput();
         return;
       }
       if (!shader.input_path) {
+        if (previewOnly) {
+          clearVersionPreviewMedia();
+          hostRef.current?.clearInput();
+          return;
+        }
         const paint =
           shader.kind === COMPOSITION_KIND
             ? compositionPaintFill(shader.composition)
@@ -3219,34 +3883,38 @@ export default function App() {
         await reapplyPreferredInput();
         return;
       }
-      const generation = ++inputApplyGenRef.current;
-      setUploading(true);
+      const generation = previewOnly ? null : ++inputApplyGenRef.current;
+      if (!previewOnly) setUploading(true);
       const isVideo = String(shader.input_mime_type || "").startsWith("video/");
-      getAssetUrl(shader.input_path)
-        .then((url) => {
-          if (!url || !isInputApplyCurrent(generation)) return;
-          const paint = isVideo
-            ? { type: "video", video: { url, scaleMode: "fit" } }
-            : { type: "image", image: { url, scaleMode: "fill" } };
-          syncEffectFillFromCanvasInput(paint);
-          if (!isVideo) setImagePreviewUrl(url);
-        })
-        .catch(() => {});
+      if (!previewOnly) {
+        getAssetUrl(shader.input_path)
+          .then((url) => {
+            if (!url || !isInputApplyCurrent(generation)) return;
+            const paint = isVideo
+              ? { type: "video", video: { url, scaleMode: "fit" } }
+              : { type: "image", image: { url, scaleMode: "fill" } };
+            syncEffectFillFromCanvasInput(paint);
+            if (!isVideo) setImagePreviewUrl(url);
+          })
+          .catch(() => {});
+      }
       try {
         const blob = await downloadAsset(shader.input_path);
         await applyMediaBlob(
           blob,
           shader.input_mime_type || blob.type,
-          generation
+          generation,
+          { previewOnly }
         );
       } finally {
-        if (isInputApplyCurrent(generation)) setUploading(false);
+        if (!previewOnly && isInputApplyCurrent(generation)) setUploading(false);
       }
     },
     [
       applyMediaBlob,
       applyPaintFill,
       clearObjectUrl,
+      clearVersionPreviewMedia,
       isInputApplyCurrent,
       reapplyPreferredInput,
       setImagePreviewUrl,
@@ -3289,41 +3957,128 @@ export default function App() {
 
   const persistActiveDraft = useCallback(() => {
     const session = draftSessionRef.current;
+    const documentSnapshot = captureDocumentSnapshot();
     rememberLiveShaderSource({
       key: session.presetId,
       id: session.presetId,
       name: session.shaderName,
-      kind: session.kind,
-      source: session.source,
+      kind: documentSnapshot.kind,
+      source: documentSnapshot.source,
       is_public: session.isPublic,
     });
     if (!isDraftId(session.presetId)) return;
-    setDrafts((current) =>
-      current.map((draft) =>
+    const nextDrafts = draftsRef.current.map((draft) =>
         draft.id === session.presetId
           ? {
               ...draft,
               name: session.shaderName,
               description: session.shaderDescription,
-              source: session.source,
-              kind: session.kind,
-              values: session.values,
-              composition:
-                session.kind === "effect"
-                  ? {
-                      effectFills: effectFillsRef.current,
-                      effectFill: effectFillsRef.current[0] || null,
-                    }
-                  : session.composition,
-              effectFills: effectFillsRef.current,
-              effectFill: effectFillsRef.current[0] || null,
+              source: documentSnapshot.source,
+              kind: documentSnapshot.kind,
+              values: documentSnapshot.parameterValues,
+              composition: documentSnapshot.composition,
+              effectFills:
+                documentSnapshot.kind === "effect"
+                  ? documentSnapshot.composition.effectFills
+                  : [],
+              effectFill:
+                documentSnapshot.kind === "effect"
+                  ? documentSnapshot.composition.effectFill
+                  : null,
+              dependencySnapshots: documentSnapshot.dependencySnapshots,
               isPublic: session.isPublic,
               pendingMedia: session.pendingMedia,
             }
           : draft
-      )
     );
-  }, [rememberLiveShaderSource]);
+    draftsRef.current = nextDrafts;
+    setDrafts(nextDrafts);
+    writeDrafts(nextDrafts, thumbnailDataUrlsRef.current);
+  }, [captureDocumentSnapshot, rememberLiveShaderSource]);
+
+  const persistBeforeSessionChange = useCallback(async () => {
+    persistActiveDraft();
+    const sessionId = draftSessionRef.current.presetId;
+    if (isDraftId(sessionId)) {
+      const session = draftSessionRef.current;
+      const currentFills =
+        session.kind === COMPOSITION_KIND
+          ? normalizeComposition(compositionRef.current).fills
+          : session.kind === "effect"
+            ? effectFillsRef.current
+            : [];
+      const keyedFills = annotateLocalDraftMediaKeys(
+        sessionId,
+        currentFills,
+      );
+      if (JSON.stringify(keyedFills) !== JSON.stringify(currentFills)) {
+        if (session.kind === COMPOSITION_KIND) {
+          const next = normalizeComposition({
+            ...compositionRef.current,
+            fills: keyedFills,
+          });
+          compositionRef.current = next;
+          setComposition(next);
+        } else if (session.kind === "effect") {
+          effectFillsRef.current = keyedFills;
+          effectFillRef.current = keyedFills[0] || null;
+          setEffectFills(keyedFills);
+          setEffectFill(keyedFills[0] || null);
+        }
+      }
+      let pendingPersistence = draftMediaPersistenceRef.current;
+      if (
+        !pendingPersistence &&
+        (fillMediaEntries(keyedFills).length || session.pendingMedia)
+      ) {
+        pendingPersistence = persistLocalDraftMedia(
+          sessionId,
+          keyedFills,
+          session.pendingMedia,
+        );
+      }
+      if (pendingPersistence) {
+        await pendingPersistence;
+      }
+      if (draftMediaPersistenceErrorRef.current) {
+        const message =
+          draftMediaPersistenceErrorRef.current.message ||
+          "Local media could not be saved for browser reload.";
+        showNotice(message, { error: true });
+        throw new Error(message);
+      }
+      persistActiveDraft();
+      return;
+    }
+    if (
+      !dirty ||
+      !isOwner ||
+      !currentShader?.id
+    ) {
+      return;
+    }
+    if (conflictBlockedShaderRef.current === currentShader.id) {
+      const message =
+        "Review and explicitly save or duplicate your local edits before leaving this shader.";
+      showNotice(message, { error: true });
+      throw new Error(message);
+    }
+    if (
+      pendingAgentCheckpointRef.current ||
+      agentCheckpointSavingRef.current
+    ) {
+      const message = "Wait for the AI checkpoint to finish saving.";
+      showNotice(message, { error: true });
+      throw new Error(message);
+    }
+    await saveBeforeSessionChangeRef.current?.();
+  }, [
+    currentShader?.id,
+    dirty,
+    isOwner,
+    persistActiveDraft,
+    showNotice,
+  ]);
 
   useEffect(() => {
     if (sessionKind === COMPOSITION_KIND) return;
@@ -3346,7 +4101,7 @@ export default function App() {
   ]);
 
   const activateShaderSession = useShaderSession({
-    persistActiveDraft,
+    persistActiveDraft: persistBeforeSessionChange,
     pendingValuesRef,
     hostRef,
     playPreferenceRef,
@@ -3374,6 +4129,7 @@ export default function App() {
     effectFillsRef,
     effectFillStoreRef: effectFillByPresetRef,
     sessionRef: draftSessionRef,
+    activeDependencySnapshotsRef,
     setEffectFill,
     setEffectFills,
     inputApplyGenRef,
@@ -3384,18 +4140,20 @@ export default function App() {
 
   const openDraft = useCallback(
     async (draft) => {
-      setShaderRoute(draft.id, draft.kind);
-      if (draftSessionRef.current.presetId === draft.id) return;
+      const hydratedDraft = await hydrateLocalDraftMedia(draft);
+      setShaderRoute(hydratedDraft.id, hydratedDraft.kind);
+      if (draftSessionRef.current.presetId === hydratedDraft.id) return;
       await activateShaderSession({
-        sessionId: draft.id,
-        name: draft.name,
-        description: draft.description || "",
-        source: draft.source,
-        kind: draft.kind,
-        composition: draft.composition,
-        values: draft.values || {},
-        public: draft.isPublic,
-        media: draft.pendingMedia || null,
+        sessionId: hydratedDraft.id,
+        name: hydratedDraft.name,
+        description: hydratedDraft.description || "",
+        source: hydratedDraft.source,
+        kind: hydratedDraft.kind,
+        composition: hydratedDraft.composition,
+        values: hydratedDraft.values || {},
+        public: hydratedDraft.isPublic,
+        media: hydratedDraft.pendingMedia || null,
+        dependencySnapshots: hydratedDraft.dependencySnapshots,
         dirty: true,
       });
     },
@@ -3404,7 +4162,7 @@ export default function App() {
 
   const createDraft = useCallback(
     async (starterId) => {
-      persistActiveDraft();
+      await persistBeforeSessionChange();
       const preset = getPreset(starterId);
       const id = `draft:${crypto.randomUUID()}`;
       const draft = {
@@ -3418,21 +4176,29 @@ export default function App() {
         pendingMedia: null,
       };
       if (user) {
+        const documentSnapshot = buildShaderDocumentSnapshot({
+          source: draft.source,
+          kind: draft.kind,
+          parameterValues: draft.values,
+          effectFills:
+            draft.kind === "effect" ? [fillFromInputSource("image")] : [],
+        });
         const saved = await createShader({
           id: cloudIdForDraft(id),
           owner_id: user.id,
           name: draft.name,
           description: draft.description,
-          source: draft.source,
-          kind: draft.kind,
-          parameter_values: {},
-          features: inferFeatures(draft.source),
+          ...buildShaderDocumentPayload(documentSnapshot),
           is_public: false,
         });
         setCloudShaders((current) => [
           saved,
           ...current.filter((item) => item.id !== saved.id),
         ]);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          buildShaderDocumentSnapshot(saved),
+          { name: saved.name, description: saved.description }
+        );
         await activateShaderSession({
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
@@ -3440,9 +4206,11 @@ export default function App() {
           description: saved.description || "",
           source: saved.source,
           kind: saved.kind,
+          composition: saved.composition,
           values: saved.parameter_values || {},
-          dirty: true,
+          dirty: false,
           cloudShader: saved,
+          persistPrevious: false,
         });
         return;
       }
@@ -3454,13 +4222,14 @@ export default function App() {
         source: draft.source,
         kind: draft.kind,
         dirty: true,
+        persistPrevious: false,
       });
     },
-    [activateShaderSession, persistActiveDraft, user],
+    [activateShaderSession, persistBeforeSessionChange, user],
   );
 
   const createCompositionDraft = useCallback(async () => {
-    persistActiveDraft();
+    await persistBeforeSessionChange();
     const graph = emptyComposition();
     const id = `draft:${crypto.randomUUID()}`;
     const draft = {
@@ -3484,27 +4253,33 @@ export default function App() {
         kind: COMPOSITION_KIND,
         composition: graph,
         dirty: true,
+        persistPrevious: false,
       });
     };
     try {
       if (user) {
         try {
+          const documentSnapshot = buildShaderDocumentSnapshot({
+            kind: COMPOSITION_KIND,
+            composition: graph,
+            features: { isAnimated: false, usesMouse: false },
+          });
           const saved = await createShader({
             id: cloudIdForDraft(id),
             owner_id: user.id,
             name: draft.name,
             description: draft.description,
-            source: "",
-            kind: COMPOSITION_KIND,
-            parameter_values: {},
-            features: { isAnimated: false, usesMouse: false },
-            composition: graph,
+            ...buildShaderDocumentPayload(documentSnapshot),
             is_public: false,
           });
           setCloudShaders((current) => [
             saved,
             ...current.filter((item) => item.id !== saved.id),
           ]);
+          lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+            buildShaderDocumentSnapshot(saved),
+            { name: saved.name, description: saved.description }
+          );
           await activateShaderSession({
             sessionId: cloudChoiceId(saved.id),
             routeId: saved.id,
@@ -3514,8 +4289,9 @@ export default function App() {
             kind: COMPOSITION_KIND,
             composition: saved.composition || graph,
             values: {},
-            dirty: true,
+            dirty: false,
             cloudShader: saved,
+            persistPrevious: false,
           });
           return;
         } catch (cloudError) {
@@ -3536,7 +4312,7 @@ export default function App() {
       setError(message);
       showNotice(message, { error: true });
     }
-  }, [activateShaderSession, persistActiveDraft, showNotice, user]);
+  }, [activateShaderSession, persistBeforeSessionChange, showNotice, user]);
 
   const openFigmaShader = useCallback(
     async (kind, id) => {
@@ -3546,13 +4322,20 @@ export default function App() {
       const description =
         typeof detail.description === "string" ? detail.description : "";
       const shaderKind = detail.kind === "fill" ? "fill" : "effect";
+      const documentSnapshot = buildShaderDocumentSnapshot({
+        source: sourceText,
+        kind: shaderKind,
+        parameterValues: {},
+        effectFills: [],
+        features: inferFeatures(sourceText),
+      });
       const link = {
         figma_shader_id: detail.id,
         figma_shader_kind: shaderKind,
         figma_shader_version: detail.version || null,
       };
 
-      persistActiveDraft();
+      await persistBeforeSessionChange();
       pendingValuesRef.current = {};
       hostRef.current?.stop();
       setRunning(playPreferenceRef.current);
@@ -3580,21 +4363,36 @@ export default function App() {
             : { ...existing, ...(await getShader(existing.id)) };
           saved = await shaderSaveQueue.enqueue(existing.id, async () => {
             const result = await withExclusiveShaderSave(existing.id, async () => {
-              await saveShaderState({
+              const stateSaved = await saveShaderState({
                 shaderId: existing.id,
-                expectedStateRevision: current.state_revision,
-                source: sourceText,
-                kind: shaderKind,
-                parameterValues: {},
-                features: inferFeatures(sourceText),
+                expectedStateRevision: expectedStateRevision(
+                  committedStateRevisionsRef.current,
+                  current,
+                ),
+                ...buildShaderStateSavePayload(documentSnapshot),
                 checkpointKind: "manual",
                 summary: `Imported ${name} from Figma`,
               });
-              return updateShader(existing.id, {
-                name,
-                description,
-                ...link,
-              });
+              rememberStateRevision(
+                committedStateRevisionsRef.current,
+                stateSaved,
+              );
+              setCloudShaders((rows) =>
+                rows.map((row) =>
+                  row.id === stateSaved.id
+                    ? { ...row, ...stateSaved }
+                    : row,
+                ),
+              );
+              return updateShader(
+                existing.id,
+                {
+                  name,
+                  description,
+                  ...link,
+                },
+                { expectedStateRevision: stateSaved.state_revision },
+              );
             });
             return result.value;
           });
@@ -3603,10 +4401,7 @@ export default function App() {
             owner_id: user.id,
             name,
             description,
-            source: sourceText,
-            kind: shaderKind,
-            parameter_values: {},
-            features: inferFeatures(sourceText),
+            ...buildShaderDocumentPayload(documentSnapshot),
             is_public: false,
             ...link,
           });
@@ -3615,6 +4410,10 @@ export default function App() {
           saved,
           ...current.filter((item) => item.id !== saved.id),
         ]);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          buildShaderDocumentSnapshot(saved),
+          { name: saved.name, description: saved.description }
+        );
         await activateShaderSession({
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
@@ -3624,7 +4423,7 @@ export default function App() {
           kind: saved.kind,
           values: saved.parameter_values || {},
           cloudShader: saved,
-          dirty: true,
+          dirty: false,
           persistPrevious: false,
         });
         return;
@@ -3656,7 +4455,7 @@ export default function App() {
     [
       activateShaderSession,
       cloudShaders,
-      persistActiveDraft,
+      persistBeforeSessionChange,
       user,
     ]
   );
@@ -3702,36 +4501,52 @@ export default function App() {
             if (!dependencyIds) {
               throw new Error("The requested embed is unavailable.");
             }
-            const dependencies = dependencyIds.length
-              ? await getShadersByIds(dependencyIds)
-              : [];
-            const dependenciesById = new Map(
-              dependencies.map((row) => [row.id, row])
+            const refs = referencedShaderKeys(
+              normalizeComposition(fullShader.composition)
             );
-            if (
-              dependencyIds.some((id) => {
-                const row = dependenciesById.get(id);
-                return (
-                  !row ||
-                  row.kind === COMPOSITION_KIND ||
-                  !row.source
-                );
-              })
-            ) {
-              throw new Error("The requested embed is unavailable.");
+            const allRefsPinned = refs.every(
+              (key) =>
+                typeof dependencySnapshotForKey(
+                  fullShader.dependency_snapshots,
+                  key
+                )?.source === "string"
+            );
+            if (!allRefsPinned) {
+              const dependencies = dependencyIds.length
+                ? await getShadersByIds(dependencyIds)
+                : [];
+              const dependenciesById = new Map(
+                dependencies.map((row) => [row.id, row])
+              );
+              if (
+                dependencyIds.some((id) => {
+                  const row = dependenciesById.get(id);
+                  return (
+                    !row ||
+                    row.kind === COMPOSITION_KIND ||
+                    !row.source
+                  );
+                })
+              ) {
+                throw new Error("The requested embed is unavailable.");
+              }
             }
           }
         }
+        activeDependencySnapshotsRef.current =
+          fullShader.dependency_snapshots &&
+          typeof fullShader.dependency_snapshots === "object"
+            ? structuredClone(fullShader.dependency_snapshots)
+            : {};
         setCloudShaders((current) => cacheFullShaderRow(current, fullShader));
-        lastSavedFingerprintRef.current = shaderContentFingerprint({
-          name: fullShader.name,
-          description: fullShader.description,
-          source: fullShader.source,
-          parameterValues: fullShader.parameter_values,
-          features:
-            fullShader.features || inferFeatures(fullShader.source || ""),
-          composition: fullShader.composition,
-        });
+        const savedDocument = buildShaderDocumentSnapshot(fullShader);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          savedDocument,
+          {
+            name: fullShader.name,
+            description: fullShader.description,
+          }
+        );
         await activateBeforeHydration({
           session: {
             sessionId: cloudChoiceId(fullShader.id),
@@ -3826,17 +4641,35 @@ export default function App() {
     if (routeEmbed) return;
     if (!user) {
       migratedUserRef.current = null;
+      migrationInFlightUserRef.current = null;
+      migrationRetryAttemptRef.current = 0;
+      window.clearTimeout(migrationRetryTimerRef.current);
       return;
     }
+    const migrationDrafts = draftsRef.current;
     if (
       authLoading ||
       migratedUserRef.current === user.id ||
-      drafts.length === 0
+      migrationInFlightUserRef.current === user.id ||
+      migrationDrafts.length === 0
     ) {
+      if (!authLoading && migrationDrafts.length === 0) {
+        migratedUserRef.current = user.id;
+      }
       return;
     }
-    migratedUserRef.current = user.id;
+    migrationInFlightUserRef.current = user.id;
     let cancelled = false;
+    const scheduleRetry = () => {
+      window.clearTimeout(migrationRetryTimerRef.current);
+      const attempt = migrationRetryAttemptRef.current;
+      const delay = Math.min(30000, 3000 * 2 ** attempt);
+      migrationRetryAttemptRef.current = attempt + 1;
+      migrationRetryTimerRef.current = window.setTimeout(() => {
+        migrationRetryTimerRef.current = 0;
+        setMigrationRetryRevision((revision) => revision + 1);
+      }, delay);
+    };
 
     const migrate = async () => {
       const remaining = [];
@@ -3845,12 +4678,25 @@ export default function App() {
       let lastError = null;
       const activeRouteId = getShaderRouteId();
 
-      for (const draft of drafts) {
+      for (const draft of orderDraftsForMigration(migrationDrafts)) {
         const editorActive = draft.id === draftSessionRef.current.presetId;
         const active =
           editorActive || draft.id === activeRouteId;
-        const session = editorActive ? draftSessionRef.current : draft;
         try {
+          const hydratedDraft = await hydrateLocalDraftMedia(draft);
+          const session = editorActive
+            ? {
+                ...hydratedDraft,
+                ...draftSessionRef.current,
+                pendingMedia:
+                  draftSessionRef.current.pendingMedia ||
+                  hydratedDraft.pendingMedia ||
+                  null,
+                dependencySnapshots: structuredClone(
+                  activeDependencySnapshotsRef.current || {},
+                ),
+              }
+            : hydratedDraft;
           const cloudId = cloudIdForDraft(draft.id);
           const isComposition =
             resolvedLibraryKind({
@@ -3861,23 +4707,139 @@ export default function App() {
             ? ""
             : session.source || draft.source || "";
           const graph = isComposition
-            ? normalizeComposition(session.composition || draft.composition)
-            : {};
+            ? promoteCompositionRefs(
+                normalizeComposition(session.composition || draft.composition),
+                [...cloudShadersRef.current, ...migrated]
+              )
+            : null;
+          const draftEffectFills =
+            !isComposition && detectKind(source) === "effect"
+              ? session.effectFills ||
+                draft.effectFills ||
+                readEffectFillsFromComposition(
+                  session.composition || draft.composition
+                )
+              : [];
+          const effectFills =
+            draftEffectFills.length > 0
+              ? promoteCompositionRefs(
+                  normalizeComposition({
+                    fills: draftEffectFills,
+                    effects: [],
+                  }),
+                  [...cloudShadersRef.current, ...migrated]
+                ).fills
+              : [];
+          const liveFills = isComposition ? graph.fills : effectFills;
+          assertLocalFillMediaAvailable(
+            liveFills,
+            `Could not recover local media for ${draft.name}. Choose the media again before syncing.`,
+          );
+          const stackedMedia = fillMediaEntries(liveFills);
+          let durableFills = persistableEffectFills(liveFills);
+          let durableInput = { path: null, name: null, mimeType: null };
+          for (const { fill, url } of stackedMedia) {
+            const file = await fileFromBlobUrl(url);
+            if (!file) {
+              throw new Error(
+                `Could not recover local media for ${draft.name}.`
+              );
+            }
+            const contentType = mediaType(file);
+            const roleId = String(fill.id || "fill").replace(
+              /[^a-zA-Z0-9_-]/g,
+              "-"
+            );
+            const assetPath = await uploadAsset({
+              ownerId: user.id,
+              shaderId: cloudId,
+              role: `fill-${roleId}`,
+              blob: file,
+              fileName: file.name,
+              contentType,
+            });
+            durableFills = durableFills.map((item) =>
+              item.id === fill.id ? withFillAssetPath(item, assetPath) : item
+            );
+            if (!durableInput.path) {
+              durableInput = {
+                path: assetPath,
+                name: file.name,
+                mimeType: contentType,
+              };
+            }
+          }
+          const media =
+            !stackedMedia.length && detectKind(source) === "effect"
+              ? session.pendingMedia
+              : null;
+          if (media) {
+            const contentType = mediaType(media);
+            const assetPath = await uploadAsset({
+              ownerId: user.id,
+              shaderId: cloudId,
+              role: "input",
+              blob: media,
+              fileName: media.name,
+              contentType,
+            });
+            durableInput = {
+              path: assetPath,
+              name: media.name,
+              mimeType: contentType,
+            };
+          }
+          const durableComposition = isComposition
+            ? normalizeComposition({ ...graph, fills: durableFills })
+            : {
+                effectFills: durableFills,
+                effectFill: durableFills[0] || null,
+              };
+          const dependencyGraph = isComposition
+            ? durableComposition
+            : normalizeComposition({ fills: durableFills, effects: [] });
+          const dependencySnapshots = buildCompositionDependencySnapshots({
+            graph: dependencyGraph,
+            resolvedByKey: new Map(
+              Object.entries(resolvedShadersRef.current),
+            ),
+            liveByKey: liveShaderSourceRef.current,
+            cloudRows: [...cloudShadersRef.current, ...migrated],
+            existingSnapshots:
+              session.dependencySnapshots ||
+              draft.dependencySnapshots ||
+              {},
+          });
+          const documentSnapshot = buildShaderDocumentSnapshot({
+            source,
+            kind: isComposition ? COMPOSITION_KIND : detectKind(source),
+            parameterValues: session.values || draft.values || {},
+            composition: durableComposition,
+            effectFills: durableFills,
+            input: durableInput,
+            features: isComposition
+              ? collectCompositionFeatures(
+                  graph,
+                  resolvedByKeyWithDependencySnapshots(
+                    new Map(Object.entries(resolvedShadersRef.current)),
+                    dependencySnapshots,
+                  ),
+                )
+              : inferFeatures(source),
+            dependencySnapshots,
+          });
           const payload = {
             id: cloudId,
             owner_id: user.id,
-            name: session.shaderName || draft.name || "Untitled Shader",
+            name:
+              (typeof session.shaderName === "string"
+                ? session.shaderName.trim()
+                : draft.name) || "Untitled Shader",
             description:
-              session.shaderDescription || draft.description || "",
-            source,
-            kind: isComposition ? COMPOSITION_KIND : detectKind(source),
-            parameter_values: isComposition
-              ? {}
-              : session.values || draft.values || {},
-            features: isComposition
-              ? { isAnimated: false, usesMouse: false }
-              : inferFeatures(source),
-            composition: graph,
+              typeof session.shaderDescription === "string"
+                ? session.shaderDescription
+                : draft.description || "",
+            ...buildShaderDocumentPayload(documentSnapshot),
             is_public: false,
             ...figmaShaderLink(editorActive ? session : draft),
           };
@@ -3886,49 +4848,30 @@ export default function App() {
           if (existing) {
             saved = await shaderSaveQueue.enqueue(existing.id, async () => {
               const result = await withExclusiveShaderSave(existing.id, async () => {
-                await saveShaderState({
+                const stateSaved = await saveShaderState({
                   shaderId: existing.id,
                   expectedStateRevision: existing.state_revision,
-                  source: payload.source,
-                  kind: payload.kind,
-                  parameterValues: payload.parameter_values,
-                  features: payload.features,
-                  composition: payload.composition,
+                  ...buildShaderStateSavePayload(documentSnapshot),
+                  checkpointDependencySnapshots: dependencySnapshots,
                   checkpointKind: "manual",
                   summary: "Migrated local draft",
                 });
-                return updateShader(existing.id, {
-                  name: payload.name,
-                  description: payload.description,
-                  ...figmaShaderLink(editorActive ? session : draft),
-                });
+                return updateShader(
+                  existing.id,
+                  {
+                    name: payload.name,
+                    description: payload.description,
+                    ...figmaShaderLink(editorActive ? session : draft),
+                  },
+                  { expectedStateRevision: stateSaved.state_revision },
+                );
               });
               return result.value;
             });
           } else {
             saved = await createShader(payload);
           }
-          await migrateLocalPlanToCloud(
-            `preset:${draft.id}`,
-            user.id,
-            saved.id
-          );
-
           const assetChanges = {};
-          const media = active ? session.pendingMedia : draft.pendingMedia;
-          if (media) {
-            assetChanges.input_path = await uploadAsset({
-              ownerId: user.id,
-              shaderId: saved.id,
-              role: "input",
-              blob: media,
-              fileName: media.name,
-              contentType: mediaType(media),
-            });
-            assetChanges.input_name = media.name;
-            assetChanges.input_mime_type = mediaType(media);
-          }
-
           const thumbnailData =
             thumbnailDataUrlsRef.current[draft.id] || draft.thumbnail;
           if (thumbnailData?.startsWith("data:image/")) {
@@ -3946,11 +4889,46 @@ export default function App() {
           }
 
           if (Object.keys(assetChanges).length) {
-            saved = await updateShader(saved.id, assetChanges);
+            saved = await updateShader(saved.id, assetChanges, {
+              expectedStateRevision: saved.state_revision,
+            });
           }
+          if (cancelled) continue;
+          const sourceThreadKey = `preset:${draft.id}`;
+          const targetThreadKey = `cloud:${saved.id}`;
+          const plan = loadLocalPlan(sourceThreadKey);
+          await copyPlanToCloud(
+            targetThreadKey,
+            plan,
+            user.id,
+            saved.id,
+          );
+          if (cancelled) continue;
+          migrateChatThreadKey(sourceThreadKey, targetThreadKey);
+          migrateCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
+          removeLocalPlan(sourceThreadKey);
           migrated.push(saved);
           if (active) activeMigration = saved;
-          delete thumbnailDataUrlsRef.current[draft.id];
+          await removePromotedDraftState({
+            draftId: draft.id,
+            drafts: draftsRef.current,
+            thumbnailDataUrls: thumbnailDataUrlsRef.current,
+            writeDrafts,
+            activeDraftStorageKey: ACTIVE_DRAFT_STORAGE_KEY,
+            onStateRemoved: (nextDrafts) => {
+              draftsRef.current = nextDrafts;
+              setDrafts(nextDrafts);
+            },
+            removeMedia: (draftId) =>
+              removeLocalDraftMedia(draftId).catch(() => {}),
+          });
+          setThumbnails((current) => {
+            if (!(draft.id in current)) return current;
+            revokeThumbnailUrl(current[draft.id]);
+            const next = { ...current };
+            delete next[draft.id];
+            return next;
+          });
         } catch (migrationError) {
           remaining.push(draft);
           lastError = migrationError;
@@ -3958,20 +4936,6 @@ export default function App() {
       }
 
       if (cancelled) return;
-      setDrafts(remaining);
-      writeDrafts(remaining, thumbnailDataUrlsRef.current);
-      if (remaining.length === 0) {
-        localStorage.removeItem(ACTIVE_DRAFT_STORAGE_KEY);
-      }
-      setThumbnails((current) => {
-        const next = { ...current };
-        for (const draft of drafts) {
-          if (remaining.some((item) => item.id === draft.id)) continue;
-          revokeThumbnailUrl(next[draft.id]);
-          delete next[draft.id];
-        }
-        return next;
-      });
       setCloudShaders((current) => [
         ...migrated,
         ...current.filter(
@@ -3980,39 +4944,64 @@ export default function App() {
       ]);
 
       if (activeMigration) {
-        pendingValuesRef.current = activeMigration.parameter_values || {};
-        setCurrentShader(activeMigration);
-        setPresetId(cloudChoiceId(activeMigration.id));
-        setShaderRoute(activeMigration.id, activeMigration.kind);
-        setShaderName(activeMigration.name);
-        setSource(activeMigration.source);
-        setIsPublic(false);
-        setPendingMedia(null);
-        setDirty(false);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          buildShaderDocumentSnapshot(activeMigration),
+          {
+            name: activeMigration.name,
+            description: activeMigration.description,
+          }
+        );
+        await activateShaderSession({
+          sessionId: cloudChoiceId(activeMigration.id),
+          routeId: activeMigration.id,
+          name: activeMigration.name,
+          description: activeMigration.description || "",
+          source: activeMigration.source,
+          kind: activeMigration.kind,
+          composition: activeMigration.composition,
+          values: activeMigration.parameter_values || {},
+          public: false,
+          media: null,
+          dirty: false,
+          cloudShader: activeMigration,
+          persistPrevious: false,
+        });
       }
       if (lastError) {
+        migratedUserRef.current = null;
         setError(
           `Some drafts could not sync: ${
             lastError.message || String(lastError)
           }`
         );
+      } else {
+        migratedUserRef.current = user.id;
+        migrationRetryAttemptRef.current = 0;
       }
       await refreshLibrary();
+      if (lastError && !cancelled) scheduleRetry();
     };
 
-    migrate().catch((migrationError) =>
-      setError(migrationError.message || String(migrationError))
-    );
+    migrate()
+      .catch((migrationError) => {
+        migratedUserRef.current = null;
+        setError(migrationError.message || String(migrationError));
+        if (!cancelled) scheduleRetry();
+      })
+      .finally(() => {
+        if (migrationInFlightUserRef.current === user.id) {
+          migrationInFlightUserRef.current = null;
+        }
+      });
     return () => {
       cancelled = true;
+      window.clearTimeout(migrationRetryTimerRef.current);
     };
   }, [
     authLoading,
-    drafts,
-    refreshLibrary,
+    migrationRetryRevision,
     routeEmbed,
-    setShaderRoute,
-    user,
+    user?.id,
   ]);
 
   const choosePreset = useCallback(
@@ -4050,6 +5039,7 @@ export default function App() {
 
   const removeDraft = useCallback(
     (draft) => {
+      removeLocalDraftMedia(draft.id).catch(() => {});
       setDrafts((current) => current.filter((item) => item.id !== draft.id));
       setThumbnails((current) => {
         if (!(draft.id in current)) return current;
@@ -4178,12 +5168,19 @@ export default function App() {
     (id) => {
       if (isDraftId(id)) {
         const draft = drafts.find((item) => item.id === id);
-        if (draft) openDraft(draft);
+        if (draft) {
+          openDraft(draft).catch((navigationError) =>
+            setError(navigationError.message || String(navigationError)),
+          );
+        }
       } else if (id.startsWith("cloud:")) {
         const cloudId = id.slice("cloud:".length);
         const shader = cloudShaders.find((item) => item.id === cloudId);
-        if (shader) openCloudShader(shader);
-        else openRouteId(cloudId);
+        if (shader) {
+          openCloudShader(shader).catch((navigationError) =>
+            setError(navigationError.message || String(navigationError)),
+          );
+        } else openRouteId(cloudId);
       } else {
         choosePreset(id).catch((presetError) =>
           setError(presetError.message || String(presetError))
@@ -4253,6 +5250,7 @@ export default function App() {
 
   const updateControl = useCallback(
     (name, value) => {
+      clearShaderVersionPreviewRef.current?.();
       if (previewParamsRafRef.current) {
         cancelAnimationFrame(previewParamsRafRef.current);
         previewParamsRafRef.current = 0;
@@ -4280,6 +5278,7 @@ export default function App() {
   );
 
   const previewControl = useCallback((name, value) => {
+    clearShaderVersionPreviewRef.current?.();
     hostRef.current?.setActive(true);
     valuesRef.current = { ...valuesRef.current, [name]: value };
     // Coalesce live preview redraws to one present per frame. Synchronous
@@ -4306,51 +5305,134 @@ export default function App() {
     });
   }, []);
 
-  const resetProperties = useCallback(() => {
+  const resetProperties = useCallback((targetLayerId = null) => {
+    if (protectedPreview) return;
+    clearShaderVersionPreviewRef.current?.();
     if (sessionKindRef.current === COMPOSITION_KIND) {
       const graph = normalizeComposition(compositionRef.current);
-      const layerId = selectedLayerIdRef.current;
-      const source = resolveReferencedShaderSource(
-        compositionLayerShaderId(graph, layerId),
-        {
+      const layerId = targetLayerId || selectedLayerIdRef.current;
+      const layerShaderId = compositionLayerShaderId(graph, layerId);
+      const layerSource =
+        dependencySourceForKey(
+          activeDependencySnapshotsRef.current,
+          layerShaderId,
+        ) ||
+        resolveReferencedShaderSource(layerShaderId, {
           session: draftSessionRef.current,
           drafts,
           liveByKey: liveShaderSourceRef.current,
           resolvedByKey: new Map(Object.entries(resolvedShaders)),
-        }
-      );
-      if (!source) return;
+        });
+      if (!layerSource) return;
       try {
-        const loaded = loadModule(source);
-        const next = buildDefaults(loaded.props);
+        const layer =
+          graph.fills.find((fill) => fill.id === layerId) ||
+          graph.effects.find((effect) => effect.id === layerId);
+        if (!layer) return;
+        const reset = resetPropertiesForTarget({
+          source: layerSource,
+          values: layer.values,
+          target: { type: "composition-layer", layerId },
+          readOnly: protectedPreview,
+        });
+        if (!reset.changed) return;
+        const next = reset.values;
         const nextGraph = compositionWithLayerValues(graph, layerId, next);
         compositionRef.current = nextGraph;
         setComposition(nextGraph);
-        setProps(loaded.props);
+        setProps(reset.props);
         setRuntimeValues(next);
         setLayerControlsEpoch((epoch) => epoch + 1);
         setError(null);
-        if (!protectedPreview) setDirty(true);
+        setDirty(true);
         compileCompositionRef.current?.(nextGraph);
       } catch (resetError) {
         setError(resetError.message || String(resetError));
       }
       return;
     }
-    const next = buildDefaults(props);
-    setRuntimeValues(next);
-    setError(null);
-    if (!protectedPreview) setDirty(true);
+    try {
+      const reset = resetPropertiesForTarget({
+        source: sourceRef.current,
+        values: valuesRef.current,
+        target: { type: "document" },
+        readOnly: protectedPreview,
+      });
+      if (!reset.changed) return;
+      const next = reset.values;
+      setProps(reset.props);
+      setRuntimeValues(next);
+      setLayerControlsEpoch((epoch) => epoch + 1);
+      setError(null);
+      setDirty(true);
+      if (usesCompositionHost(sessionKindRef.current, effectFillsRef.current)) {
+        compile(sourceRef.current, { force: true });
+      } else {
+        hostRef.current?.setParams(next);
+        hostRef.current?.redraw();
+      }
+    } catch (resetError) {
+      setError(resetError.message || String(resetError));
+    }
   }, [
+    compile,
     drafts,
-    props,
     protectedPreview,
     resolvedShaders,
     setRuntimeValues,
   ]);
 
+  const resetEffectFillProperties = useCallback(
+    (fillId) => {
+      if (protectedPreview || !fillId) return;
+      clearShaderVersionPreviewRef.current?.();
+      const graph = normalizeComposition({
+        fills: effectFillsRef.current,
+        effects: [],
+      });
+      const fill = graph.fills.find((item) => item.id === fillId);
+      const layerSource =
+        dependencySourceForKey(
+          activeDependencySnapshotsRef.current,
+          fill?.shaderId,
+        ) ||
+        resolveReferencedShaderSource(fill?.shaderId, {
+          session: draftSessionRef.current,
+          drafts,
+          liveByKey: liveShaderSourceRef.current,
+          resolvedByKey: new Map(Object.entries(resolvedShaders)),
+        });
+      if (!fill || !layerSource) return;
+      try {
+        const reset = resetPropertiesForTarget({
+          source: layerSource,
+          values: fill.values,
+          target: { type: "effect-fill", layerId: fillId },
+          readOnly: protectedPreview,
+        });
+        if (!reset.changed) return;
+        const nextValues = reset.values;
+        const fills = graph.fills.map((item) =>
+          item.id === fillId ? { ...item, values: nextValues } : item
+        );
+        effectFillsRef.current = fills;
+        setEffectFills(fills);
+        effectFillRef.current = fills[0] || null;
+        setEffectFill(fills[0] || null);
+        hostRef.current?.setCompositionLayerParams?.(fillId, nextValues);
+        compile(sourceRef.current, { force: true });
+        setDirty(true);
+        setError(null);
+      } catch (resetError) {
+        setError(resetError.message || String(resetError));
+      }
+    },
+    [compile, drafts, protectedPreview, resolvedShaders]
+  );
+
   const savePropertiesAsDefault = useCallback(() => {
     if (protectedPreview) return;
+    clearShaderVersionPreviewRef.current?.();
     const currentValues = valuesRef.current;
     try {
       const nextSource = applyDefaultValuesToSource(
@@ -4417,6 +5499,7 @@ export default function App() {
       if (!mimeType) {
         throw new Error("Choose a supported image, SVG, or video file.");
       }
+      clearShaderVersionPreviewRef.current?.();
       const generation = ++inputApplyGenRef.current;
       setUploading(true);
       try {
@@ -4440,11 +5523,64 @@ export default function App() {
           }
         }
         if (!protectedPreview) setDirty(true);
+        const draftId = draftSessionRef.current.presetId;
+        if (!user && isDraftId(draftId)) {
+          const fills =
+            sessionKindRef.current === COMPOSITION_KIND
+              ? normalizeComposition(compositionRef.current).fills
+              : sessionKindRef.current === "effect"
+                ? effectFillsRef.current
+                : [];
+          if (fills.length > 0) {
+            draftMediaPersistenceErrorRef.current = null;
+            const persistence = persistLocalDraftMedia(
+              draftId,
+              fills,
+              file,
+            );
+            draftMediaPersistenceRef.current = persistence;
+            try {
+              const annotatedFills = await persistence;
+              if (sessionKindRef.current === COMPOSITION_KIND) {
+                const graph = normalizeComposition(compositionRef.current);
+                const next = normalizeComposition({
+                  ...graph,
+                  fills: graph.fills.map(
+                    (fill) =>
+                      annotatedFills.find((item) => item.id === fill.id) ||
+                      fill,
+                  ),
+                });
+                compositionRef.current = next;
+                setComposition(next);
+              } else if (sessionKindRef.current === "effect") {
+                effectFillsRef.current = annotatedFills;
+                effectFillRef.current = annotatedFills[0] || null;
+                setEffectFills(annotatedFills);
+                setEffectFill(annotatedFills[0] || null);
+              }
+              persistActiveDraft();
+            } catch (mediaError) {
+              draftMediaPersistenceErrorRef.current = mediaError;
+              throw mediaError;
+            } finally {
+              if (draftMediaPersistenceRef.current === persistence) {
+                draftMediaPersistenceRef.current = null;
+              }
+            }
+          }
+        }
       } finally {
         if (isInputApplyCurrent(generation)) setUploading(false);
       }
     },
-    [applyMediaBlob, isInputApplyCurrent, protectedPreview]
+    [
+      applyMediaBlob,
+      isInputApplyCurrent,
+      persistActiveDraft,
+      protectedPreview,
+      user,
+    ]
   );
 
   const onFileInput = useCallback(
@@ -4463,6 +5599,7 @@ export default function App() {
   const onSourceChange = useCallback(
     (nextSource) => {
       if (protectedPreview) return;
+      clearShaderVersionPreviewRef.current?.();
       setSource(nextSource);
       setDirty(true);
     },
@@ -4606,8 +5743,8 @@ export default function App() {
         kind === COMPOSITION_KIND
           ? serializeCompositionExport(
               composition,
-              resolvedByKey,
-              liveShaderSourceRef.current
+              pinAwareResolvedByKey,
+              null
             )
           : null;
       const needsMediaInput =
@@ -4664,7 +5801,7 @@ export default function App() {
   }, [
     composition,
     kind,
-    resolvedByKey,
+    pinAwareResolvedByKey,
     shaderName,
     videoExportSettings,
   ]);
@@ -4684,64 +5821,84 @@ export default function App() {
       const makePublic = options.makePublic === true;
       const makePrivate = options.makePrivate === true;
       const background = options.background === true;
+      if (
+        !background &&
+        currentShader?.id &&
+        conflictBlockedShaderRef.current === currentShader.id
+      ) {
+        conflictBlockedShaderRef.current = null;
+      }
       const checkpointKind =
         options.checkpointKind ||
         (!background ? (makePublic ? "publish" : "manual") : null);
       const publicFlag = makePrivate ? false : makePublic || isPublic;
+      const capturedVisibility = isPublic;
       const saveTargetId = presetId;
-      const saveSource =
+      const requestedSource =
         typeof options.sourceOverride === "string"
           ? options.sourceOverride
           : sourceRef.current;
-      const saveValues = options.valuesOverride || valuesRef.current;
+      const requestedValues = options.valuesOverride || valuesRef.current;
       const saveDescription =
         typeof options.descriptionOverride === "string"
           ? options.descriptionOverride.slice(0, 1000)
           : shaderDescription;
+      const saveName = shaderName.trim() || "Untitled Shader";
       const noticeMessage =
         "notice" in options ? options.notice : "Shader saved";
-      const saveSnapshot = {
-        name: shaderName.trim() || "Untitled Shader",
-        description: saveDescription,
-        source: saveSource,
-        values: JSON.stringify(saveValues),
-        isPublic: publicFlag,
-        pendingMedia,
-      };
+      const requestedKind =
+        sessionKindRef.current === COMPOSITION_KIND
+          ? COMPOSITION_KIND
+          : detectKind(requestedSource);
+      const isComposition = requestedKind === COMPOSITION_KIND;
+      const capturedGraph = isComposition
+        ? promoteCompositionRefs(
+            compositionWithLayerValues(
+              compositionRef.current,
+              selectedLayerIdRef.current,
+              requestedValues
+            ),
+            cloudShaders
+          )
+        : null;
+      const capturedEffectFills =
+        requestedKind === "effect"
+          ? normalizeComposition({
+              fills: effectFillsRef.current,
+              effects: [],
+            }).fills
+          : [];
+      const capturedPins = structuredClone(
+        activeDependencySnapshotsRef.current || {}
+      );
+      const capturedDocument = captureDocumentSnapshot({
+        source: requestedSource,
+        kind: requestedKind,
+        parameterValues: requestedValues,
+        composition: capturedGraph,
+        effectFills: capturedEffectFills,
+        dependencySnapshots: capturedPins,
+      });
+      const capturedEditorFingerprint = editorPersistenceFingerprint(
+        capturedDocument,
+        { name: saveName, description: saveDescription }
+      );
+      const capturedPendingMedia = pendingMedia;
       const shaderId =
         isOwner && currentShader?.id ? currentShader.id : null;
-      if (
-        background &&
-        !checkpointKind &&
-        (shaderSaveQueue.isBusyAny() ||
-          pendingMedia ||
-          fillMediaEntries(
-            sessionKindRef.current === COMPOSITION_KIND
-              ? normalizeComposition(compositionRef.current).fills
-              : effectFillsRef.current
-          ).length > 0)
-      ) {
-        return currentShader ?? null;
-      }
-
+      const targetShaderId =
+        shaderId ||
+        (isDraftId(saveTargetId)
+          ? cloudIdForDraft(saveTargetId)
+          : crypto.randomUUID());
+      const draftLink = isDraftId(saveTargetId)
+        ? drafts.find((item) => item.id === saveTargetId)
+        : null;
       const runSave = async () => {
       if (!background) setSaving(true);
       setError(null);
       try {
-        const draftLink = isDraftId(presetId)
-          ? drafts.find((item) => item.id === presetId)
-          : null;
-        const isComposition = sessionKindRef.current === COMPOSITION_KIND;
-        const graph = isComposition
-          ? promoteCompositionRefs(
-              compositionWithLayerValues(
-                compositionRef.current,
-                selectedLayerIdRef.current,
-                valuesRef.current
-              ),
-              cloudShaders
-            )
-          : {};
+        const graph = capturedGraph || {};
         if (
           isComposition &&
           referencedShaderKeys(graph).join() !==
@@ -4752,8 +5909,8 @@ export default function App() {
         }
         const publicationGraph = isComposition
           ? graph
-          : sessionKindRef.current === "effect"
-            ? normalizeComposition({ fills: effectFillsRef.current })
+          : requestedKind === "effect"
+            ? normalizeComposition({ fills: capturedEffectFills })
             : null;
         if (publicFlag && !background && publicationGraph) {
           let unpublished = unpublishedCompositionRefs(
@@ -4828,65 +5985,157 @@ export default function App() {
         }
         const liveFills = isComposition
           ? graph.fills
-          : sessionKindRef.current === "effect"
-            ? effectFillsRef.current
+          : requestedKind === "effect"
+            ? capturedEffectFills
             : [];
+        assertLocalFillMediaAvailable(
+          liveFills,
+          "A saved local fill could not be recovered. Choose the media again before saving.",
+        );
         const stackedMedia = fillMediaEntries(liveFills);
-        const persistedFills = persistableEffectFills(liveFills);
-        const graphForSave = isComposition
-          ? normalizeComposition({ ...graph, fills: persistedFills })
-          : null;
+        let durableFills = persistableEffectFills(liveFills);
+        const existingFillAssetPath = durableFills
+          .map(
+            (fill) =>
+              fill?.paint?.image?.assetPath ||
+              fill?.paint?.video?.assetPath ||
+              null
+          )
+          .find(Boolean);
+        let durableInput = existingFillAssetPath
+          ? {
+              path: existingFillAssetPath,
+              name: capturedDocument.input.name,
+              mimeType: capturedDocument.input.mimeType,
+            }
+          : { path: null, name: null, mimeType: null };
+        for (const { fill, url } of stackedMedia) {
+          const file = await fileFromBlobUrl(url);
+          if (!file) {
+            throw new Error(
+              "A local fill could not be read. Choose the media again before saving."
+            );
+          }
+          if (file.size > MAX_MEDIA_BYTES) {
+            throw new Error("Input media must be 25 MB or smaller.");
+          }
+          const contentType = mediaType(file);
+          const roleId = String(fill.id || "fill").replace(
+            /[^a-zA-Z0-9_-]/g,
+            "-"
+          );
+          const assetPath = await uploadAsset({
+            ownerId: user.id,
+            shaderId: targetShaderId,
+            role: `fill-${roleId}`,
+            blob: file,
+            fileName: file.name,
+            contentType,
+          });
+          durableFills = durableFills.map((item) =>
+            item.id === fill.id ? withFillAssetPath(item, assetPath) : item
+          );
+          if (!durableInput.path) {
+            durableInput = {
+              path: assetPath,
+              name: file.name,
+              mimeType: contentType,
+            };
+          }
+        }
+
+        let mediaToUpload =
+          requestedKind === "effect" && !stackedMedia.length
+            ? capturedPendingMedia
+            : null;
+        if (!mediaToUpload && requestedKind === "effect") {
+          const paint = liveFills.find((fill) =>
+            isPaintFillType(fill.paint?.type)
+          )?.paint;
+          const url = paint?.image?.url || paint?.video?.url || "";
+          if (url.startsWith("blob:") || url.startsWith("data:")) {
+            mediaToUpload = await fileFromBlobUrl(url);
+          }
+        }
+        if (mediaToUpload) {
+          if (mediaToUpload.size > MAX_MEDIA_BYTES) {
+            throw new Error("Input media must be 25 MB or smaller.");
+          }
+          const inputMimeType = mediaType(mediaToUpload);
+          const inputPath = await uploadAsset({
+            ownerId: user.id,
+            shaderId: targetShaderId,
+            role: "input",
+            blob: mediaToUpload,
+            fileName: mediaToUpload.name,
+            contentType: inputMimeType,
+          });
+          durableInput = {
+            path: inputPath,
+            name: mediaToUpload.name,
+            mimeType: inputMimeType,
+          };
+        }
+
+        const durableComposition = isComposition
+          ? normalizeComposition({ ...graph, fills: durableFills })
+          : requestedKind === "effect"
+            ? {
+                effectFills: durableFills,
+                effectFill: durableFills[0] || null,
+              }
+            : {};
+        const dependencyGraph = isComposition
+          ? durableComposition
+          : requestedKind === "effect"
+            ? normalizeComposition({ fills: durableFills, effects: [] })
+            : emptyComposition();
+        const dependencySnapshots = buildCompositionDependencySnapshots({
+          graph: dependencyGraph,
+          resolvedByKey: new Map(Object.entries(resolvedShaders)),
+          liveByKey: liveShaderSourceRef.current,
+          cloudRows: cloudShaders,
+          existingSnapshots: capturedPins,
+        });
+        const durableDocument = buildShaderDocumentSnapshot({
+          ...capturedDocument,
+          composition: durableComposition,
+          effectFills: durableFills,
+          input: durableInput,
+          dependencySnapshots,
+        });
+        const documentPayload = buildShaderDocumentPayload(durableDocument);
         const payload = {
+          id: targetShaderId,
           owner_id: user.id,
-          name: shaderName.trim() || "Untitled Shader",
+          name: saveName,
           description: saveDescription,
-          source: isComposition ? "" : saveSource,
-          kind: isComposition ? COMPOSITION_KIND : detectKind(saveSource),
-          parameter_values: isComposition ? {} : saveValues,
-          features: isComposition
-            ? collectCompositionFeatures(
-                graph,
-                new Map(Object.entries(resolvedShaders))
-              )
-            : inferFeatures(saveSource),
-          composition: isComposition
-            ? graphForSave
-            : sessionKindRef.current === "effect"
-              ? {
-                  effectFills: persistedFills,
-                  effectFill: persistedFills[0] || null,
-                }
-              : {},
+          ...documentPayload,
           is_public: publicFlag,
           ...figmaShaderLink(currentShader || draftLink),
         };
-        // Background draft autosaves must never race an explicit publish or
-        // unpublish action. Visibility changes are only persisted by Save or
-        // Publish.
-        if (background && isOwner && currentShader) {
-          delete payload.is_public;
-        }
-
-        const contentFingerprint = shaderContentFingerprint({
-          name: payload.name,
-          description: payload.description,
-          source: payload.source,
-          parameterValues: payload.parameter_values,
-          features: payload.features,
-          composition: payload.composition,
-        });
-        // Skip no-op background autosaves (same content as last successful
-        // write, including when setCurrentShader restarts the debounce timer).
-        // Never skip when a version checkpoint is requested.
+        const contentFingerprint = editorPersistenceFingerprint(
+          durableDocument,
+          { name: saveName, description: saveDescription }
+        );
         if (
           background &&
           isOwner &&
           currentShader &&
-          !pendingMedia &&
           !checkpointKind &&
+          !stackedMedia.length &&
+          !capturedPendingMedia &&
           contentFingerprint === lastSavedFingerprintRef.current
         ) {
-          if (draftSessionRef.current.presetId === saveTargetId) {
+          if (
+            draftSessionRef.current.presetId === saveTargetId &&
+            capturedEditorFingerprint ===
+              editorPersistenceFingerprint(captureDocumentSnapshot(), {
+                name: draftSessionRef.current.shaderName.trim() ||
+                  "Untitled Shader",
+                description: draftSessionRef.current.shaderDescription,
+              })
+          ) {
             setDirty(false);
           }
           return currentShader;
@@ -4906,130 +6155,81 @@ export default function App() {
           }
           saved = await saveShaderState({
             shaderId: currentShader.id,
-            expectedStateRevision: currentShader.state_revision,
-            source: payload.source,
-            kind: payload.kind,
-            parameterValues: payload.parameter_values,
-            features: payload.features,
-            composition: payload.composition,
-            checkpointKind: stackedMedia.length ? null : checkpointKind,
-            summary: stackedMedia.length ? null : checkpointSummary,
+            expectedStateRevision: expectedStateRevision(
+              committedStateRevisionsRef.current,
+              currentShader,
+            ),
+            ...buildShaderStateSavePayload(durableDocument),
+            dependencySnapshots,
+            checkpointDependencySnapshots: dependencySnapshots,
+            checkpointKind,
+            summary: checkpointSummary,
           });
+          rememberStateRevision(
+            committedStateRevisionsRef.current,
+            saved,
+          );
           const metadataPayload = {
             name: payload.name,
             description: payload.description,
             ...figmaShaderLink(currentShader || draftLink),
           };
           if (!background) metadataPayload.is_public = publicFlag;
-          saved = await updateShader(currentShader.id, metadataPayload);
+          saved = await updateShader(currentShader.id, metadataPayload, {
+            expectedStateRevision: saved.state_revision,
+          });
         } else {
-          saved = await createShader(payload);
+          if (isDraftId(saveTargetId)) {
+            const promoted = await createOrResumeCloudDraft({
+              shaderId: targetShaderId,
+              createPayload: payload,
+              statePayload: {
+                ...buildShaderStateSavePayload(durableDocument),
+                dependencySnapshots,
+                checkpointDependencySnapshots: dependencySnapshots,
+                checkpointKind,
+                summary: checkpointSummary || "Saved local draft",
+              },
+              metadataPayload: {
+                name: payload.name,
+                description: payload.description,
+                is_public: publicFlag,
+                ...figmaShaderLink(currentShader || draftLink),
+              },
+              getExisting: getShaderMaybe,
+              create: createShader,
+              saveState: saveShaderState,
+              updateMetadata: updateShader,
+              onStateCommitted: (committed) =>
+                rememberStateRevision(
+                  committedStateRevisionsRef.current,
+                  committed,
+                ),
+            });
+            saved = promoted.shader;
+          } else {
+            saved = await createShader(payload);
+            rememberStateRevision(
+              committedStateRevisionsRef.current,
+              saved,
+            );
+          }
         }
         const planLocalKey = currentShader?.id
           ? `cloud:${currentShader.id}`
           : `preset:${saveTargetId}`;
-        await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
-
+        const targetThreadKey = `cloud:${saved.id}`;
+        if (isDraftId(saveTargetId)) {
+          await copyPlanToCloud(
+            targetThreadKey,
+            loadLocalPlan(planLocalKey),
+            user.id,
+            saved.id,
+          );
+        } else {
+          await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
+        }
         const assetChanges = {};
-        let durableFills = persistedFills;
-        if (stackedMedia.length) {
-          for (const { fill, url } of stackedMedia) {
-            const file = await fileFromBlobUrl(url);
-            if (!file) continue;
-            if (file.size > MAX_MEDIA_BYTES) {
-              throw new Error("Input media must be 25 MB or smaller.");
-            }
-            const contentType = mediaType(file);
-            const roleId = String(fill.id || "fill").replace(
-              /[^a-zA-Z0-9_-]/g,
-              "-"
-            );
-            const assetPath = await uploadAsset({
-              ownerId: user.id,
-              shaderId: saved.id,
-              role: `fill-${roleId}`,
-              blob: file,
-              fileName: file.name,
-              contentType,
-            });
-            durableFills = durableFills.map((item) =>
-              item.id === fill.id ? withFillAssetPath(item, assetPath) : item
-            );
-            if (!assetChanges.input_path) {
-              assetChanges.input_path = assetPath;
-              assetChanges.input_name = file.name;
-              assetChanges.input_mime_type = contentType;
-            }
-          }
-          const durableComposition = isComposition
-            ? normalizeComposition({ ...graph, fills: durableFills })
-            : {
-                effectFills: durableFills,
-                effectFill: durableFills[0] || null,
-              };
-          saved = await saveShaderState({
-            shaderId: saved.id,
-            expectedStateRevision: saved.state_revision,
-            source: payload.source,
-            kind: payload.kind,
-            parameterValues: payload.parameter_values,
-            features: payload.features,
-            composition: durableComposition,
-            checkpointKind,
-            summary: checkpointSummary,
-          });
-          if (isComposition) {
-            const localGraph = normalizeComposition({
-              ...graph,
-              fills: liveFills.map((fill) => {
-                const durable = durableFills.find((item) => item.id === fill.id);
-                const assetPath =
-                  durable?.paint?.image?.assetPath ||
-                  durable?.paint?.video?.assetPath;
-                return withFillAssetPath(fill, assetPath);
-              }),
-            });
-            compositionRef.current = localGraph;
-            setComposition(localGraph);
-          } else if (sessionKindRef.current === "effect") {
-            const localFills = liveFills.map((fill) => {
-              const durable = durableFills.find((item) => item.id === fill.id);
-              const assetPath =
-                durable?.paint?.image?.assetPath ||
-                durable?.paint?.video?.assetPath;
-              return withFillAssetPath(fill, assetPath);
-            });
-            effectFillsRef.current = localFills;
-            setEffectFills(localFills);
-            effectFillRef.current = localFills[0] || null;
-            setEffectFill(localFills[0] || null);
-          }
-        }
-        let mediaToUpload = background ? null : pendingMedia;
-        if (stackedMedia.length) mediaToUpload = null;
-        if (!mediaToUpload && !background && sessionKindRef.current === "effect") {
-          const paint = effectFillsRef.current.find((fill) =>
-            isPaintFillType(fill.paint?.type)
-          )?.paint;
-          const url = paint?.image?.url || paint?.video?.url || "";
-          mediaToUpload = await fileFromBlobUrl(url);
-        }
-        if (mediaToUpload) {
-          const oldPath = isOwner ? currentShader?.input_path : null;
-          const inputMimeType = mediaType(mediaToUpload);
-          const inputPath = await uploadAsset({
-            ownerId: user.id,
-            shaderId: saved.id,
-            role: "input",
-            blob: mediaToUpload,
-            fileName: mediaToUpload.name,
-            contentType: inputMimeType,
-          });
-          if (oldPath && oldPath !== inputPath) await removeAssets([oldPath]);
-          assetChanges.input_path = inputPath;
-          assetChanges.input_name = mediaToUpload.name;
-          assetChanges.input_mime_type = inputMimeType;
-        }
 
         // Thumbnails are expensive (canvas capture + Storage RLS). Only refresh
         // them on explicit saves — background autosave only persists state.
@@ -5079,7 +6279,51 @@ export default function App() {
         }
 
         if (Object.keys(assetChanges).length) {
-          saved = await updateShader(saved.id, assetChanges);
+          saved = await updateShader(saved.id, assetChanges, {
+            expectedStateRevision: saved.state_revision,
+          });
+        }
+
+        if (isDraftId(saveTargetId)) {
+          migrateChatThreadKey(planLocalKey, targetThreadKey);
+          migrateCursorAgentThreadKey(planLocalKey, targetThreadKey);
+          removeLocalPlan(planLocalKey);
+          await removePromotedDraftState({
+            draftId: saveTargetId,
+            drafts: draftsRef.current,
+            thumbnailDataUrls: thumbnailDataUrlsRef.current,
+            writeDrafts,
+            activeDraftStorageKey: ACTIVE_DRAFT_STORAGE_KEY,
+            onStateRemoved: (nextDrafts) => {
+              draftsRef.current = nextDrafts;
+              setDrafts(nextDrafts);
+            },
+            removeMedia: (draftId) =>
+              removeLocalDraftMedia(draftId).catch(() => {}),
+          });
+          setThumbnails((current) => {
+            if (!(saveTargetId in current)) return current;
+            revokeThumbnailUrl(current[saveTargetId]);
+            const next = { ...current };
+            delete next[saveTargetId];
+            return next;
+          });
+        }
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        if (saved.thumbnail_path) {
+          try {
+            const url = await getAssetUrl(saved.thumbnail_path);
+            setCloudThumbnails((current) => ({
+              ...current,
+              [saved.id]: url,
+            }));
+          } catch {
+            // The durable thumbnail path is saved; its display URL can refresh
+            // independently with the library.
+          }
         }
 
         // A save for the previously open shader may finish after navigation.
@@ -5088,69 +6332,89 @@ export default function App() {
           return saved;
         }
 
+        const latest = draftSessionRef.current;
+        const latestDocument = captureDocumentSnapshot({
+          input: capturedDocument.input,
+          dependencySnapshots: capturedPins,
+        });
+        const unchanged =
+          editorStateMatchesSnapshot(latestDocument, capturedDocument) &&
+          (latest.shaderName.trim() || "Untitled Shader") === saveName &&
+          latest.shaderDescription === saveDescription &&
+          Boolean(latest.isPublic) === Boolean(capturedVisibility) &&
+          latest.pendingMedia === capturedPendingMedia;
+        if (unchanged) {
+          if (isComposition) {
+            const localGraph = normalizeComposition({
+              ...graph,
+              fills: liveFills.map((fill) => {
+                const durable = durableFills.find((item) => item.id === fill.id);
+                const assetPath =
+                  durable?.paint?.image?.assetPath ||
+                  durable?.paint?.video?.assetPath;
+                return withFillAssetPath(fill, assetPath);
+              }),
+            });
+            compositionRef.current = localGraph;
+            setComposition(localGraph);
+          } else if (requestedKind === "effect") {
+            const localFills = liveFills.map((fill) => {
+              const durable = durableFills.find((item) => item.id === fill.id);
+              const assetPath =
+                durable?.paint?.image?.assetPath ||
+                durable?.paint?.video?.assetPath;
+              return withFillAssetPath(fill, assetPath);
+            });
+            effectFillsRef.current = localFills;
+            effectFillRef.current = localFills[0] || null;
+            setEffectFills(localFills);
+            setEffectFill(localFills[0] || null);
+          }
+          activeDependencySnapshotsRef.current = dependencySnapshots;
+        }
         if (makePublic) setIsPublic(true);
         else if (makePrivate) setIsPublic(false);
         setCurrentShader(saved);
         setPresetId(cloudChoiceId(saved.id));
         setShaderRoute(saved.id, saved.kind);
         lastSavedFingerprintRef.current = contentFingerprint;
-        const latest = draftSessionRef.current;
-        const unchanged =
-          (latest.shaderName.trim() || "Untitled Shader") ===
-            saveSnapshot.name &&
-          latest.shaderDescription === saveSnapshot.description &&
-          latest.source === saveSnapshot.source &&
-          JSON.stringify(latest.values) === saveSnapshot.values &&
-          Boolean(latest.isPublic) === saveSnapshot.isPublic &&
-          latest.pendingMedia === saveSnapshot.pendingMedia;
-        if (mediaToUpload || !background || unchanged) {
+        if (unchanged) {
           setPendingMedia(null);
-        }
-        if (!background || unchanged) {
           setDirty(false);
         }
-        if (isDraftId(presetId)) {
-          setDrafts((current) =>
-            current.filter((item) => item.id !== presetId)
-          );
-          setThumbnails((current) => {
-            if (!(presetId in current)) return current;
-            revokeThumbnailUrl(current[presetId]);
-            const next = { ...current };
-            delete next[presetId];
-            return next;
-          });
-          delete thumbnailDataUrlsRef.current[presetId];
-        }
-        setCloudShaders((current) => [
-          saved,
-          ...current.filter((item) => item.id !== saved.id),
-        ]);
         if (checkpointKind || !currentShader) {
           await refreshShaderVersions(saved.id);
         }
-        if (saved.thumbnail_path) {
-          const url = await getAssetUrl(saved.thumbnail_path);
-          setCloudThumbnails((current) => ({ ...current, [saved.id]: url }));
-        }
         if (noticeMessage) showNotice(noticeMessage);
         cloudWriteBackoffUntilRef.current = 0;
+        if (conflictBlockedShaderRef.current === saved.id) {
+          conflictBlockedShaderRef.current = null;
+        }
         return saved;
       } catch (saveError) {
-        if (isTransientCloudWriteError(saveError)) {
-          cloudWriteBackoffUntilRef.current = Date.now() + CLOUD_WRITE_BACKOFF_MS;
-        }
         const saveStillActive =
           draftSessionRef.current.presetId === saveTargetId;
+        if (isTransientCloudWriteError(saveError)) {
+          cloudWriteBackoffUntilRef.current = Date.now() + CLOUD_WRITE_BACKOFF_MS;
+          if (background && saveStillActive) {
+            setAutosaveRetryRevision((revision) => revision + 1);
+          }
+        }
         if (isShaderStateConflict(saveError) && currentShader?.id) {
+          if (saveStillActive) {
+            conflictBlockedShaderRef.current = currentShader.id;
+          }
           try {
             const latest = await getShader(currentShader.id);
+            rememberStateRevision(
+              committedStateRevisionsRef.current,
+              latest,
+            );
             setCloudShaders((current) => [
               latest,
               ...current.filter((item) => item.id !== latest.id),
             ]);
             if (saveStillActive) {
-              setCurrentShader(latest);
               await refreshShaderVersions();
             }
           } catch {
@@ -5173,14 +6437,25 @@ export default function App() {
       if (shaderId) {
         return shaderSaveQueue.enqueue(shaderId, async () => {
           const result = await withExclusiveShaderSave(shaderId, runSave, {
-            ifAvailable: background && !checkpointKind,
+            ifAvailable:
+              background &&
+              !checkpointKind &&
+              options.waitForLock !== true,
           });
-          return result.skipped ? currentShader ?? null : result.value;
+          if (result.skipped) {
+            window.setTimeout(
+              () => setAutosaveRetryRevision((revision) => revision + 1),
+              250
+            );
+            return currentShader ?? null;
+          }
+          return result.value;
         });
       }
       return runSave();
     },
     [
+      captureDocumentSnapshot,
       currentShader,
       drafts,
       isOwner,
@@ -5200,6 +6475,8 @@ export default function App() {
       user,
     ]
   );
+  saveBeforeSessionChangeRef.current = () =>
+    saveShader({ background: true, waitForLock: true, notice: null });
 
   const checkpointAgentVersion = useCallback(
     ({ source: appliedSource, summary, description }) => {
@@ -5248,17 +6525,22 @@ export default function App() {
   );
 
   useEffect(() => {
+    if (!pendingAgentCheckpoint) {
+      window.clearTimeout(agentCheckpointRetryTimerRef.current);
+      agentCheckpointRetryTimerRef.current = 0;
+      return;
+    }
     if (
-      pendingAgentCheckpoint &&
       (draftSessionRef.current.presetId !== pendingAgentCheckpoint.presetId ||
         currentShader?.id !== pendingAgentCheckpoint.shaderId ||
         sourceRef.current !== pendingAgentCheckpoint.source)
     ) {
+      window.clearTimeout(agentCheckpointRetryTimerRef.current);
+      agentCheckpointRetryTimerRef.current = 0;
       setPendingAgentCheckpoint(null);
       return;
     }
     if (
-      !pendingAgentCheckpoint ||
       agentCheckpointSavingRef.current ||
       saving ||
       !isOwner ||
@@ -5268,6 +6550,21 @@ export default function App() {
     ) {
       return;
     }
+    if (conflictBlockedShaderRef.current === currentShader.id) return;
+    const backoffMs = cloudWriteBackoffUntilRef.current - Date.now();
+    if (backoffMs > 0) {
+      window.clearTimeout(agentCheckpointRetryTimerRef.current);
+      const checkpoint = pendingAgentCheckpoint;
+      agentCheckpointRetryTimerRef.current = window.setTimeout(() => {
+        agentCheckpointRetryTimerRef.current = 0;
+        setPendingAgentCheckpoint((current) =>
+          current === checkpoint ? { ...current } : current
+        );
+      }, backoffMs);
+      return;
+    }
+    window.clearTimeout(agentCheckpointRetryTimerRef.current);
+    agentCheckpointRetryTimerRef.current = 0;
     agentCheckpointSavingRef.current = true;
     const checkpoint = pendingAgentCheckpoint;
     saveShader({
@@ -5280,17 +6577,36 @@ export default function App() {
       notice: null,
     })
       .then(() => {
+        window.clearTimeout(agentCheckpointRetryTimerRef.current);
+        agentCheckpointRetryTimerRef.current = 0;
         setPendingAgentCheckpoint((current) =>
           current === checkpoint ? null : current
         );
       })
-      .catch(() => {
+      .catch((checkpointError) => {
         // saveShader preserves the local source and surfaces the error.
+        if (!isTransientCloudWriteError(checkpointError)) return;
+        const retryDelay = Math.max(
+          1000,
+          cloudWriteBackoffUntilRef.current - Date.now()
+        );
+        window.clearTimeout(agentCheckpointRetryTimerRef.current);
+        agentCheckpointRetryTimerRef.current = window.setTimeout(() => {
+          agentCheckpointRetryTimerRef.current = 0;
+          setPendingAgentCheckpoint((current) =>
+            current === checkpoint ? { ...current } : current
+          );
+        }, retryDelay);
       })
       .finally(() => {
         agentCheckpointSavingRef.current = false;
       });
   }, [currentShader?.id, isOwner, pendingAgentCheckpoint, saveShader, saving]);
+
+  useEffect(
+    () => () => window.clearTimeout(agentCheckpointRetryTimerRef.current),
+    []
+  );
 
   useEffect(() => {
     if (
@@ -5302,11 +6618,21 @@ export default function App() {
   }, [presetId]);
 
   useEffect(() => {
+    clearVersionPreviewMedia();
     versionPreviewCacheRef.current.clear();
     versionPreviewStateRef.current = null;
     versionPreviewAppliedRef.current = false;
     versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
+  }, [clearVersionPreviewMedia, currentShader?.id]);
+
+  useEffect(() => {
+    if (
+      conflictBlockedShaderRef.current &&
+      conflictBlockedShaderRef.current !== currentShader?.id
+    ) {
+      conflictBlockedShaderRef.current = null;
+    }
   }, [currentShader?.id]);
 
   const openShaderVersions = useCallback(() => {
@@ -5332,15 +6658,38 @@ export default function App() {
 
   const clearShaderVersionPreview = useCallback(() => {
     const snapshot = versionPreviewSnapshotRef.current;
-    const shouldRestore = versionPreviewAppliedRef.current && snapshot;
+    const restoreSnapshot = versionPreviewRestoreSnapshot(
+      snapshot,
+      versionPreviewAppliedRef.current,
+    );
     versionPreviewStateRef.current = null;
     versionPreviewAppliedRef.current = false;
     versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
     compileGenerationRef.current += 1;
-    if (!shouldRestore) return;
-    compile(snapshot.source, { force: true });
-  }, [compile]);
+    clearVersionPreviewMedia();
+    if (!restoreSnapshot) return;
+    compile(restoreSnapshot.source, { force: true });
+    if (
+      restoreSnapshot.kind === "effect" &&
+      !usesCompositionHost("effect", effectFillsRef.current)
+    ) {
+      const mediaRestore = restoreSnapshot.pendingMedia
+        ? applyMediaBlob(
+            restoreSnapshot.pendingMedia,
+            mediaType(restoreSnapshot.pendingMedia) ||
+              restoreSnapshot.pendingMedia.type,
+          )
+        : loadMediaForShader(restoreSnapshot.shader);
+      mediaRestore.catch(() => {});
+    }
+  }, [
+    applyMediaBlob,
+    clearVersionPreviewMedia,
+    compile,
+    loadMediaForShader,
+  ]);
+  clearShaderVersionPreviewRef.current = clearShaderVersionPreview;
 
   const previewShaderVersion = useCallback(
     async (versionId) => {
@@ -5371,6 +6720,10 @@ export default function App() {
           target = await getShaderVersion(currentShader.id, versionId);
           versionPreviewCacheRef.current.set(versionId, target);
         }
+        if (target.snapshot_schema_version !== 2) {
+          clearShaderVersionPreview();
+          return;
+        }
         const hydratedComposition = await hydrateCompositionMediaUrls(
           target.composition
         );
@@ -5387,11 +6740,18 @@ export default function App() {
           if (!versionPreviewSnapshotRef.current) {
             versionPreviewSnapshotRef.current = {
               source: sourceRef.current,
+              kind: sessionKindRef.current,
+              shader: currentShader,
+              pendingMedia,
             };
           }
           versionPreviewStateRef.current = { versionId };
           versionPreviewAppliedRef.current = true;
           await compileComposition(target.composition, {
+            layerSourceOverrides: dependencyLayerSourceOverrides(
+              target.composition,
+              target.dependency_snapshots
+            ),
             syncEditorState: false,
           });
           return;
@@ -5411,6 +6771,9 @@ export default function App() {
         if (!versionPreviewSnapshotRef.current) {
           versionPreviewSnapshotRef.current = {
             source: sourceRef.current,
+            kind: sessionKindRef.current,
+            shader: currentShader,
+            pendingMedia,
           };
         }
         versionPreviewStateRef.current = { versionId };
@@ -5422,22 +6785,26 @@ export default function App() {
             effectFillsRef.current
           );
           if (usesCompositionHost("effect", previewFills)) {
+            const previewGraph = {
+              fills: previewFills,
+              effects: [
+                {
+                  id: EFFECT_PREVIEW_LAYER_ID,
+                  shaderId: draftSessionRef.current.presetId,
+                  values: nextValues,
+                  enabled: true,
+                },
+              ],
+            };
+            const previewLayerSources = dependencyLayerSourceOverrides(
+              previewGraph,
+              target.dependency_snapshots
+            );
+            previewLayerSources.set(EFFECT_PREVIEW_LAYER_ID, target.source);
             await compileComposition(
+              previewGraph,
               {
-                fills: previewFills,
-                effects: [
-                  {
-                    id: EFFECT_PREVIEW_LAYER_ID,
-                    shaderId: draftSessionRef.current.presetId,
-                    values: nextValues,
-                    enabled: true,
-                  },
-                ],
-              },
-              {
-                layerSourceOverrides: new Map([
-                  [EFFECT_PREVIEW_LAYER_ID, target.source],
-                ]),
+                layerSourceOverrides: previewLayerSources,
                 syncEditorState: false,
               }
             );
@@ -5467,6 +6834,15 @@ export default function App() {
           clearShaderVersionPreview();
           return;
         }
+        if (target.kind === "effect") {
+          await loadMediaForShader(target, { previewOnly: true });
+          if (
+            requestId !== versionPreviewRequestRef.current ||
+            previewGeneration !== compileGenerationRef.current
+          ) {
+            return;
+          }
+        }
         host.setParams(nextValues);
         host.setActive(true);
         if (playPreferenceRef.current && nextFeatures.isAnimated) {
@@ -5483,6 +6859,8 @@ export default function App() {
       compileComposition,
       currentShader,
       dirty,
+      loadMediaForShader,
+      pendingMedia,
       runtimeReady,
       shaderVersions,
     ]
@@ -5503,12 +6881,18 @@ export default function App() {
       versionPreviewAppliedRef.current = false;
       versionPreviewSnapshotRef.current = null;
       versionPreviewRequestRef.current += 1;
+      clearVersionPreviewMedia();
       const restoreShaderId = currentShader.id;
       const restorePresetId = cloudChoiceId(restoreShaderId);
       setRestoringVersion(true);
       setError(null);
       try {
         const target = await getShaderVersion(restoreShaderId, versionId);
+        if (target.snapshot_schema_version !== 2) {
+          throw new Error(
+            `Version ${target.version_number} predates complete visual snapshots and cannot be restored safely.`
+          );
+        }
         const validation =
           target.kind === COMPOSITION_KIND
             ? { ok: true }
@@ -5523,7 +6907,7 @@ export default function App() {
         if (dirty) {
           expectedShader =
             (await saveShader({
-              checkpointKind: "manual",
+              checkpointKind: "before_restore",
               checkpointSummary: "Before restoring an earlier version",
               notice: null,
             })) || expectedShader;
@@ -5536,11 +6920,18 @@ export default function App() {
               restoreShaderVersion({
                 shaderId: restoreShaderId,
                 versionId,
-                expectedStateRevision: expectedShader.state_revision,
+                expectedStateRevision: expectedStateRevision(
+                  committedStateRevisionsRef.current,
+                  expectedShader,
+                ),
               })
             );
             return result.value;
           }
+        );
+        rememberStateRevision(
+          committedStateRevisionsRef.current,
+          restored,
         );
         setCloudShaders((current) => [
           restored,
@@ -5555,31 +6946,65 @@ export default function App() {
             restored.kind === COMPOSITION_KIND
               ? normalizeComposition(restoredComposition)
               : null;
+          activeDependencySnapshotsRef.current =
+            restored.dependency_snapshots &&
+            typeof restored.dependency_snapshots === "object"
+              ? structuredClone(restored.dependency_snapshots)
+              : {};
+          sourceRef.current = restored.source || "";
+          sessionKindRef.current = restored.kind;
           compositionRef.current = nextComposition;
           pendingValuesRef.current = restored.parameter_values || {};
+          sessionInputAppliedRef.current = null;
           setCurrentShader(restored);
           setSource(restored.source || "");
           setSessionKind(restored.kind);
           setComposition(nextComposition);
+          let restoredFills = [];
           if (restored.kind === "effect") {
-            const restoredFills = readEffectFillsFromComposition(
+            restoredFills = readEffectFillsFromComposition(
               restoredComposition,
-              effectFillsRef.current
+              [],
             );
             effectFillsRef.current = restoredFills;
             effectFillRef.current = restoredFills[0] || null;
             setEffectFills(restoredFills);
             setEffectFill(restoredFills[0] || null);
+          } else {
+            effectFillsRef.current = [];
+            effectFillRef.current = null;
+            setEffectFills([]);
+            setEffectFill(null);
           }
-          setDirty(false);
-          lastSavedFingerprintRef.current = shaderContentFingerprint({
-            name: restored.name,
-            description: restored.description,
-            source: restored.source,
-            parameterValues: restored.parameter_values,
-            features: restored.features || inferFeatures(restored.source || ""),
-            composition: restored.composition,
+          if (
+            restored.kind === "effect" &&
+            restoredFills.length === 0
+          ) {
+            sessionInputAppliedRef.current = restorePresetId;
+          }
+          await refreshRestoredRuntime({
+            restored,
+            composition: nextComposition,
+            effectFills: restoredFills,
+            layerSourceOverrides: dependencyLayerSourceOverrides(
+              nextComposition,
+              activeDependencySnapshotsRef.current,
+            ),
+            compile,
+            compileComposition,
+            loadMedia: loadMediaForShader,
+            restoreDefaultInput: () =>
+              restoreSample(++inputApplyGenRef.current),
           });
+          setPendingMedia(null);
+          setDirty(false);
+          lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+            buildShaderDocumentSnapshot(restored),
+            {
+              name: restored.name,
+              description: restored.description,
+            }
+          );
           await refreshShaderVersions(restored.id);
           showNotice(`Restored Version ${target.version_number}.`);
         }
@@ -5587,8 +7012,15 @@ export default function App() {
         if (isShaderStateConflict(restoreError)) {
           try {
             const latest = await getShader(restoreShaderId);
+            rememberStateRevision(
+              committedStateRevisionsRef.current,
+              latest,
+            );
+            setCloudShaders((current) => [
+              latest,
+              ...current.filter((item) => item.id !== latest.id),
+            ]);
             if (draftSessionRef.current.presetId === restorePresetId) {
-              setCurrentShader(latest);
               await refreshShaderVersions();
             }
           } catch {
@@ -5606,9 +7038,14 @@ export default function App() {
     },
     [
       currentShader,
+      clearVersionPreviewMedia,
+      compile,
+      compileComposition,
       dirty,
       isOwner,
+      loadMediaForShader,
       refreshShaderVersions,
+      restoreSample,
       restoringVersion,
       saveShader,
       showNotice,
@@ -5620,31 +7057,84 @@ export default function App() {
       routeEmbed ||
       !user ||
       !currentShader ||
-      !isOwner ||
-      !dirty ||
-      saving
+      pendingAgentCheckpoint ||
+      agentCheckpointSavingRef.current
     ) {
       return;
     }
-    if (Boolean(isPublic) !== Boolean(currentShader.is_public)) return;
+    const documentSnapshot = captureDocumentSnapshot();
+    const currentFingerprint = editorPersistenceFingerprint(documentSnapshot, {
+      name: shaderName.trim() || "Untitled Shader",
+      description: shaderDescription,
+    });
+    const liveFills =
+      documentSnapshot.kind === COMPOSITION_KIND
+        ? normalizeComposition(compositionRef.current).fills
+        : documentSnapshot.kind === "effect"
+          ? effectFillsRef.current
+          : [];
+    const disposition = getAutosaveDisposition({
+      dirty,
+      isOwner,
+      visibilityMatches:
+        Boolean(isPublic) === Boolean(currentShader.is_public),
+      conflictBlocked:
+        conflictBlockedShaderRef.current === currentShader.id,
+      hasPendingMedia:
+        Boolean(pendingMedia) || fillMediaEntries(liveFills).length > 0,
+      mediaPersistenceReady: true,
+      saveInProgress: saving,
+      queueBusy: shaderSaveQueue.isBusy(currentShader.id),
+      currentFingerprint,
+      savedFingerprint: lastSavedFingerprintRef.current,
+    });
+    if (disposition.disposition === AUTOSAVE_DISPOSITION.NO_OP) {
+      if (disposition.reason === "fingerprint-match" && dirty) setDirty(false);
+      return;
+    }
+    if (disposition.disposition === AUTOSAVE_DISPOSITION.SKIP_RETRY) {
+      if (
+        disposition.reason === "visibility-change-requires-explicit-save" ||
+        disposition.reason === "state-conflict-requires-explicit-save"
+      ) {
+        return;
+      }
+      const retry = window.setTimeout(
+        () => setAutosaveRetryRevision((revision) => revision + 1),
+        1000
+      );
+      return () => window.clearTimeout(retry);
+    }
     const delay = Math.max(
       BACKGROUND_AUTOSAVE_MS,
       cloudWriteBackoffUntilRef.current - Date.now()
     );
     const timer = window.setTimeout(() => {
+      if (
+        pendingAgentCheckpointRef.current ||
+        agentCheckpointSavingRef.current
+      ) {
+        return;
+      }
       saveShader({ background: true, notice: null }).catch(() => {
         // The editor remains dirty so a later edit or explicit Save can retry.
       });
     }, delay);
     return () => window.clearTimeout(timer);
   }, [
+    autosaveRetryRevision,
+    captureDocumentSnapshot,
     currentShader,
     dirty,
     isOwner,
     isPublic,
+    pendingAgentCheckpoint,
+    pendingMedia,
     routeEmbed,
     saveShader,
     saving,
+    shaderDescription,
+    shaderName,
     user,
   ]);
 
@@ -5706,6 +7196,44 @@ export default function App() {
     setDuplicating(true);
     try {
       persistActiveDraft();
+      const duplicateKind =
+        sessionKindRef.current === COMPOSITION_KIND
+          ? COMPOSITION_KIND
+          : detectKind(sourceRef.current);
+      const liveGraph =
+        duplicateKind === COMPOSITION_KIND
+          ? compositionWithLayerValues(
+              compositionRef.current,
+              selectedLayerIdRef.current,
+              valuesRef.current
+            )
+          : null;
+      const liveFills =
+        duplicateKind === COMPOSITION_KIND
+          ? normalizeComposition(liveGraph).fills
+          : duplicateKind === "effect"
+            ? normalizeComposition({
+                fills: effectFillsRef.current,
+                effects: [],
+              }).fills
+            : [];
+      const documentSnapshot = captureDocumentSnapshot({
+        kind: duplicateKind,
+        composition: liveGraph,
+        effectFills: liveFills,
+      });
+      const sourceThreadKey = chatShaderKey;
+      const copiedPlan = await readPlanForCopy({
+        threadKey: sourceThreadKey,
+        ownerId:
+          currentShader && user && currentShader.owner_id === user.id
+            ? currentShader.owner_id
+            : null,
+        shaderId:
+          currentShader && user && currentShader.owner_id === user.id
+            ? currentShader.id
+            : null,
+      });
       let mediaFile = pendingMedia;
       if (!mediaFile && currentShader?.input_path) {
         try {
@@ -5720,74 +7248,165 @@ export default function App() {
         }
       }
       const id = `draft:${crypto.randomUUID()}`;
-      const name = `${shaderName} Copy`;
-      const isComposition = sessionKindRef.current === COMPOSITION_KIND;
-      const graph = isComposition
-        ? compositionWithLayerValues(
-            compositionRef.current,
-            selectedLayerIdRef.current,
-            valuesRef.current
-          )
-        : undefined;
+      const name = `${shaderName || "Untitled Shader"} Copy`;
+      if (user) {
+        const cloudId = cloudIdForDraft(id);
+        const { durableFills, firstInput } =
+          await uploadFillAssetsForTarget({
+            fills: liveFills,
+            ownerId: user.id,
+            shaderId: cloudId,
+            copyDurableAssets: true,
+          });
+        let durableInput = firstInput;
+        if (!durableInput.path && mediaFile && duplicateKind === "effect") {
+          if (mediaFile.size > MAX_MEDIA_BYTES) {
+            throw new Error("Input media must be 25 MB or smaller.");
+          }
+          const contentType = mediaType(mediaFile);
+          durableInput = {
+            path: await uploadAsset({
+              ownerId: user.id,
+              shaderId: cloudId,
+              role: "input",
+              blob: mediaFile,
+              fileName: mediaFile.name,
+              contentType,
+            }),
+            name: mediaFile.name,
+            mimeType: contentType,
+          };
+        }
+        const durableComposition =
+          duplicateKind === COMPOSITION_KIND
+            ? normalizeComposition({ ...liveGraph, fills: durableFills })
+            : duplicateKind === "effect"
+              ? {
+                  effectFills: durableFills,
+                  effectFill: durableFills[0] || null,
+                }
+              : {};
+        const dependencyGraph =
+          duplicateKind === COMPOSITION_KIND
+            ? durableComposition
+            : duplicateKind === "effect"
+              ? normalizeComposition({ fills: durableFills, effects: [] })
+              : emptyComposition();
+        const dependencySnapshots = buildCompositionDependencySnapshots({
+          graph: dependencyGraph,
+          resolvedByKey: new Map(Object.entries(resolvedShaders)),
+          liveByKey: liveShaderSourceRef.current,
+          cloudRows: cloudShaders,
+          existingSnapshots: documentSnapshot.dependencySnapshots,
+        });
+        const durableDocument = buildShaderDocumentSnapshot({
+          ...documentSnapshot,
+          composition: durableComposition,
+          effectFills: durableFills,
+          input: durableInput,
+          dependencySnapshots,
+        });
+        const saved = await createShader({
+          id: cloudId,
+          owner_id: user.id,
+          name,
+          description: shaderDescription,
+          ...buildShaderDocumentPayload(durableDocument),
+          is_public: false,
+          ...figmaShaderLink(null),
+        });
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          durableDocument,
+          { name, description: shaderDescription }
+        );
+        const targetThreadKey = `cloud:${saved.id}`;
+        await copyPlanToCloud(
+          targetThreadKey,
+          copiedPlan,
+          user.id,
+          saved.id
+        );
+        copyChatThreadKey(sourceThreadKey, targetThreadKey);
+        copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
+        await activateShaderSession({
+          sessionId: cloudChoiceId(saved.id),
+          routeId: saved.id,
+          name,
+          description: saved.description || "",
+          source: saved.source,
+          kind: saved.kind,
+          composition: saved.composition,
+          values: saved.parameter_values || {},
+          public: false,
+          media: null,
+          dirty: false,
+          cloudShader: saved,
+          persistPrevious: false,
+        });
+        showNotice("Private draft created");
+        return;
+      }
+      const annotatedFills = await persistLocalDraftMedia(
+        id,
+        liveFills,
+        mediaFile
+      );
+      const localComposition =
+        duplicateKind === COMPOSITION_KIND
+          ? normalizeComposition({ ...liveGraph, fills: annotatedFills })
+          : duplicateKind === "effect"
+            ? {
+                effectFills: annotatedFills,
+                effectFill: annotatedFills[0] || null,
+              }
+            : {};
       const draft = {
         id,
         name,
         description: shaderDescription,
-        kind: isComposition
-          ? COMPOSITION_KIND
-          : detectKind(sourceRef.current),
-        source: isComposition ? "" : sourceRef.current,
-        values: isComposition ? {} : { ...valuesRef.current },
-        composition: graph,
+        kind: documentSnapshot.kind,
+        source: documentSnapshot.source,
+        values: documentSnapshot.parameterValues,
+        composition: localComposition,
+        effectFills:
+          documentSnapshot.kind === "effect" ? annotatedFills : undefined,
+        effectFill:
+          documentSnapshot.kind === "effect"
+            ? annotatedFills[0] || null
+            : undefined,
+        dependencySnapshots: documentSnapshot.dependencySnapshots,
         isPublic: false,
         pendingMedia: mediaFile,
         // A duplicate is a new local shader, not a second writer for the same
         // remote Figma resource. Only the imported original keeps its link.
         ...figmaShaderLink(null),
       };
-      if (user) {
-        const saved = await createShader({
-          id: cloudIdForDraft(id),
-          owner_id: user.id,
-          name,
-          description: shaderDescription,
-          source: draft.source,
-          kind: draft.kind,
-          parameter_values: draft.values,
-          features: isComposition
-            ? collectCompositionFeatures(
-                graph,
-                new Map(Object.entries(resolvedShaders))
-              )
-            : inferFeatures(draft.source),
-          composition: graph || {},
-          is_public: false,
-          ...figmaShaderLink(null),
-        });
-        setCurrentShader(saved);
-        setPresetId(cloudChoiceId(saved.id));
-        setShaderRoute(saved.id, saved.kind);
-        setShaderName(name);
-        setShaderDescription(saved.description || "");
-        setIsPublic(false);
-        setPendingMedia(mediaFile);
-        setDirty(true);
-        setCloudShaders((current) => [
-          saved,
-          ...current.filter((item) => item.id !== saved.id),
-        ]);
-        showNotice("Private draft created");
-        return;
-      }
       setDrafts((current) => [draft, ...current]);
-      setCurrentShader(null);
-      setPresetId(id);
-      setShaderRoute(id, draft.kind);
-      setShaderName(name);
-      setShaderDescription(draft.description);
-      setIsPublic(false);
-      setPendingMedia(mediaFile);
-      setDirty(true);
+      const targetThreadKey = `preset:${id}`;
+      if (isPlanDocument(copiedPlan)) {
+        saveLocalPlan(targetThreadKey, copiedPlan);
+      }
+      copyChatThreadKey(sourceThreadKey, targetThreadKey);
+      copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
+      await activateShaderSession({
+        sessionId: id,
+        routeId: id,
+        name,
+        description: draft.description,
+        source: draft.source,
+        kind: draft.kind,
+        composition: draft.composition,
+        values: draft.values,
+        public: false,
+        media: mediaFile,
+        dependencySnapshots: draft.dependencySnapshots,
+        dirty: true,
+        persistPrevious: false,
+      });
       showNotice("Unsaved copy created");
     } catch (duplicateError) {
       setError(duplicateError.message || String(duplicateError));
@@ -5798,11 +7417,15 @@ export default function App() {
       setDuplicating(false);
     }
   }, [
+    activateShaderSession,
+    captureDocumentSnapshot,
+    chatShaderKey,
+    cloudShaders,
     currentShader,
     duplicating,
     pendingMedia,
     persistActiveDraft,
-    setShaderRoute,
+    resolvedShaders,
     shaderDescription,
     shaderName,
     showNotice,
@@ -5820,14 +7443,33 @@ export default function App() {
             `Delete or unpublish the referencing ${parents.length === 1 ? "item" : "items"} first: ${parents.map((item) => item.name).join(", ")}.`
           );
         }
-        await removeShaderPlan(shader.owner_id, shader.id);
-        await removeAssets([shader.input_path, shader.thumbnail_path]);
+        const [assetPaths, retainedAssets] = await Promise.all([
+          listShaderAssetPaths(shader.owner_id, shader.id),
+          listRetainedShaderAssetPaths(shader.id),
+        ]);
+        const retained = new Set(retainedAssets);
+        const disposableAssets = assetPaths.filter(
+          (path) => !retained.has(path),
+        );
         await deleteShader(shader.id);
+        const cleanupResults = await Promise.allSettled([
+          removeShaderPlan(shader.owner_id, shader.id),
+          removeAssets(disposableAssets),
+        ]);
         setCloudShaders((current) =>
           current.filter((item) => item.id !== shader.id)
         );
         selectAfterLibraryDelete(cloudChoiceId(shader.id));
-        showNotice("Shader deleted");
+        showNotice(
+          cleanupResults.some((result) => result.status === "rejected")
+            ? "Shader deleted; some stored files could not be cleaned up"
+            : "Shader deleted",
+          {
+            error: cleanupResults.some(
+              (result) => result.status === "rejected",
+            ),
+          },
+        );
         return true;
       } catch (deleteError) {
         setError(deleteError.message || String(deleteError));
@@ -5918,8 +7560,8 @@ export default function App() {
       return buildStandaloneEmbedCode({
         composition: serializeCompositionExport(
           composition,
-          resolvedByKey,
-          liveShaderSourceRef.current
+          pinAwareResolvedByKey,
+          null
         ),
       });
     }
@@ -5928,7 +7570,7 @@ export default function App() {
       values,
       kind,
     });
-  }, [composition, exportOpen, kind, resolvedByKey, source, values]);
+  }, [composition, exportOpen, kind, pinAwareResolvedByKey, source, values]);
   const embedCode =
     iframeEmbedSelected
       ? iframeEmbedCode
@@ -6332,27 +7974,72 @@ export default function App() {
   const onCompositionChange = useCallback(
     (next) => {
       if (protectedPreview) return;
-      const graph = normalizeComposition(next);
+      clearShaderVersionPreviewRef.current?.();
+      let graph = normalizeComposition(next);
+      if (!user && isDraftId(presetId)) {
+        graph = normalizeComposition({
+          ...graph,
+          fills: annotateLocalDraftMediaKeys(presetId, graph.fills),
+        });
+        if (fillMediaEntries(graph.fills).length > 0) {
+          draftMediaPersistenceErrorRef.current = null;
+          const persistence = persistLocalDraftMedia(
+            presetId,
+            graph.fills,
+            pendingMedia,
+          );
+          draftMediaPersistenceRef.current = persistence;
+          persistence.then(
+            () => {
+              if (draftMediaPersistenceRef.current === persistence) {
+                draftMediaPersistenceRef.current = null;
+              }
+            },
+            (mediaError) => {
+              draftMediaPersistenceErrorRef.current = mediaError;
+              if (draftMediaPersistenceRef.current === persistence) {
+                draftMediaPersistenceRef.current = null;
+              }
+              setError(
+                mediaError.message ||
+                  "Local media could not be saved for browser reload.",
+              );
+            },
+          );
+        }
+      }
+      const retainedPins = {};
+      for (const key of referencedShaderKeys(graph)) {
+        const pin = dependencySnapshotForKey(
+          activeDependencySnapshotsRef.current,
+          key
+        );
+        if (pin) retainedPins[key] = pin;
+      }
+      activeDependencySnapshotsRef.current = retainedPins;
       compositionRef.current = graph;
       setComposition(graph);
       setDirty(true);
     },
-    [protectedPreview]
+    [pendingMedia, presetId, protectedPreview, user]
   );
 
   const onCompositionSelectLayer = useCallback((layerId) => {
     selectedLayerIdRef.current = layerId;
     setSelectedLayerId(layerId);
     const graph = normalizeComposition(compositionRef.current);
-    const source = resolveReferencedShaderSource(
-      compositionLayerShaderId(graph, layerId),
-      {
+    const layerShaderId = compositionLayerShaderId(graph, layerId);
+    const source =
+      dependencySnapshotForKey(
+        activeDependencySnapshotsRef.current,
+        layerShaderId
+      )?.source ||
+      resolveReferencedShaderSource(layerShaderId, {
         session: draftSessionRef.current,
         drafts,
         liveByKey: liveShaderSourceRef.current,
         resolvedByKey: new Map(Object.entries(resolvedShaders)),
-      }
-    );
+      });
     if (!source) {
       setProps({});
       valuesRef.current = {};
@@ -6609,7 +8296,7 @@ export default function App() {
                 key={presetId}
                 graph={composition}
                 imageUrl={inputImageUrl}
-                resolvedByKey={resolvedByKey}
+                resolvedByKey={pinAwareResolvedByKey}
                 fillCards={compositionFillCards}
                 effectCards={compositionEffectCards}
                 nameCards={compositionNameCards}
@@ -6690,50 +8377,53 @@ export default function App() {
                 fillOnly
                 graph={{ fills: effectFills, effects: [] }}
                 imageUrl={inputImageUrl}
-                resolvedByKey={resolvedByKey}
+                resolvedByKey={pinAwareResolvedByKey}
                 fillCards={compositionFillCards}
                 nameCards={compositionNameCards}
                 readOnly={protectedPreview}
                 onOpenShader={openHomeChoice}
-                onResetLayer={(fillId) => {
-                  const graph = normalizeComposition({
-                    fills: effectFillsRef.current,
-                    effects: [],
-                  });
-                  const fill = graph.fills.find((item) => item.id === fillId);
-                  const sourceText = resolveReferencedShaderSource(
-                    fill?.shaderId,
-                    {
-                      session: draftSessionRef.current,
-                      drafts,
-                      liveByKey: liveShaderSourceRef.current,
-                      resolvedByKey,
-                    }
-                  );
-                  if (!sourceText) return;
-                  try {
-                    const loaded = loadModule(sourceText);
-                    const nextValues = buildDefaults(loaded.props);
-                    const fills = graph.fills.map((item) =>
-                      item.id === fillId
-                        ? { ...item, values: nextValues }
-                        : item
-                    );
-                    effectFillsRef.current = fills;
-                    setEffectFills(fills);
-                    effectFillRef.current = fills[0] || null;
-                    setEffectFill(fills[0] || null);
-                    hostRef.current?.setCompositionLayerParams?.(
-                      fillId,
-                      nextValues
-                    );
-                    setDirty(true);
-                  } catch (resetError) {
-                    setError(resetError.message || String(resetError));
-                  }
-                }}
+                onResetLayer={resetEffectFillProperties}
                 onChange={(next) => {
-                  const fills = normalizeComposition(next).fills;
+                  clearShaderVersionPreviewRef.current?.();
+                  const nextFills = normalizeComposition(next).fills;
+                  const fills =
+                    !user && isDraftId(presetId)
+                      ? annotateLocalDraftMediaKeys(presetId, nextFills)
+                      : nextFills;
+                  if (
+                    !user &&
+                    isDraftId(presetId) &&
+                    fillMediaEntries(fills).length > 0
+                  ) {
+                    draftMediaPersistenceErrorRef.current = null;
+                    const persistence = persistLocalDraftMedia(
+                      presetId,
+                      fills,
+                      pendingMedia,
+                    );
+                    draftMediaPersistenceRef.current = persistence;
+                    persistence.then(
+                      () => {
+                        if (
+                          draftMediaPersistenceRef.current === persistence
+                        ) {
+                          draftMediaPersistenceRef.current = null;
+                        }
+                      },
+                      (mediaError) => {
+                        draftMediaPersistenceErrorRef.current = mediaError;
+                        if (
+                          draftMediaPersistenceRef.current === persistence
+                        ) {
+                          draftMediaPersistenceRef.current = null;
+                        }
+                        setError(
+                          mediaError.message ||
+                            "Local media could not be saved for browser reload.",
+                        );
+                      },
+                    );
+                  }
                   const previousKey = effectFillPreviewKey(
                     effectFillsRef.current
                   );
@@ -6884,7 +8574,9 @@ export default function App() {
         return normalizedLink;
       }
       if (currentShader?.id && isOwner) {
-        const saved = await updateShader(currentShader.id, normalizedLink);
+        const saved = await updateShader(currentShader.id, normalizedLink, {
+          expectedStateRevision: currentShader.state_revision,
+        });
         setCurrentShader(saved);
         setCloudShaders((current) =>
           current.map((shader) =>
@@ -6969,14 +8661,15 @@ export default function App() {
 
   const beginFigmaSync = useCallback(async () => {
     if (figmaSyncing || sessionKind === COMPOSITION_KIND) return;
+    const documentSnapshot = captureDocumentSnapshot();
     const snapshot = {
       name: shaderName.trim() || "Untitled Shader",
       description: shaderDescription,
-      source: sourceRef.current,
+      source: documentSnapshot.source,
       kind: activeFigmaLink.figma_shader_id
         ? activeFigmaLink.figma_shader_kind ||
-          (sessionKind === "fill" ? "fill" : "effect")
-        : sessionKind === "fill"
+          (documentSnapshot.kind === "fill" ? "fill" : "effect")
+        : documentSnapshot.kind === "fill"
           ? "fill"
           : "effect",
     };
@@ -7002,6 +8695,7 @@ export default function App() {
     }
   }, [
     activeFigmaLink,
+    captureDocumentSnapshot,
     createShaderInFigma,
     figmaSyncing,
     runFigmaUpdate,

@@ -48,7 +48,8 @@ Inferred features: ${features}.
 
 Studio context:
 - The user is editing a single module in a live WebGPU preview.
-- Always treat the "Current module source" block below as the latest ground truth (it may have changed since earlier chat turns).
+- Always treat the "Current module source" block below as the latest and only code ground truth. It may contain manual edits or a restored saved version that supersedes earlier chat turns.
+- Historical assistant messages describe earlier revisions. Never reconstruct or preserve code from an earlier assistant response when it conflicts with the Current module source.
 - Prefer smallest working edits that compile in the browser preview.
 - Keep defineProperties keys stable unless the user asks to change the UI.
 - Do not invent CLI workflows, product-brief.md, or multi-file project scaffolding unless asked.

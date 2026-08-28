@@ -13,6 +13,34 @@ export function userContentForApi(message) {
   return message?.content;
 }
 
+const COMPLETE_ASSISTANT_MODULE_RE =
+  /```(?:typescript|ts|tsx|javascript|js|jsx)?[ \t]*\n[\s\S]*?```/gi;
+const OPEN_ASSISTANT_MODULE_RE =
+  /```(?:typescript|ts|tsx|javascript|js|jsx)?[ \t]*\n[\s\S]*$/gi;
+const OMITTED_MODULE_NOTE =
+  "[Earlier generated module omitted. The Current module source supplied with this request is authoritative.]";
+
+/**
+ * Keep prior discussion while removing stale generated modules. The complete
+ * live source is supplied separately on every request.
+ */
+export function assistantContentForApi(message) {
+  const content = String(message?.content || "");
+  COMPLETE_ASSISTANT_MODULE_RE.lastIndex = 0;
+  OPEN_ASSISTANT_MODULE_RE.lastIndex = 0;
+  const withoutCompleteModules = content.replace(
+    COMPLETE_ASSISTANT_MODULE_RE,
+    ""
+  );
+  const withoutModules = withoutCompleteModules.replace(
+    OPEN_ASSISTANT_MODULE_RE,
+    ""
+  );
+  if (withoutModules === content) return message?.content;
+  const prose = withoutModules.replace(/\n{3,}/g, "\n\n").trim();
+  return prose ? `${prose}\n\n${OMITTED_MODULE_NOTE}` : OMITTED_MODULE_NOTE;
+}
+
 /**
  * Build provider-neutral history, attaching base64 media only to the current
  * user message. Persisted history intentionally contains metadata only.
@@ -34,7 +62,9 @@ export function toApiMessages(messages, pendingAttachments = []) {
       const api = {
         role: message.role,
         content:
-          message.role === "user" ? userContentForApi(message) : message.content,
+          message.role === "user"
+            ? userContentForApi(message)
+            : assistantContentForApi(message),
       };
       if (
         isLast &&
