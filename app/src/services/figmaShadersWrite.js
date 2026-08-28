@@ -38,6 +38,26 @@ function requiredSource(value) {
   return source;
 }
 
+function optionalMetadata(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const metadata = {};
+  if (typeof value.name === "string" && value.name.trim()) {
+    metadata.name = value.name.trim();
+  }
+  if (typeof value.description === "string" && value.description.trim()) {
+    metadata.description = value.description.trim();
+  }
+  if (typeof value.isAnimated === "boolean") {
+    metadata.isAnimated = value.isAnimated;
+  }
+  if (typeof value.usesMouse === "boolean") {
+    metadata.usesMouse = value.usesMouse;
+  }
+  return Object.keys(metadata).length ? metadata : undefined;
+}
+
 /**
  * @param {unknown} value
  */
@@ -107,7 +127,13 @@ export async function createFigmaShader(request, args, options = {}) {
 
 /**
  * @param {(body: Record<string, unknown>, options?: Record<string, unknown>) => Promise<unknown>} request
- * @param {{ id: string, kind: "effect" | "fill", mainTs: string, commitMessage: string }} args
+ * @param {{
+ *   id: string,
+ *   kind: "effect" | "fill",
+ *   mainTs: string,
+ *   metadata?: { name?: string, description?: string, isAnimated?: boolean, usesMouse?: boolean },
+ *   commitMessage: string,
+ * }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */
 export async function updateFigmaShader(request, args, options = {}) {
@@ -116,12 +142,14 @@ export async function updateFigmaShader(request, args, options = {}) {
       code: "not_configured",
     });
   }
+  const metadata = optionalMetadata(args?.metadata);
   const payload = await request(
     {
       op: "update",
       id: requiredString(args?.id, "id"),
       kind: requiredKind(args?.kind),
       mainTs: requiredSource(args?.mainTs),
+      ...(metadata ? { metadata } : {}),
       commitMessage: requiredString(args?.commitMessage, "commitMessage"),
     },
     options

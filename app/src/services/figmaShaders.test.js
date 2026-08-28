@@ -94,6 +94,12 @@ test("updateFigmaShader sends only the staging MCP update contract", async () =>
       id: "shader-1",
       kind: "fill",
       mainTs: "export default function Fill() {}",
+      metadata: {
+        name: "Still Fill",
+        description: "A static procedural fill.",
+        isAnimated: false,
+        usesMouse: false,
+      },
       commitMessage: "Update Fill from Shader Studio",
     }
   );
@@ -102,6 +108,12 @@ test("updateFigmaShader sends only the staging MCP update contract", async () =>
     id: "shader-1",
     kind: "fill",
     mainTs: "export default function Fill() {}",
+    metadata: {
+      name: "Still Fill",
+      description: "A static procedural fill.",
+      isAnimated: false,
+      usesMouse: false,
+    },
     commitMessage: "Update Fill from Shader Studio",
   });
   assert.equal(result.version, "v2");

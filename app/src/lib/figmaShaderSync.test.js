@@ -6,6 +6,7 @@ import {
   figmaShaderDescription,
   figmaShaderProgressMessage,
   figmaShaderSuccessMessage,
+  figmaShaderUpdateMetadata,
 } from "./figmaShaderSync.js";
 
 test("Figma menu and toast labels reflect kind and linkage", () => {
@@ -41,6 +42,7 @@ test("create persists the scaffold link before deploying source", async () => {
       events.push(["create", args]);
       return { id: "shader-1", kind: "effect", version: null };
     },
+    get: async (id) => events.push(["get", id]),
     update: async (args) => {
       events.push(["update", args]);
       return { id: "shader-1", kind: "effect", version: "v2" };
@@ -50,7 +52,7 @@ test("create persists the scaffold link before deploying source", async () => {
 
   assert.deepEqual(
     events.map(([event]) => event),
-    ["create", "persist", "update", "persist"]
+    ["create", "persist", "get", "update", "persist"]
   );
   assert.equal(result.figma_shader_version, "v2");
   assert.equal(
@@ -61,8 +63,32 @@ test("create persists the scaffold link before deploying source", async () => {
     id: "shader-1",
     kind: "effect",
     mainTs: "export default function Effect() {}",
+    metadata: {
+      name: "Glow",
+      description: "A warm glow blooms around the brightest details.",
+      isAnimated: false,
+      usesMouse: false,
+    },
     commitMessage: "Create Glow from Shader Studio",
   });
+});
+
+test("update metadata explicitly carries inferred animation and mouse flags", () => {
+  assert.deepEqual(
+    figmaShaderUpdateMetadata({
+      name: "Cursor waves",
+      description: "",
+      kind: "fill",
+      mainTs:
+        "export function render(device, frame) { return frame.time + frame.mousePosition.x }",
+    }),
+    {
+      name: "Cursor waves",
+      description: "Shader fill created in Shader Studio.",
+      isAnimated: true,
+      usesMouse: true,
+    }
+  );
 });
 
 test("Figma creation falls back when no generated description exists", () => {

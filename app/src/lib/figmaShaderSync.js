@@ -1,3 +1,5 @@
+import { inferFeatures } from "../runtime/params.js";
+
 export function figmaShaderKindLabel(kind) {
   return kind === "fill" ? "fill" : "effect";
 }
@@ -29,16 +31,37 @@ export function figmaShaderDescription(snapshot) {
   );
 }
 
+export function figmaShaderUpdateMetadata(snapshot) {
+  const inferred = inferFeatures(snapshot?.mainTs || snapshot?.source || "");
+  return {
+    name:
+      typeof snapshot?.name === "string" && snapshot.name.trim()
+        ? snapshot.name.trim()
+        : "Untitled Shader",
+    description: figmaShaderDescription(snapshot),
+    isAnimated:
+      typeof snapshot?.features?.isAnimated === "boolean"
+        ? snapshot.features.isAnimated
+        : inferred.isAnimated,
+    usesMouse:
+      typeof snapshot?.features?.usesMouse === "boolean"
+        ? snapshot.features.usesMouse
+        : inferred.usesMouse,
+  };
+}
+
 export async function createAndDeployFigmaShader({
   snapshot,
   planKey,
   create,
+  get,
   update,
   persistLink,
 }) {
+  const metadata = figmaShaderUpdateMetadata(snapshot);
   const created = await create({
-    name: snapshot.name,
-    description: figmaShaderDescription(snapshot),
+    name: metadata.name,
+    description: metadata.description,
     planKey,
     kind: snapshot.kind,
   });
@@ -48,11 +71,15 @@ export async function createAndDeployFigmaShader({
     figma_shader_version: created.version || null,
   };
   await persistLink(link);
+  if (typeof get === "function") {
+    await get(created.id);
+  }
   const deployed = await update({
     id: created.id,
     kind: snapshot.kind,
     mainTs: snapshot.mainTs,
-    commitMessage: `Create ${snapshot.name} from Shader Studio`,
+    metadata,
+    commitMessage: `Create ${metadata.name} from Shader Studio`,
   });
   const deployedLink = {
     ...link,

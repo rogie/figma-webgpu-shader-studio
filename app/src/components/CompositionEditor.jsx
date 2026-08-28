@@ -685,28 +685,28 @@ export function ExportPropertiesPane({ disabled = false, onExport }) {
   );
 }
 
-export function FigmaPropertiesPane({ id, features }) {
+export function FigmaPropertiesPane({
+  shader,
+  loading = false,
+  error = "",
+}) {
   const textFields = [
-    ["name", features?.name || "Shader"],
-    ["version", String(features?.version ?? 2)],
-  ];
+    ["id", shader?.id],
+    ["type", shader?.type],
+    ["owner", shader?.owner],
+    ["name", shader?.name || "Shader"],
+    ["version", shader?.version],
+    ...(loading ? [["status", "Loading Figma data…"]] : []),
+    ...(!loading && error ? [["status", "Figma data unavailable"]] : []),
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
   const booleanFields = [
-    ["isAnimated", Boolean(features?.isAnimated)],
-    ["usesMouse", Boolean(features?.usesMouse)],
+    ["isAnimated", Boolean(shader?.isAnimated)],
+    ["usesMouse", Boolean(shader?.usesMouse)],
   ];
 
   return (
     <div className="properties-pane grouped-properties-pane">
       <fig-group name="Figma" collapsible="">
-        <fig-field direction="horizontal" columns="half">
-          <label>id</label>
-          <fig-input-text
-            value={id}
-            readonly=""
-            full=""
-            dangerouslySetInnerHTML={{ __html: "" }}
-          />
-        </fig-field>
         {textFields.map(([key, value]) => (
           <fig-field key={key} direction="horizontal" columns="half">
             <label>{key}</label>

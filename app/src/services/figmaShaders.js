@@ -27,7 +27,14 @@ let callbackPromise = null;
 /** @typedef {"effect" | "fill"} FigmaShaderKind */
 
 /**
- * @typedef {{ id: string, name: string, description?: string }} FigmaShaderSummary
+ * @typedef {{
+ *   id: string,
+ *   name: string,
+ *   description?: string,
+ *   type: FigmaShaderKind,
+ *   kind: FigmaShaderKind,
+ *   owner?: string,
+ * }} FigmaShaderSummary
  */
 
 /**
@@ -35,12 +42,14 @@ let callbackPromise = null;
  *   id: string,
  *   name: string,
  *   description?: string,
+ *   owner?: string,
  *   type?: string,
  *   version?: string,
  *   kind: FigmaShaderKind,
  *   files: Array<{ filename: string, bytes?: number, uri?: string, text?: string }>,
  *   mainTs: string,
  *   featuresJson?: string,
+ *   features?: { name?: string, version?: number, isAnimated?: boolean, usesMouse?: boolean },
  *   productBrief?: string,
  * }} FigmaShaderDetail
  */
@@ -352,16 +361,16 @@ export function disconnectFigma() {
 }
 
 /**
- * @param {FigmaShaderKind} kind
- * @param {{ cursor?: string, token?: string, signal?: AbortSignal }} [options]
+ * @param {FigmaShaderKind | { cursor?: string, token?: string, signal?: AbortSignal }} [kindOrOptions]
+ * @param {{ cursor?: string, token?: string, signal?: AbortSignal }} [maybeOptions]
  * @returns {Promise<{ items: FigmaShaderSummary[], nextCursor: string | null }>}
  */
-export async function listFigmaShaders(kind, options = {}) {
-  if (kind !== "effect" && kind !== "fill") {
-    throw new FigmaShadersError("kind must be effect or fill", {
-      code: "invalid_kind",
-    });
-  }
+export async function listFigmaShaders(kindOrOptions = {}, maybeOptions = {}) {
+  const kind =
+    kindOrOptions === "effect" || kindOrOptions === "fill"
+      ? kindOrOptions
+      : undefined;
+  const options = kind ? maybeOptions : kindOrOptions || {};
   const payload = await callFigmaShaders(
     {
       op: "list",
@@ -370,8 +379,28 @@ export async function listFigmaShaders(kind, options = {}) {
     },
     options
   );
+  const items = (Array.isArray(payload.items) ? payload.items : [])
+    .map((item) => {
+      const type =
+        item?.type === "fill" || item?.kind === "fill"
+          ? "fill"
+          : item?.type === "effect" || item?.kind === "effect"
+            ? "effect"
+            : undefined;
+      if (!type || (kind && type !== kind)) return null;
+      return {
+        id: String(item?.id || ""),
+        name: String(item?.name || "Untitled"),
+        description:
+          typeof item?.description === "string" ? item.description : "",
+        type,
+        kind: type,
+        owner: typeof item?.owner === "string" ? item.owner : undefined,
+      };
+    })
+    .filter((item) => item?.id);
   return {
-    items: Array.isArray(payload.items) ? payload.items : [],
+    items,
     nextCursor:
       typeof payload.nextCursor === "string" ? payload.nextCursor : null,
   };
@@ -379,17 +408,24 @@ export async function listFigmaShaders(kind, options = {}) {
 
 /**
  * Load every page in a shader library.
- * @param {FigmaShaderKind} kind
- * @param {{ token?: string, signal?: AbortSignal }} [options]
+ * @param {FigmaShaderKind | { token?: string, signal?: AbortSignal }} [kindOrOptions]
+ * @param {{ token?: string, signal?: AbortSignal }} [maybeOptions]
  * @returns {Promise<FigmaShaderSummary[]>}
  */
-export async function listAllFigmaShaders(kind, options = {}) {
+export async function listAllFigmaShaders(kindOrOptions = {}, maybeOptions = {}) {
+  const kind =
+    kindOrOptions === "effect" || kindOrOptions === "fill"
+      ? kindOrOptions
+      : undefined;
+  const options = kind ? maybeOptions : kindOrOptions || {};
   const items = [];
   const seenIds = new Set();
   const seenCursors = new Set();
   let cursor;
   do {
-    const page = await listFigmaShaders(kind, { ...options, cursor });
+    const page = kind
+      ? await listFigmaShaders(kind, { ...options, cursor })
+      : await listFigmaShaders({ ...options, cursor });
     for (const item of page.items) {
       if (!seenIds.has(item.id)) {
         seenIds.add(item.id);
@@ -404,17 +440,22 @@ export async function listAllFigmaShaders(kind, options = {}) {
 }
 
 /**
- * @param {FigmaShaderKind} kind
- * @param {string} id
- * @param {{ version?: string, token?: string, signal?: AbortSignal }} [options]
+ * @param {FigmaShaderKind | string} kindOrId
+ * @param {string | { version?: string, token?: string, signal?: AbortSignal }} [idOrOptions]
+ * @param {{ version?: string, token?: string, signal?: AbortSignal }} [maybeOptions]
  * @returns {Promise<FigmaShaderDetail>}
  */
-export async function getFigmaShader(kind, id, options = {}) {
-  if (kind !== "effect" && kind !== "fill") {
-    throw new FigmaShadersError("kind must be effect or fill", {
-      code: "invalid_kind",
-    });
-  }
+export async function getFigmaShader(
+  kindOrId,
+  idOrOptions = {},
+  maybeOptions = {}
+) {
+  const legacyCall =
+    (kindOrId === "effect" || kindOrId === "fill") &&
+    typeof idOrOptions === "string";
+  const kind = legacyCall ? kindOrId : undefined;
+  const id = legacyCall ? idOrOptions : kindOrId;
+  const options = legacyCall ? maybeOptions : idOrOptions || {};
   if (!id?.trim()) {
     throw new FigmaShadersError("Shader id is required", { code: "invalid_id" });
   }
@@ -433,6 +474,23 @@ export async function getFigmaShader(kind, id, options = {}) {
     files.map((file) => [String(file.filename || "").toLowerCase(), file])
   );
   const main = byName.get("main.ts");
+  const featuresJson =
+    typeof payload.featuresJson === "string"
+      ? payload.featuresJson
+      : typeof byName.get("features.json")?.text === "string"
+        ? byName.get("features.json").text
+        : undefined;
+  let features;
+  if (featuresJson) {
+    try {
+      const parsed = JSON.parse(featuresJson);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        features = parsed;
+      }
+    } catch {
+      features = undefined;
+    }
+  }
   const mainTs =
     (typeof payload.mainTs === "string" && payload.mainTs) ||
     (typeof main?.text === "string" && main.text) ||
@@ -448,17 +506,19 @@ export async function getFigmaShader(kind, id, options = {}) {
     name: String(payload.name || "Shader"),
     description:
       typeof payload.description === "string" ? payload.description : "",
+    owner: typeof payload.owner === "string" ? payload.owner : undefined,
     type: typeof payload.type === "string" ? payload.type : kind,
     version: typeof payload.version === "string" ? payload.version : undefined,
-    kind,
+    kind:
+      payload.type === "fill" || payload.kind === "fill"
+        ? "fill"
+        : payload.type === "effect" || payload.kind === "effect"
+          ? "effect"
+          : kind || "effect",
     files,
     mainTs,
-    featuresJson:
-      typeof payload.featuresJson === "string"
-        ? payload.featuresJson
-        : typeof byName.get("features.json")?.text === "string"
-          ? byName.get("features.json").text
-          : undefined,
+    featuresJson,
+    features,
     productBrief:
       typeof payload.productBrief === "string"
         ? payload.productBrief
@@ -514,7 +574,13 @@ export function createFigmaShader(args, options = {}) {
 }
 
 /**
- * @param {{ id: string, kind: FigmaShaderKind, mainTs: string, commitMessage: string }} args
+ * @param {{
+ *   id: string,
+ *   kind: FigmaShaderKind,
+ *   mainTs: string,
+ *   metadata?: { name?: string, description?: string, isAnimated?: boolean, usesMouse?: boolean },
+ *   commitMessage: string,
+ * }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */
 export function updateFigmaShader(args, options = {}) {

@@ -6,7 +6,13 @@
  * token, mirroring shader read resources and create/update tools.
  */
 
-import { updateShaderToolArguments } from "./shaderWriteContract.mjs";
+import {
+  getShaderToolArguments,
+  listShaderToolArguments,
+  SHADER_GET_TOOL,
+  SHADER_LIST_TOOL,
+  updateShaderToolArguments,
+} from "./shaderWriteContract.mjs";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -40,6 +46,12 @@ const DEFAULT_REDIRECT_URIS = [
 ];
 
 type ShaderKind = "effect" | "fill";
+type ShaderMetadata = {
+  name?: string;
+  description?: string;
+  isAnimated?: boolean;
+  usesMouse?: boolean;
+};
 type Op =
   | "list"
   | "get"
@@ -69,6 +81,7 @@ type RequestBody = {
   description?: string;
   planKey?: string;
   mainTs?: string;
+  metadata?: ShaderMetadata;
   commitMessage?: string;
 };
 
@@ -94,14 +107,6 @@ function readToken(req: Request, body: RequestBody): string {
   const fromBody = typeof body.token === "string" ? body.token.trim() : "";
   const fromEnv = Deno.env.get("FIGMA_ACCESS_TOKEN")?.trim() || "";
   return header || fromBody || fromEnv;
-}
-
-function listTool(kind: ShaderKind): string {
-  return kind === "fill" ? "list_shader_fills" : "list_shader_effects";
-}
-
-function getTool(kind: ShaderKind): string {
-  return kind === "fill" ? "get_shader_fill" : "get_shader_effect";
 }
 
 type OAuthConfig = {
@@ -968,6 +973,7 @@ async function updateFigmaShader(
       id,
       kind,
       mainTs,
+      metadata: body.metadata,
       commitMessage,
     })),
   );
@@ -980,12 +986,13 @@ async function updateFigmaShader(
 
 async function listShaders(
   client: McpClient,
-  kind: ShaderKind,
   cursor?: string,
+  kind?: ShaderKind,
 ) {
-  const result = await client.callTool(listTool(kind), {
-    ...(cursor ? { cursor } : {}),
-  });
+  const result = await client.callTool(
+    SHADER_LIST_TOOL,
+    listShaderToolArguments(cursor),
+  );
   const payload = extractToolPayload(result);
   const items = Array.isArray(payload.items) ? payload.items : [];
   return {
@@ -994,13 +1001,19 @@ async function listShaders(
         string,
         unknown
       >;
+      const type = row.type === "fill" ? "fill" : row.type === "effect"
+        ? "effect"
+        : undefined;
       return {
         id: String(row.id || ""),
         name: String(row.name || "Untitled"),
         description:
           typeof row.description === "string" ? row.description : "",
+        type,
+        kind: type,
+        owner: typeof row.owner === "string" ? row.owner : undefined,
       };
-    }).filter((item) => item.id),
+    }).filter((item) => item.id && item.type && (!kind || item.type === kind)),
     nextCursor:
       typeof payload.nextCursor === "string" ? payload.nextCursor : null,
   };
@@ -1008,15 +1021,24 @@ async function listShaders(
 
 async function getShader(
   client: McpClient,
-  kind: ShaderKind,
   id: string,
   version?: string,
+  kindHint?: ShaderKind,
 ) {
-  const result = await client.callTool(getTool(kind), {
-    id,
-    ...(version ? { version } : {}),
-  });
+  const result = await client.callTool(
+    SHADER_GET_TOOL,
+    getShaderToolArguments(id, version),
+  );
   const payload = extractToolPayload(result);
+  const kind = payload.type === "fill" ? "fill" : payload.type === "effect"
+    ? "effect"
+    : kindHint;
+  if (!kind) {
+    throw Object.assign(new Error("Figma did not return the shader type"), {
+      code: "missing_shader_type",
+      status: 502,
+    });
+  }
   const filesIn = Array.isArray(payload.files) ? payload.files : [];
   const files: Array<{
     filename: string;
@@ -1053,6 +1075,7 @@ async function getShader(
     name: String(payload.name || "Shader"),
     description:
       typeof payload.description === "string" ? payload.description : "",
+    owner: typeof payload.owner === "string" ? payload.owner : undefined,
     type: typeof payload.type === "string" ? payload.type : kind,
     version: typeof payload.version === "string" ? payload.version : undefined,
     kind,
@@ -1193,7 +1216,7 @@ Deno.serve(async (req) => {
   try {
     if (op === "test") {
       const client = new McpClient(token);
-      await listShaders(client, "effect");
+      await listShaders(client);
       return jsonResponse(200, { ok: true });
     }
 
@@ -1217,21 +1240,21 @@ Deno.serve(async (req) => {
 
     if (op === "list") {
       const kind = body.kind;
-      if (kind !== "effect" && kind !== "fill") {
+      if (kind !== undefined && kind !== "effect" && kind !== "fill") {
         return jsonResponse(400, {
           error: "kind must be effect or fill",
           code: "invalid_kind",
         });
       }
       const client = new McpClient(token);
-      const listed = await listShaders(client, kind, body.cursor);
+      const listed = await listShaders(client, body.cursor, kind);
       return jsonResponse(200, listed);
     }
 
     if (op === "get") {
       const kind = body.kind;
       const id = typeof body.id === "string" ? body.id.trim() : "";
-      if (kind !== "effect" && kind !== "fill") {
+      if (kind !== undefined && kind !== "effect" && kind !== "fill") {
         return jsonResponse(400, {
           error: "kind must be effect or fill",
           code: "invalid_kind",
@@ -1244,7 +1267,7 @@ Deno.serve(async (req) => {
         });
       }
       const client = new McpClient(token);
-      const detail = await getShader(client, kind, id, body.version);
+      const detail = await getShader(client, id, body.version, kind);
       if (!detail.mainTs?.trim()) {
         return jsonResponse(502, {
           error: "Figma shader is missing main.ts source.",

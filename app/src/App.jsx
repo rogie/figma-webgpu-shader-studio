@@ -141,6 +141,7 @@ import {
   createAndDeployFigmaShader,
   figmaShaderProgressMessage,
   figmaShaderSuccessMessage,
+  figmaShaderUpdateMetadata,
 } from "./lib/figmaShaderSync.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
@@ -1189,6 +1190,9 @@ export default function App() {
   const [figmaShaders, setFigmaShaders] = useState([]);
   const [figmaLibraryLoading, setFigmaLibraryLoading] = useState(false);
   const [figmaLibraryError, setFigmaLibraryError] = useState("");
+  const [activeFigmaDetail, setActiveFigmaDetail] = useState(null);
+  const [activeFigmaDetailLoading, setActiveFigmaDetailLoading] = useState(false);
+  const [activeFigmaDetailError, setActiveFigmaDetailError] = useState("");
   const [figmaImportOpen, setFigmaImportOpen] = useState(false);
   const [figmaImportProgress, setFigmaImportProgress] = useState(null);
   const [figmaImportCheckedKeys, setFigmaImportCheckedKeys] = useState([]);
@@ -1349,13 +1353,79 @@ export default function App() {
       ? drafts.find((draft) => draft.id === presetId)
       : currentShader
   );
-  const activeFigmaFeatures = useMemo(
-    () =>
-      activeFigmaLink.figma_shader_id
-        ? buildFigmaShaderPackage(source, shaderName).features
-        : null,
-    [activeFigmaLink.figma_shader_id, shaderName, source]
-  );
+  const activeFigmaRecord = useMemo(() => {
+    if (!activeFigmaLink.figma_shader_id) return null;
+    const localFeatures = buildFigmaShaderPackage(source, shaderName).features;
+    const remoteFeatures =
+      activeFigmaDetail?.features ||
+      (activeFigmaDetail?.mainTs
+        ? inferFeatures(activeFigmaDetail.mainTs)
+        : undefined);
+    return {
+      id: activeFigmaLink.figma_shader_id,
+      type:
+        activeFigmaDetail?.kind ||
+        activeFigmaLink.figma_shader_kind ||
+        sessionKind,
+      owner: activeFigmaDetail?.owner,
+      name: activeFigmaDetail?.name || shaderName || "Shader",
+      version:
+        activeFigmaDetail?.version ||
+        activeFigmaLink.figma_shader_version ||
+        "",
+      isAnimated:
+        typeof remoteFeatures?.isAnimated === "boolean"
+          ? remoteFeatures.isAnimated
+          : localFeatures.isAnimated,
+      usesMouse:
+        typeof remoteFeatures?.usesMouse === "boolean"
+          ? remoteFeatures.usesMouse
+          : localFeatures.usesMouse,
+    };
+  }, [
+    activeFigmaDetail,
+    activeFigmaLink.figma_shader_id,
+    activeFigmaLink.figma_shader_kind,
+    activeFigmaLink.figma_shader_version,
+    sessionKind,
+    shaderName,
+    source,
+  ]);
+  useEffect(() => {
+    const id = activeFigmaLink.figma_shader_id;
+    if (!id) {
+      setActiveFigmaDetail(null);
+      setActiveFigmaDetailLoading(false);
+      setActiveFigmaDetailError("");
+      return undefined;
+    }
+
+    let cancelled = false;
+    setActiveFigmaDetail(null);
+    setActiveFigmaDetailLoading(true);
+    setActiveFigmaDetailError("");
+    getFigmaShader(id)
+      .then((detail) => {
+        if (!cancelled) setActiveFigmaDetail(detail);
+      })
+      .catch((detailError) => {
+        if (cancelled) return;
+        setActiveFigmaDetail(null);
+        setActiveFigmaDetailError(
+          detailError?.message || "Could not load Figma shader metadata."
+        );
+      })
+      .finally(() => {
+        if (!cancelled) setActiveFigmaDetailLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeFigmaLink.figma_shader_id,
+    activeFigmaLink.figma_shader_version,
+  ]);
   const draftSessionRef = useRef({
     presetId,
     shaderName,
@@ -1719,15 +1789,9 @@ export default function App() {
 
     (async () => {
       try {
-        const [effects, fills] = await Promise.all([
-          listAllFigmaShaders("effect"),
-          listAllFigmaShaders("fill"),
-        ]);
+        const shaders = await listAllFigmaShaders();
         if (cancelled) return;
-        setFigmaShaders([
-          ...effects.map((item) => ({ ...item, kind: "effect" })),
-          ...fills.map((item) => ({ ...item, kind: "fill" })),
-        ]);
+        setFigmaShaders(shaders);
       } catch (libraryError) {
         if (cancelled) return;
         setFigmaShaders([]);
@@ -4315,8 +4379,8 @@ export default function App() {
   }, [activateShaderSession, persistBeforeSessionChange, showNotice, user]);
 
   const openFigmaShader = useCallback(
-    async (kind, id) => {
-      const detail = await getFigmaShader(kind, id);
+    async (id) => {
+      const detail = await getFigmaShader(id);
       const sourceText = detail.mainTs;
       const name = detail.name || "Figma Shader";
       const description =
@@ -4329,11 +4393,14 @@ export default function App() {
         effectFills: [],
         features: inferFeatures(sourceText),
       });
-      const link = {
-        figma_shader_id: detail.id,
-        figma_shader_kind: shaderKind,
-        figma_shader_version: detail.version || null,
-      };
+      const isWritableFigmaShader = detail.owner !== "figma";
+      const link = isWritableFigmaShader
+        ? {
+            figma_shader_id: detail.id,
+            figma_shader_kind: shaderKind,
+            figma_shader_version: detail.version || null,
+          }
+        : {};
 
       await persistBeforeSessionChange();
       pendingValuesRef.current = {};
@@ -4350,12 +4417,14 @@ export default function App() {
       setComposition(null);
 
       if (user) {
-        const existing = cloudShaders.find(
-          (item) =>
-            item.owner_id === user.id &&
-            item.figma_shader_id === detail.id &&
-            item.figma_shader_kind === shaderKind
-        );
+        const existing = isWritableFigmaShader
+          ? cloudShaders.find(
+              (item) =>
+                item.owner_id === user.id &&
+                item.figma_shader_id === detail.id &&
+                item.figma_shader_kind === shaderKind
+            )
+          : null;
         let saved;
         if (existing) {
           const current = existing.source
@@ -8119,6 +8188,8 @@ export default function App() {
               description: shader.description || "",
               kind,
               id: shader.id,
+              owner: shader.owner,
+              readOnly: shader.owner === "figma",
               imported: figmaImportedKeys.has(key),
             };
           }),
@@ -8190,7 +8261,7 @@ export default function App() {
           current: index + 1,
           total: selected.length,
         });
-        await openFigmaShader(card.kind, card.id);
+        await openFigmaShader(card.id);
       }
       setFigmaImportOpen(false);
     } catch (importError) {
@@ -8491,10 +8562,11 @@ export default function App() {
               disabled={Boolean(videoExportProgress)}
               onExport={() => openExportDialog(exportTab)}
             />
-            {activeFigmaLink.figma_shader_id && activeFigmaFeatures && (
+            {activeFigmaLink.figma_shader_id && activeFigmaRecord && (
               <FigmaPropertiesPane
-                id={activeFigmaLink.figma_shader_id}
-                features={activeFigmaFeatures}
+                shader={activeFigmaRecord}
+                loading={activeFigmaDetailLoading}
+                error={activeFigmaDetailError}
               />
             )}
             {user && !protectedPreview && (
@@ -8599,10 +8671,16 @@ export default function App() {
       });
       try {
         const pkg = buildFigmaShaderPackage(snapshot.source, snapshot.name);
+        const metadata = figmaShaderUpdateMetadata({
+          ...snapshot,
+          mainTs: pkg.mainTs,
+          features: pkg.features,
+        });
         const result = await updateFigmaShader({
           id: link.figma_shader_id,
           kind: snapshot.kind,
           mainTs: pkg.mainTs,
+          metadata,
           commitMessage: `${
             operation === "create" ? "Create" : "Update"
           } ${snapshot.name} from Shader Studio`,
@@ -8639,9 +8717,11 @@ export default function App() {
           snapshot: {
             ...snapshot,
             mainTs: pkg.mainTs,
+            features: pkg.features,
           },
           planKey,
           create: createFigmaShader,
+          get: getFigmaShader,
           update: updateFigmaShader,
           persistLink: persistCurrentFigmaLink,
         });

@@ -158,6 +158,10 @@ supabase functions deploy figma-shaders
 The browser uses authorization code + PKCE. The Edge Function performs token
 exchange and refresh so client secrets are never included in the frontend
 bundle. The shader-library OAuth client must be approved for `mcp:connect`.
+The proxy uses the unified `list_shaders` and `get_shader` MCP tools for effects
+and fills. Creates use `create_shader` followed by `get_shader` and
+`update_shader`; updates replace only `main.ts` in `files` and send the display
+name, description, `isAnimated`, and `usesMouse` through `metadata`.
 
 **Sign in with Figma** reuses the PKCE callback but uses regular staging Figma
 OAuth rather than MCP OAuth. After token exchange the Edge Function reads the
