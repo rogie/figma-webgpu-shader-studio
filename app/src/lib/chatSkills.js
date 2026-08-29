@@ -1,4 +1,5 @@
 import figmaShaderCoderSkill from "../../../skills/figma-shader-coder/SKILL.md?raw";
+import canvasHandlesSkill from "../../../skills/canvas-handles/SKILL.md?raw";
 import v3Template from "../../../skills/v3.md.tmpl?raw";
 import webgpuSkill from "../../../skills/webgpu/SKILL.md?raw";
 import wgslSkill from "../../../skills/wgsl/SKILL.md?raw";
@@ -32,12 +33,18 @@ function normalizeV3Guide(text) {
   return normalized.replace(/\n{3,}/g, "\n\n").trim();
 }
 
+const CANVAS_HANDLES_CONTEXT = `## Skill: Figma shader canvas handles
+
+${canvasHandlesSkill.trim()}`;
+
 const PLAN_SKILL_CONTEXT = `# Shader Studio planning context
 
 - Use the current module source, shader kind, and inferred features as technical ground truth.
 - Evaluate the requested change for Figma WebGPU and WGSL feasibility, including properties, rendering stages, resources, animation, mouse input, alpha handling, and performance where relevant.
-- Describe intended behavior, important decisions, edge cases, and validation without writing the implementation.
-- Do not follow file-writing, CLI, recipe, deployment, or complete-module output instructions while planning.`;
+- Keep the plan concise while including enough behavior, decisions, edge cases, and validation to implement it without guessing.
+- Do not follow file-writing, CLI, recipe, deployment, or complete-module output instructions while planning.
+
+${CANVAS_HANDLES_CONTEXT}`;
 
 let cachedAuthoring = null;
 
@@ -65,6 +72,8 @@ export function getChatSkillContext(mode = "agent") {
     '  of `"Blue Noise"`.',
     "- Before returning a module, review all `defineProperties` labels and correct",
     "  any title-case labels, even when the surrounding property was unchanged.",
+    "",
+    CANVAS_HANDLES_CONTEXT,
     "",
     "## Skill: figma-shader-coder",
     "",

@@ -63,8 +63,13 @@ test("plan prompt forbids applying a complete module", () => {
   assert.match(prompt, /primary intent is to get information or to change/);
   assert.match(prompt, /what may be missing, answer directly/);
   assert.match(prompt, /Do not classify intent from punctuation alone/);
+  assert.match(prompt, /Communication style \(required in every mode\)/);
+  assert.match(prompt, /Prefer short, direct explanations/);
+  assert.match(prompt, /Expand when the user asks for more detail/);
   assert.match(prompt, /ask concise clarification questions/);
   assert.match(prompt, /Create or revise a plan only when the user explicitly asks/);
+  assert.match(prompt, /concise Markdown plan.*implement without guessing/);
+  assert.match(prompt, /clear bullets over exhaustive prose/);
   assert.match(prompt, /exactly one H1 heading/);
   assert.match(prompt, /future-oriented language/);
   assert.match(prompt, /Do not emit a complete shader module/);
@@ -86,6 +91,8 @@ test("agent prompt retains the complete-module apply contract", () => {
   assert.match(prompt, /Refresh the description to match the complete resulting shader/);
   assert.match(prompt, /primary intent is to get information or to change/);
   assert.match(prompt, /what may be missing, answer directly/);
+  assert.match(prompt, /Prefer short, direct explanations/);
+  assert.match(prompt, /include only decision-relevant caveats/);
   assert.match(prompt, /Update the module only when the user explicitly requests/);
   assert.match(prompt, /Can you add X/);
   assert.match(prompt, /Do not claim the implementation is complete/);

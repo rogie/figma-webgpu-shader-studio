@@ -257,6 +257,64 @@ test("builds row and save-service payloads from the same snapshot", () => {
   });
 });
 
+test("normalizes a historical version row into an exact duplicate snapshot", () => {
+  const version = {
+    id: "version-4",
+    shader_id: "shader-1",
+    version_number: 4,
+    source: effectSource,
+    kind: "effect",
+    parameter_values: { amount: 0.4 },
+    features: { isAnimated: false, usesMouse: false },
+    composition: {
+      effectFills: [
+        {
+          id: "photo",
+          type: "image",
+          paint: {
+            type: "image",
+            image: {
+              assetPath: "owner/shader-1/photo.png",
+              scaleMode: "fill",
+            },
+          },
+        },
+      ],
+    },
+    input_path: "owner/shader-1/photo.png",
+    input_name: "photo.png",
+    input_mime_type: "image/png",
+    dependency_snapshots: {
+      "cloud:fill-one": {
+        shader_id: "fill-one",
+        state_revision: 3,
+        source: fillSource,
+        kind: "fill",
+      },
+    },
+  };
+
+  const snapshot = buildShaderDocumentSnapshot(version);
+
+  assert.equal(snapshot.source, effectSource);
+  assert.equal(snapshot.kind, "effect");
+  assert.deepEqual(snapshot.parameterValues, { amount: 0.4 });
+  assert.equal(
+    snapshot.composition.effectFills[0].paint.image.assetPath,
+    "owner/shader-1/photo.png",
+  );
+  assert.deepEqual(snapshot.input, {
+    path: "owner/shader-1/photo.png",
+    name: "photo.png",
+    mimeType: "image/png",
+  });
+  assert.equal(
+    snapshot.dependencySnapshots["cloud:fill-one"].state_revision,
+    3,
+  );
+  assert.equal("version_number" in snapshot, false);
+});
+
 test("canonicalizes resolved dependency rows and strips their transient media", () => {
   const dependencies = buildShaderDependencySnapshots([
     {

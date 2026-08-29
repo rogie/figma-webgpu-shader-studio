@@ -62,10 +62,12 @@ function VersionMenuItem({
   versionNumber,
   current,
   onRestore,
+  onDuplicate,
 }) {
   const trailingInteractive = Boolean(time && !current);
-  const restoreMenuRef = useFigMenuChange((value) => {
+  const versionMenuRef = useFigMenuChange((value) => {
     if (value === "restore") onRestore?.();
+    if (value === "duplicate") onDuplicate?.();
   });
 
   return (
@@ -83,7 +85,7 @@ function VersionMenuItem({
           {!current && (
             <div className="shader-version-item-actions">
               <fig-menu
-                ref={restoreMenuRef}
+                ref={versionMenuRef}
                 class="shader-version-item-menu"
                 position="bottom right"
               >
@@ -100,6 +102,7 @@ function VersionMenuItem({
                 <fig-menu-item value="restore">
                   Restore this version
                 </fig-menu-item>
+                <fig-menu-item value="duplicate">Duplicate</fig-menu-item>
               </fig-menu>
             </div>
           )}
@@ -124,6 +127,7 @@ export default function ShaderVersionSelect({
   onLoadMore,
   onPreviewVersion,
   onChange,
+  onDuplicate,
 }) {
   const selectRef = useRef(null);
   const popupRef = useRef(null);
@@ -375,6 +379,10 @@ export default function ShaderVersionSelect({
                       versionNumber={version.version_number}
                       current={current}
                       onRestore={() => restore(version.id)}
+                      onDuplicate={() => {
+                        closePopup();
+                        onDuplicate?.(version.id);
+                      }}
                     />
                   </fig-menu-item>
                 );

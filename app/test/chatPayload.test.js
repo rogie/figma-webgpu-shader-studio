@@ -169,6 +169,8 @@ test("request preserves complete source, features, and skill context", () => {
   });
   assert.match(skills, /Skill: defineProperties label casing/);
   assert.match(skills, /every user-facing `label`.*sentence case/);
+  assert.match(skills, /Skill: Figma shader canvas handles/);
+  assert.match(skills, /type: "point-angle-radius"/);
   assert.match(skills, /Skill: figma-shader-coder/);
   assert.match(skills, /Skill: Figma shader module contract \(v3\)/);
   assert.match(skills, /Skill: WGSL/);
@@ -182,7 +184,10 @@ test("plan requests exclude implementation-only shader skills", () => {
 
   assert.match(skills, /Shader Studio planning context/);
   assert.match(skills, /Figma WebGPU and WGSL feasibility/);
-  assert.match(skills, /without writing the implementation/);
+  assert.match(skills, /Keep the plan concise/);
+  assert.match(skills, /implement it without guessing/);
+  assert.match(skills, /Skill: Figma shader canvas handles/);
+  assert.match(skills, /Do not replace a supported.*separate numeric X\/Y/s);
   assert.doesNotMatch(skills, /Skill: figma-shader-coder/);
   assert.doesNotMatch(skills, /Never emit user-facing prose/);
   assert.doesNotMatch(skills, /Source files are the deliverable/);

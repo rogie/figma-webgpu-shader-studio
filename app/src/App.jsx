@@ -7260,6 +7260,192 @@ export default function App() {
     }
   }, [currentShader?.id, isOwner, saveShader, saving, showNotice, user]);
 
+  const duplicateShaderVersion = useCallback(
+    async (versionId) => {
+      if (
+        !versionId ||
+        versionId.startsWith("__") ||
+        !user ||
+        !isOwner ||
+        !currentShader?.id ||
+        duplicating
+      ) {
+        return;
+      }
+      setDuplicating(true);
+      setError(null);
+      clearShaderVersionPreview();
+      try {
+        persistActiveDraft();
+        let target = versionPreviewCacheRef.current.get(versionId);
+        if (!target) {
+          target = await getShaderVersion(currentShader.id, versionId);
+          versionPreviewCacheRef.current.set(versionId, target);
+        }
+        if (target.snapshot_schema_version !== 2) {
+          throw new Error(
+            `Version ${target.version_number} predates complete visual snapshots and cannot be duplicated safely.`
+          );
+        }
+        const validation =
+          target.kind === COMPOSITION_KIND
+            ? { ok: true }
+            : validateModuleSource(target.source);
+        if (!validation.ok) {
+          throw new Error(
+            `Version ${target.version_number} cannot be duplicated: ${validation.reason}`
+          );
+        }
+
+        const duplicateKind = target.kind;
+        const targetComposition = target.composition || {};
+        const versionFills =
+          duplicateKind === COMPOSITION_KIND
+            ? normalizeComposition(targetComposition).fills
+            : duplicateKind === "effect"
+              ? readEffectFillsFromComposition(targetComposition, [])
+              : [];
+        const documentSnapshot = buildShaderDocumentSnapshot(target);
+        const sourceThreadKey = chatShaderKey;
+        const copiedPlan = await readPlanForCopy({
+          threadKey: sourceThreadKey,
+          ownerId: currentShader.owner_id,
+          shaderId: currentShader.id,
+        });
+
+        let mediaFile = null;
+        if (duplicateKind === "effect" && target.input_path) {
+          const blob = await downloadAsset(target.input_path);
+          mediaFile = new File(
+            [blob],
+            target.input_name || "input",
+            { type: target.input_mime_type || blob.type }
+          );
+        }
+
+        const cloudId = cloudIdForDraft(`draft:${crypto.randomUUID()}`);
+        const { durableFills, firstInput } =
+          await uploadFillAssetsForTarget({
+            fills: versionFills,
+            ownerId: user.id,
+            shaderId: cloudId,
+            copyDurableAssets: true,
+          });
+        let durableInput = firstInput;
+        if (!durableInput.path && mediaFile && duplicateKind === "effect") {
+          if (mediaFile.size > MAX_MEDIA_BYTES) {
+            throw new Error("Input media must be 25 MB or smaller.");
+          }
+          const contentType = mediaType(mediaFile);
+          durableInput = {
+            path: await uploadAsset({
+              ownerId: user.id,
+              shaderId: cloudId,
+              role: "input",
+              blob: mediaFile,
+              fileName: mediaFile.name,
+              contentType,
+            }),
+            name: mediaFile.name,
+            mimeType: contentType,
+          };
+        }
+
+        const durableComposition =
+          duplicateKind === COMPOSITION_KIND
+            ? normalizeComposition({
+                ...targetComposition,
+                fills: durableFills,
+              })
+            : duplicateKind === "effect"
+              ? {
+                  effectFills: durableFills,
+                  effectFill: durableFills[0] || null,
+                }
+              : {};
+        const durableDocument = buildShaderDocumentSnapshot({
+          ...documentSnapshot,
+          composition: durableComposition,
+          effectFills: durableFills,
+          input: durableInput,
+          // A historical duplicate must keep the dependency versions captured
+          // by that checkpoint instead of resolving today's live versions.
+          dependencySnapshots: documentSnapshot.dependencySnapshots,
+        });
+        const versionNumber = Number(target.version_number || 0);
+        const name = `${shaderName || "Untitled Shader"}${
+          versionNumber ? ` Version ${versionNumber}` : ""
+        } Copy`;
+        const saved = await createShader({
+          id: cloudId,
+          owner_id: user.id,
+          name,
+          description: shaderDescription,
+          ...buildShaderDocumentPayload(durableDocument),
+          is_public: false,
+          ...figmaShaderLink(null),
+        });
+        setCloudShaders((current) => [
+          saved,
+          ...current.filter((item) => item.id !== saved.id),
+        ]);
+        lastSavedFingerprintRef.current = editorPersistenceFingerprint(
+          durableDocument,
+          { name, description: shaderDescription }
+        );
+        const targetThreadKey = `cloud:${saved.id}`;
+        await copyPlanToCloud(
+          targetThreadKey,
+          copiedPlan,
+          user.id,
+          saved.id
+        );
+        copyChatThreadKey(sourceThreadKey, targetThreadKey);
+        copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
+        await activateShaderSession({
+          sessionId: cloudChoiceId(saved.id),
+          routeId: saved.id,
+          name,
+          description: saved.description || "",
+          source: saved.source,
+          kind: saved.kind,
+          composition: saved.composition,
+          values: saved.parameter_values || {},
+          public: false,
+          media: null,
+          dirty: false,
+          cloudShader: saved,
+          persistPrevious: false,
+        });
+        showNotice(
+          versionNumber
+            ? `Duplicated Version ${versionNumber}`
+            : "Version duplicated"
+        );
+      } catch (duplicateError) {
+        const message =
+          duplicateError.message || "Could not duplicate this version";
+        setError(message);
+        showNotice(message, { error: true });
+      } finally {
+        setDuplicating(false);
+      }
+    },
+    [
+      activateShaderSession,
+      chatShaderKey,
+      clearShaderVersionPreview,
+      currentShader,
+      duplicating,
+      isOwner,
+      persistActiveDraft,
+      shaderDescription,
+      shaderName,
+      showNotice,
+      user,
+    ]
+  );
+
   const duplicateShader = useCallback(async () => {
     if (duplicating) return;
     setDuplicating(true);
@@ -8916,11 +9102,12 @@ export default function App() {
                     dirty={dirty}
                     hasUncheckpointedChanges={hasUncheckpointedChanges}
                     saving={saving}
-                    disabled={saving || restoringVersion}
+                    disabled={saving || restoringVersion || duplicating}
                     onOpen={openShaderVersions}
                     onLoadMore={loadMoreShaderVersions}
                     onPreviewVersion={previewShaderVersion}
                     onChange={restoreSelectedVersion}
+                    onDuplicate={duplicateShaderVersion}
                   />
                 )}
                 {protectedPreview ? (
