@@ -13,7 +13,9 @@ export function buildSystemPrompt(ctx: ChatContext): string {
     : "unknown";
 
   const skillsBlock = ctx.skills?.trim()
-    ? `\n\nAuthoring skills (follow these when writing or changing the module):\n\n${ctx.skills.trim()}\n`
+    ? ctx.mode === "plan"
+      ? `\n\nPlanning context (use for technical reasoning only):\n\n${ctx.skills.trim()}\n`
+      : `\n\nAuthoring skills (follow these when writing or changing the module):\n\n${ctx.skills.trim()}\n`
     : "";
   const intentContract = `Intent handling (required in every mode):
 1. Determine whether the user's primary intent is to get information or to change the module.

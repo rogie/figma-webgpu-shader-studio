@@ -177,6 +177,17 @@ test("request preserves complete source, features, and skill context", () => {
   assert.doesNotMatch(skills, /`isAnimated` must be `false`/);
 });
 
+test("plan requests exclude implementation-only shader skills", () => {
+  const skills = getChatSkillContext("plan");
+
+  assert.match(skills, /Shader Studio planning context/);
+  assert.match(skills, /Figma WebGPU and WGSL feasibility/);
+  assert.match(skills, /without writing the implementation/);
+  assert.doesNotMatch(skills, /Skill: figma-shader-coder/);
+  assert.doesNotMatch(skills, /Never emit user-facing prose/);
+  assert.doesNotMatch(skills, /Source files are the deliverable/);
+});
+
 test("Edge Function prompt embeds full source and skills without truncation", () => {
   const source = `const marker = "${"source-marker-".repeat(1500)}";`;
   const skills = getChatSkillContext();

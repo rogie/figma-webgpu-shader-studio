@@ -32,15 +32,23 @@ function normalizeV3Guide(text) {
   return normalized.replace(/\n{3,}/g, "\n\n").trim();
 }
 
-let cached = null;
+const PLAN_SKILL_CONTEXT = `# Shader Studio planning context
+
+- Use the current module source, shader kind, and inferred features as technical ground truth.
+- Evaluate the requested change for Figma WebGPU and WGSL feasibility, including properties, rendering stages, resources, animation, mouse input, alpha handling, and performance where relevant.
+- Describe intended behavior, important decisions, edge cases, and validation without writing the implementation.
+- Do not follow file-writing, CLI, recipe, deployment, or complete-module output instructions while planning.`;
+
+let cachedAuthoring = null;
 
 /**
  * Authoring skills + Figma shader contract for chat system context.
  * Sent with each chat request so the model can write valid studio modules.
  */
-export function getChatSkillContext() {
-  if (cached) return cached;
-  cached = [
+export function getChatSkillContext(mode = "agent") {
+  if (mode === "plan") return PLAN_SKILL_CONTEXT;
+  if (cachedAuthoring) return cachedAuthoring;
+  cachedAuthoring = [
     "# Shader Studio authoring skills",
     "",
     "Follow these skills when editing the open Figma WebGPU shader module.",
@@ -74,5 +82,5 @@ export function getChatSkillContext() {
     "",
     webgpuSkill.trim(),
   ].join("\n");
-  return cached;
+  return cachedAuthoring;
 }

@@ -8915,6 +8915,7 @@ export default function App() {
                     versionsHasMore={versionsHasMore}
                     dirty={dirty}
                     hasUncheckpointedChanges={hasUncheckpointedChanges}
+                    saving={saving}
                     disabled={saving || restoringVersion}
                     onOpen={openShaderVersions}
                     onLoadMore={loadMoreShaderVersions}

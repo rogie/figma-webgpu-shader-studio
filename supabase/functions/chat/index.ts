@@ -1,6 +1,7 @@
 import { isAllowedModel, isProvider, MODELS, type Provider } from "./models.ts";
 import { buildSystemPrompt } from "./prompt.ts";
 import { isCursorAgentId, parseCursorModels, streamCursorChat } from "./cursor.ts";
+import { anthropicOutputConfig } from "./anthropic.ts";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -613,6 +614,7 @@ async function streamAnthropic(
   model: string,
   system: string,
   messages: ChatMessage[],
+  mode: "agent" | "plan",
 ): Promise<Response> {
   const fetchCompletion = (partialResponse = "") => {
     const requestBody: Record<string, unknown> = {
@@ -626,13 +628,8 @@ async function streamAnthropic(
           : messages,
       ),
     };
-    if (
-      /^claude-(?:fable|opus|sonnet)-5/.test(model) ||
-      model === "claude-opus-4-8" ||
-      model === "claude-sonnet-4-6"
-    ) {
-      requestBody.output_config = { effort: "low" };
-    }
+    const outputConfig = anthropicOutputConfig(model, mode);
+    if (outputConfig) requestBody.output_config = outputConfig;
     return fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
@@ -910,7 +907,7 @@ Deno.serve(async (req) => {
       return await streamGrok(apiKey, model, system, history);
     }
     if (provider === "anthropic") {
-      return await streamAnthropic(apiKey, model, system, history);
+      return await streamAnthropic(apiKey, model, system, history, mode);
     }
     return await streamGemini(apiKey, model, system, history);
   } catch (error) {

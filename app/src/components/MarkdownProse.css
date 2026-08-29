@@ -16,12 +16,16 @@
   }
 
   p,
-  ul,
-  ol,
   blockquote,
   pre,
   table {
     margin: 0 0 var(--spacer-2);
+  }
+
+  ul,
+  ol {
+    margin: var(--spacer-2) 0 var(--spacer-3);
+    padding-left: var(--spacer-5);
   }
 
   h1,
@@ -33,11 +37,6 @@
     margin: var(--spacer-3) 0 var(--spacer-1);
     font-size: inherit;
     font-weight: var(--body-medium-strong-fontWeight);
-  }
-
-  ul,
-  ol {
-    padding-left: var(--spacer-3);
   }
 
   ul {
@@ -57,18 +56,19 @@
   }
 
   li + li {
-    margin-top: var(--spacer-1);
+    margin-top: var(--spacer-2);
   }
 
-  /* Loose lists wrap each item in a paragraph; keep them on the tighter
-     list rhythm instead of the block rhythm. */
+  /* Loose lists wrap each item in a paragraph; keep their internal rhythm
+     distinct without stacking the full block spacing. */
   li > p {
-    margin-bottom: var(--spacer-1);
+    margin-bottom: var(--spacer-2);
   }
 
   li > ul,
   li > ol {
-    margin: var(--spacer-1) 0 0;
+    margin: var(--spacer-2) 0 0;
+    padding-left: var(--spacer-4);
   }
 
   li > :last-child {

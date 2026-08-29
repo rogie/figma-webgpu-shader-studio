@@ -27,7 +27,8 @@ function readVersionMenuItem(node) {
   return versionId;
 }
 
-function selectState({ dirty, hasUncheckpointedChanges, versions }) {
+function selectState({ saving, dirty, hasUncheckpointedChanges, versions }) {
+  if (saving) return { value: "__saving", label: "Saving…" };
   if (dirty) return { value: "__unsaved", label: "Unsaved" };
   if (hasUncheckpointedChanges) return { value: "__autosaved", label: "Autosave" };
   const number = Number(versions[0]?.version_number || 0);
@@ -35,7 +36,8 @@ function selectState({ dirty, hasUncheckpointedChanges, versions }) {
   return { value: String(versions[0].id), label: `Version ${number}` };
 }
 
-function tooltipText({ dirty, hasUncheckpointedChanges }) {
+function tooltipText({ saving, dirty, hasUncheckpointedChanges }) {
+  if (saving) return "Saving a new version…";
   if (dirty) return "Unsaved changes are not yet in version history.";
   if (hasUncheckpointedChanges) {
     return "Autosaved to the cloud, but not yet saved as a restorable version.";
@@ -116,6 +118,7 @@ export default function ShaderVersionSelect({
   versionsHasMore = false,
   dirty = false,
   hasUncheckpointedChanges = false,
+  saving = false,
   disabled = false,
   onOpen,
   onLoadMore,
@@ -133,6 +136,7 @@ export default function ShaderVersionSelect({
   const pending = pendingRow({ dirty, hasUncheckpointedChanges });
   const currentVersionId = pending ? null : versions[0]?.id || null;
   const { value: selectValue, label: selectLabel } = selectState({
+    saving,
     dirty,
     hasUncheckpointedChanges,
     versions,
@@ -286,12 +290,14 @@ export default function ShaderVersionSelect({
 
   return (
     <>
-      <fig-tooltip text={tooltipText({ dirty, hasUncheckpointedChanges })}>
+      <fig-tooltip
+        text={tooltipText({ saving, dirty, hasUncheckpointedChanges })}
+      >
         <fig-select
           ref={selectRef}
           class="shader-version-select"
           variant="ghost"
-          aria-label="Shader version history"
+          aria-label={saving ? "Saving version" : "Shader version history"}
           value={selectValue}
           label={selectLabel}
           options={selectOptions}

@@ -14,6 +14,7 @@ import {
   loadChatThreads,
   saveChatThreads,
 } from "../src/lib/chatThreads.js";
+import { anthropicOutputConfig } from "../../supabase/functions/chat/anthropic.ts";
 import { buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
 
 const storage = new Map();
@@ -57,6 +58,8 @@ test("plan prompt forbids applying a complete module", () => {
   });
 
   assert.match(prompt, /discussion and design phase/);
+  assert.match(prompt, /Planning context \(use for technical reasoning only\)/);
+  assert.doesNotMatch(prompt, /Authoring skills \(follow these/);
   assert.match(prompt, /primary intent is to get information or to change/);
   assert.match(prompt, /what may be missing, answer directly/);
   assert.match(prompt, /Do not classify intent from punctuation alone/);
@@ -88,6 +91,13 @@ test("agent prompt retains the complete-module apply contract", () => {
   assert.match(prompt, /Do not claim the implementation is complete/);
   assert.match(prompt, /COMPLETE updated module source/);
   assert.match(prompt, /applied automatically to the live editor/);
+});
+
+test("Anthropic plan requests do not force low output effort", () => {
+  assert.equal(anthropicOutputConfig("claude-opus-5", "plan"), undefined);
+  assert.deepEqual(anthropicOutputConfig("claude-opus-5", "agent"), {
+    effort: "low",
+  });
 });
 
 test("plan thread metadata survives persistence", () => {

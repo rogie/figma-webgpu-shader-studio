@@ -970,7 +970,9 @@ const ChatPane = forwardRef(function ChatPane(
 
     let skills;
     try {
-      skills = (await import("../lib/chatSkills.js")).getChatSkillContext();
+      skills = (await import("../lib/chatSkills.js")).getChatSkillContext(
+        requestMode
+      );
     } catch (skillError) {
       setError(skillError.message || "Unable to load shader authoring guidance.");
       return;
