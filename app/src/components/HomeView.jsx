@@ -9,8 +9,6 @@ export default function HomeView({
   onQueryChange,
   kind,
   onKindChange,
-  origin,
-  onOriginChange,
   author,
   onAuthorChange,
   publishedAuthors,
@@ -76,9 +74,8 @@ export default function HomeView({
               onKindChange={onKindChange}
               author={author}
               onAuthorChange={onAuthorChange}
-              origin={origin}
-              onOriginChange={onOriginChange}
               authors={publishedAuthors}
+              showOrigin={false}
             />
           </div>
           <hstack class="app-nav-header-actions">

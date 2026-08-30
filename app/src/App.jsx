@@ -29,7 +29,7 @@ import Preview from "./components/Preview.jsx";
 import PreviewFps from "./components/PreviewFps.jsx";
 import ShaderActionsMenu from "./components/ShaderActionsMenu.jsx";
 import ShaderList from "./components/ShaderList.jsx";
-import ShaderNavCard from "./components/ShaderNavCard.jsx";
+import ShaderCard from "./components/ShaderCard.jsx";
 import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
 import UserAvatar from "./components/UserAvatar.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
@@ -1184,7 +1184,6 @@ export default function App() {
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
-  const [homeOrigin, setHomeOrigin] = useState("all");
   const [homeAuthor, setHomeAuthor] = useState("all");
   const [editorKind, setEditorKind] = useState("all");
   const [editorOrigin, setEditorOrigin] = useState("all");
@@ -8278,11 +8277,10 @@ export default function App() {
         filterShaderLibraryCards(libraryCards, {
           query: homeQuery,
           kind: homeKind,
-          origin: homeOrigin,
           author: homeAuthor,
-        }),
+        }).filter((card) => card.origin !== "draft"),
       ),
-    [homeAuthor, homeKind, homeOrigin, homeQuery, libraryCards]
+    [homeAuthor, homeKind, homeQuery, libraryCards]
   );
   const groupedEditorCards = useMemo(
     () =>
@@ -8880,7 +8878,7 @@ export default function App() {
         return <fig-separator key={card.key} label={card.separatorLabel} />;
       }
       const cardNode = (
-        <ShaderNavCard
+        <ShaderCard
           src={card.thumbnailUrl}
           label={card.name}
           sublabel={card.origin === "public" ? "Published" : "Draft"}
@@ -8888,6 +8886,12 @@ export default function App() {
           published={card.origin === "public"}
           authorName={card.authorName || card.authorLabel}
           authorAvatarUrl={card.authorAvatarUrl}
+          showPublishedIcon={false}
+          previewId={card.cloud?.id}
+          previewKind={card.kind}
+          previewRevision={card.cloud?.state_revision}
+          animated={Boolean(card.features?.isAnimated)}
+          interactive={Boolean(card.features?.usesMouse)}
           onAuthorClick={
             card.authorId
               ? () => openUserProfile(card.authorId, card.authorHandle)
@@ -9435,8 +9439,6 @@ export default function App() {
           onQueryChange={setHomeQuery}
           kind={homeKind}
           onKindChange={setHomeKind}
-          origin={homeOrigin}
-          onOriginChange={setHomeOrigin}
           author={homeAuthor}
           onAuthorChange={setHomeAuthor}
           publishedAuthors={publishedAuthors}

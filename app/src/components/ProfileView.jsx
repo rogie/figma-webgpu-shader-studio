@@ -316,8 +316,8 @@ export default function ProfileView({
                   previewId={card.cloud.id}
                   previewKind={card.kind}
                   previewRevision={card.cloud.state_revision}
-                  animated={Boolean(card.cloud.features?.isAnimated)}
-                  interactive={Boolean(card.cloud.features?.usesMouse)}
+                  animated={Boolean(card.features?.isAnimated)}
+                  interactive={Boolean(card.features?.usesMouse)}
                 />
               </fig-choice>
             ),
