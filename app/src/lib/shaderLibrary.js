@@ -84,6 +84,7 @@ export function buildShaderLibraryCards({
       authorLabel: "Draft",
       authorName: user ? userName : ANON_YOU_LABEL,
       authorAvatarUrl: userAvatarUrl,
+      authorHandle: null,
       updatedAt: null,
       draft,
       cloud: null,
@@ -116,6 +117,7 @@ export function buildShaderLibraryCards({
       authorName: authorLabel,
       authorAvatarUrl:
         shader.author_avatar_url || (owned ? userAvatarUrl : null),
+      authorHandle: shader.author_handle || null,
       updatedAt: shader.updated_at || null,
       draft: null,
       cloud: shader,
@@ -139,6 +141,7 @@ export function buildShaderLibraryCards({
       authorLabel: "Figma",
       authorName: "Figma",
       authorAvatarUrl: null,
+      authorHandle: null,
       updatedAt: null,
       draft: null,
       cloud: null,

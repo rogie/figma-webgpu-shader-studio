@@ -54,6 +54,7 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
         name: "Published",
         author_name: "Other author",
         author_avatar_url: "https://example.com/other.png",
+        author_handle: "other-author",
         kind: "effect",
         is_public: true,
       },
@@ -69,6 +70,7 @@ test("shows drafts, owned cloud drafts, and public shaders without presets", () 
     cards.map((card) => card.thumbnailUrl),
     [null, null, null]
   );
+  assert.equal(cards[2].authorHandle, "other-author");
   assert.deepEqual(
     cards.map((card) => card.authorAvatarUrl),
     [

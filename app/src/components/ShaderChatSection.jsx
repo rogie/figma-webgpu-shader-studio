@@ -16,6 +16,7 @@ export default function ShaderChatSection({
   planShaderId,
   featuresRef,
   user,
+  onUserProfile,
   onApplySource,
   onAppliedCheckpoint,
   onOpenSettings,
@@ -76,6 +77,7 @@ export default function ShaderChatSection({
           planShaderId={planShaderId}
           featuresRef={featuresRef}
           user={user}
+          onUserProfile={onUserProfile}
           onApplySource={onApplySource}
           onAppliedCheckpoint={onAppliedCheckpoint}
           onOpenSettings={onOpenSettings}

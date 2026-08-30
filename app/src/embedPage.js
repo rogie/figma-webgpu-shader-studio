@@ -38,7 +38,7 @@ const EMBED_DOCUMENT = `<!doctype html>
   <title>WebGPU Shader</title>
   <style>
     html, body { width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; background: transparent; }
-    canvas { display: block; width: 100% !important; height: 100% !important; }
+    canvas { display: block; width: 100% !important; height: 100% !important; background: transparent; }
     #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #999; background: transparent; font: 12px/1.5 system-ui, sans-serif; pointer-events: none; }
     #error { position: fixed; inset: 0; display: none; margin: 0; padding: 16px; color: #ffb4b4; background: #1e1111; white-space: pre-wrap; font: 12px/1.5 monospace; }
     .embed-html-fill { box-sizing: border-box; width: 960px; height: 720px; padding: 56px; display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; color: #111827; background: linear-gradient(145deg, #eef2ff, #dbeafe 52%, #bfdbfe); font: 20px/1.45 system-ui, sans-serif; }
@@ -68,10 +68,6 @@ function fillAssetPath(fill) {
   );
 }
 
-function fillAssetUrl(fill) {
-  return fill?.paint?.image?.url || fill?.paint?.video?.url || "";
-}
-
 function withFillAssetUrl(fill, urlsByPath) {
   const path = fillAssetPath(fill);
   const url = path ? urlsByPath[path] : "";
@@ -99,7 +95,6 @@ async function hydrateFillAssets(
 ) {
   const normalized = normalizeComposition(graph);
   const paths = normalized.fills
-    .filter((fill) => !fillAssetUrl(fill))
     .map(fillAssetPath)
     .filter(Boolean);
   if (
@@ -508,7 +503,13 @@ function compositionGraph(row) {
   return normalizeComposition({ ...graph, fills });
 }
 
-async function startEmbed(route, canvas, showError, services = {}) {
+const embedPreviewCache = new Map();
+
+function embedPreviewCacheKey(route) {
+  return `${route.kind || "shader"}:${route.id}:${route.revision ?? ""}`;
+}
+
+async function prepareEmbedPreview(route, services = {}) {
   const loadShader = services.getShader || getShader;
   const row = await loadShader(route.id);
   const expectsComposition = route.kind === COMPOSITION_KIND;
@@ -519,8 +520,53 @@ async function startEmbed(route, canvas, showError, services = {}) {
   ) {
     throw new Error("This shader is unavailable.");
   }
+  if (row.kind === "fill") return { row, isComposition, graph: null, resolved: null };
 
-  document.title = row.name || "WebGPU Shader";
+  const graph = await hydrateFillAssets(
+    isComposition ? compositionGraph(row) : effectGraph(row),
+    {
+      requirePublic: row.is_public,
+      ownerShaderId: row.id,
+      getAssetUrls: services.getAssetUrls,
+    },
+  );
+  const resolved = await resolveDependencies(graph, {
+    requirePublic: row.is_public,
+    dependencySnapshots: row.dependency_snapshots,
+    getShadersByIds: services.getShadersByIds,
+  });
+  return { row, isComposition, graph, resolved };
+}
+
+function getPreparedEmbedPreview(route, services = {}) {
+  if (Object.keys(services).length) return prepareEmbedPreview(route, services);
+  const key = embedPreviewCacheKey(route);
+  let pending = embedPreviewCache.get(key);
+  if (!pending) {
+    pending = prepareEmbedPreview(route).catch((error) => {
+      embedPreviewCache.delete(key);
+      throw error;
+    });
+    embedPreviewCache.set(key, pending);
+  }
+  return pending;
+}
+
+export function prefetchEmbedPreview(route) {
+  return getPreparedEmbedPreview(route);
+}
+
+async function startEmbed(
+  route,
+  canvas,
+  showError,
+  services = {},
+  { viewportElement = null, setTitle = true } = {},
+) {
+  const { row, isComposition, graph, resolved } =
+    await getPreparedEmbedPreview(route, services);
+
+  if (setTitle) document.title = row.name || "WebGPU Shader";
   if (!navigator.gpu) {
     throw new Error(
       "WebGPU is unavailable. Open this embed in a current WebGPU-capable browser."
@@ -530,14 +576,28 @@ async function startEmbed(route, canvas, showError, services = {}) {
   const Host = services.ShaderHost || ShaderHost;
   const host = new Host(canvas, { onError: showError });
   await host.init();
-  host.setStageCssSize(window.innerWidth, window.innerHeight);
+  const viewportSize = () => {
+    const rect = viewportElement?.getBoundingClientRect?.();
+    return {
+      width: Math.max(1, Math.round(rect?.width || window.innerWidth)),
+      height: Math.max(1, Math.round(rect?.height || window.innerHeight)),
+    };
+  };
+  const initialSize = viewportSize();
+  host.setStageCssSize(initialSize.width, initialSize.height);
+  host.setPointerSurface?.(canvas);
   let intersecting = true;
+  let requestedActive = true;
 
-  const resize = () =>
-    host.setStageCssSize(window.innerWidth, window.innerHeight);
+  const resize = () => {
+    const size = viewportSize();
+    host.setStageCssSize(size.width, size.height);
+  };
   const syncActivity = () => {
     const active =
-      document.visibilityState !== "hidden" && intersecting;
+      document.visibilityState !== "hidden" &&
+      intersecting &&
+      requestedActive;
     host.setActive(active);
     for (const resource of resources) {
       if (typeof resource?.pause !== "function") continue;
@@ -551,27 +611,40 @@ async function startEmbed(route, canvas, showError, services = {}) {
   });
   intersectionObserver.observe(canvas);
   syncActivity();
-  window.addEventListener("resize", resize);
+  const resizeObserver = viewportElement
+    ? new ResizeObserver(resize)
+    : null;
+  if (resizeObserver) resizeObserver.observe(viewportElement);
+  else window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", syncActivity);
-  window.addEventListener(
-    "pagehide",
-    () => {
-      window.removeEventListener("resize", resize);
-      document.removeEventListener("visibilitychange", syncActivity);
-      intersectionObserver.disconnect();
-      host.destroy();
-      for (const resource of resources) {
-        if (typeof resource?.getTracks === "function") {
-          resource.getTracks().forEach((track) => track.stop());
-        } else {
-          resource?.pause?.();
-          resource?.close?.();
-          resource?.remove?.();
-        }
+  let cleanedUp = false;
+  const cleanup = () => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    window.removeEventListener("resize", resize);
+    document.removeEventListener("visibilitychange", syncActivity);
+    window.removeEventListener("pagehide", cleanup);
+    resizeObserver?.disconnect();
+    intersectionObserver.disconnect();
+    host.destroy();
+    for (const resource of resources) {
+      if (typeof resource?.getTracks === "function") {
+        resource.getTracks().forEach((track) => track.stop());
+      } else {
+        resource?.pause?.();
+        resource?.close?.();
+        resource?.remove?.();
       }
+    }
+  };
+  window.addEventListener("pagehide", cleanup, { once: true });
+  const controller = {
+    destroy: cleanup,
+    setActive(active) {
+      requestedActive = Boolean(active);
+      syncActivity();
     },
-    { once: true }
-  );
+  };
 
   if (row.kind === "fill") {
     const loaded = loadModule(row.source);
@@ -588,22 +661,9 @@ async function startEmbed(route, canvas, showError, services = {}) {
     );
     if (!ok) throw new Error("The shader could not be rendered.");
     if (features.isAnimated || features.usesMouse) host.start();
-    return;
+    return controller;
   }
 
-  const graph = await hydrateFillAssets(
-    isComposition ? compositionGraph(row) : effectGraph(row),
-    {
-      requirePublic: row.is_public,
-      ownerShaderId: row.id,
-      getAssetUrls: services.getAssetUrls,
-    }
-  );
-  const resolved = await resolveDependencies(graph, {
-    requirePublic: row.is_public,
-    dependencySnapshots: row.dependency_snapshots,
-    getShadersByIds: services.getShadersByIds,
-  });
   await setComposition(
     host,
     canvas,
@@ -618,6 +678,14 @@ async function startEmbed(route, canvas, showError, services = {}) {
         },
     resources
   );
+  return controller;
+}
+
+export function mountEmbedPreview(route, canvas, onError = () => {}) {
+  return startEmbed(route, canvas, onError, {}, {
+    viewportElement: canvas,
+    setTitle: false,
+  });
 }
 
 export function renderEmbedPage(route, services = {}) {

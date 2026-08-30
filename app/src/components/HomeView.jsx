@@ -26,6 +26,8 @@ export default function HomeView({
   settingsOpen,
   onSettingsOpenChange,
   onProfileChange,
+  onViewProfile,
+  onNotice,
 }) {
   const chooserRef = useRef(null);
   const viewTabsRef = useRef(null);
@@ -90,6 +92,8 @@ export default function HomeView({
               settingsOpen={settingsOpen}
               onSettingsOpenChange={onSettingsOpenChange}
               onProfileChange={onProfileChange}
+              onViewProfile={onViewProfile}
+              onNotice={onNotice}
             />
           </hstack>
         </fig-header>

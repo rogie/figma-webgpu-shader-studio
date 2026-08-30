@@ -27,6 +27,69 @@
     margin-left: auto;
   }
 
+  .profile-identity {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-4);
+    width: 100%;
+    max-width: 30rem;
+    margin-inline: auto;
+    padding: var(--spacer-6) var(--spacer-4);
+    box-sizing: border-box;
+
+    .profile-avatar {
+      --size: 6rem;
+    }
+
+    .profile-identity-copy {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      min-width: 0;
+    }
+
+    h1,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 2rem;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
+    }
+
+    .profile-handle {
+      margin-top: var(--spacer-1);
+      color: var(--figma-color-text-secondary);
+    }
+
+    .profile-stats {
+      margin-top: var(--spacer-3);
+
+      strong {
+        font-weight: 600;
+      }
+    }
+  }
+
+  .profile-state {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacer-2);
+    min-height: 10rem;
+    padding: var(--spacer-4);
+    color: var(--figma-color-text-secondary);
+    text-align: center;
+  }
+
+  .profile-load-more {
+    display: flex;
+    justify-content: center;
+    padding: var(--spacer-3);
+  }
+
   fig-chooser {
     --fig-chooser-inline-padding: var(--spacer-1);
     --fig-chooser-inline-margin: var(--spacer-2-5);
@@ -60,9 +123,36 @@
       }
     }
 
-    .shader-nav-card {
+    .shader-nav-card,
+    .shader-card {
       width: 100%;
       min-height: 10rem;
+
+      .shader-card-preview {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+        --fig-preview-background: transparent;
+        background: transparent;
+      }
+
+      .shader-card-thumbnail,
+      .shader-card-preview-canvas {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+
+      .shader-card-thumbnail {
+        object-fit: cover;
+      }
+
+      .shader-card-preview-canvas {
+        display: block;
+        background: transparent;
+      }
 
       > fig-footer {
         flex-direction: row;
@@ -147,6 +237,19 @@
     fig-header.app-nav-header,
     .app-nav-home-tools {
       flex-wrap: wrap;
+    }
+
+    .profile-identity {
+      gap: var(--spacer-4);
+      padding-block: var(--spacer-5);
+
+      .profile-avatar {
+        --size: 4.5rem;
+      }
+
+      h1 {
+        font-size: 1.5rem;
+      }
     }
 
     fig-chooser {

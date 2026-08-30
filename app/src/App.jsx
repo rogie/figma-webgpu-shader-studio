@@ -19,6 +19,7 @@ import ExportDialog from "./components/ExportDialog.jsx";
 import FigmaPlanDialog from "./components/FigmaPlanDialog.jsx";
 import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
+import ProfileView from "./components/ProfileView.jsx";
 import "./components/HomeNav.css";
 import ComposerView from "./components/ComposerView.jsx";
 import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
@@ -278,6 +279,7 @@ import {
   downloadShaderPlan,
   getAssetUrl,
   getAssetUrls,
+  getProfile,
   getShader,
   getShaderMaybe,
   getShadersByIds,
@@ -290,6 +292,7 @@ import {
   listRetainedShaderAssetPaths,
   makeEmbedUrl,
   makeHomeUrl,
+  makeProfileUrl,
   makeShareUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
@@ -991,13 +994,14 @@ function pushShaderUrl(id, kind) {
   window.history.pushState({}, "", makeShareUrl(id, kind));
 }
 
-function AuthorAvatar({ class: className, tooltip, src, name }) {
+function AuthorAvatar({ class: className, tooltip, src, name, onClick }) {
   return (
     <UserAvatar
       class={className}
       tooltip={tooltip ?? name ?? "Anon"}
       src={src}
       name={name}
+      onClick={onClick}
     />
   );
 }
@@ -1169,6 +1173,9 @@ export default function App() {
   );
   const [routeId, setRouteId] = useState(() => getShaderRouteId());
   const [routeKind, setRouteKind] = useState(() => getAppRoute().kind);
+  const [routeProfile, setRouteProfile] = useState(
+    () => getAppRoute().profile || null,
+  );
   const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
   const [routeEmbed, setRouteEmbed] = useState(routeEmbedRef.current);
   const [embedStatus, setEmbedStatus] = useState(() =>
@@ -1208,7 +1215,13 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(
     () => savedSidebarSections().chatCollapsed
   );
-  const viewMode = routeEmbed && routeId ? "embed" : routeId ? "editor" : "home";
+  const viewMode = routeEmbed && routeId
+    ? "embed"
+    : routeProfile
+      ? "profile"
+      : routeId
+        ? "editor"
+        : "home";
 
   const setShaderRoute = useCallback((id, kind, options = {}) => {
     const nextEmbed = Boolean(
@@ -1217,6 +1230,7 @@ export default function App() {
     routeEmbedRef.current = nextEmbed;
     replaceShaderUrl(id, kind, nextEmbed);
     setRouteId(id || null);
+    setRouteProfile(null);
     setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
     setRouteEmbed(nextEmbed);
     if (!nextEmbed) setEmbedStatus("idle");
@@ -3815,7 +3829,14 @@ export default function App() {
   }, [kind, runtimeReady, applyPaintFill, clearObjectUrl, reapplyPreferredInput]);
 
   useEffect(() => {
-    if (viewMode === "home" || initedRef.current || !canvasRef.current) return;
+    if (
+      viewMode === "home" ||
+      viewMode === "profile" ||
+      initedRef.current ||
+      !canvasRef.current
+    ) {
+      return;
+    }
     let cancelled = false;
     initedRef.current = true;
     const host = new ShaderHost(canvasRef.current, {
@@ -5191,14 +5212,29 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!runtimeReady || authLoading || sharedLoadedRef.current) return;
+    const initialRoute = getAppRoute();
+    if (
+      authLoading ||
+      sharedLoadedRef.current ||
+      (!initialRoute.profile && !runtimeReady)
+    ) {
+      return;
+    }
     sharedLoadedRef.current = true;
-    const { id, kind: nextKind, embed } = getAppRoute();
+    const {
+      id,
+      kind: nextKind,
+      embed,
+      profile: nextProfile,
+    } = initialRoute;
     routeEmbedRef.current = Boolean(embed);
     setRouteId(id);
     setRouteKind(nextKind);
+    setRouteProfile(nextProfile || null);
     setRouteEmbed(Boolean(embed));
-    if (id && embed) {
+    if (nextProfile) {
+      setEmbedStatus("idle");
+    } else if (id && embed) {
       openEmbedRouteId(id, nextKind);
     } else if (id) {
       setEmbedStatus("idle");
@@ -5213,7 +5249,12 @@ export default function App() {
 
   useEffect(() => {
     const onPopState = () => {
-      const { id, kind: nextKind, embed } = getAppRoute();
+      const {
+        id,
+        kind: nextKind,
+        embed,
+        profile: nextProfile,
+      } = getAppRoute();
       if (id && embed) {
         window.location.reload();
         return;
@@ -5221,8 +5262,11 @@ export default function App() {
       routeEmbedRef.current = Boolean(embed);
       setRouteId(id);
       setRouteKind(nextKind);
+      setRouteProfile(nextProfile || null);
       setRouteEmbed(Boolean(embed));
-      if (id) {
+      if (nextProfile) {
+        setEmbedStatus("idle");
+      } else if (id) {
         setEmbedStatus("idle");
         openRouteId(id);
       } else {
@@ -5312,10 +5356,58 @@ export default function App() {
       pushShaderUrl(nextRouteId, kind);
       setRouteId(nextRouteId);
       setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
+      setRouteProfile(null);
       chooseItem(id);
     },
     [chooseItem, cloudShaders, drafts]
   );
+
+  const openProfile = useCallback(
+    (identifier) => {
+      if (!identifier) return;
+      persistActiveDraft();
+      window.history.pushState({}, "", makeProfileUrl(identifier));
+      routeEmbedRef.current = false;
+      setRouteId(null);
+      setRouteKind(null);
+      setRouteEmbed(false);
+      setRouteProfile(identifier);
+      setEmbedStatus("idle");
+    },
+    [persistActiveDraft],
+  );
+
+  const openUserProfile = useCallback(
+    async (userId, knownHandle = null) => {
+      if (!userId) return;
+      if (knownHandle) {
+        openProfile(knownHandle);
+        return;
+      }
+      try {
+        const profile = await getProfile(userId);
+        openProfile(profile?.handle || userId);
+      } catch {
+        openProfile(userId);
+      }
+    },
+    [openProfile],
+  );
+
+  const openHome = useCallback(() => {
+    window.history.pushState({}, "", makeHomeUrl());
+    routeEmbedRef.current = false;
+    setRouteId(null);
+    setRouteKind(null);
+    setRouteEmbed(false);
+    setRouteProfile(null);
+    setEmbedStatus("idle");
+  }, []);
+
+  const canonicalizeProfileRoute = useCallback((identifier) => {
+    if (!identifier) return;
+    window.history.replaceState({}, "", makeProfileUrl(identifier));
+  }, []);
 
   const updateControl = useCallback(
     (name, value) => {
@@ -8796,6 +8888,11 @@ export default function App() {
           published={card.origin === "public"}
           authorName={card.authorName || card.authorLabel}
           authorAvatarUrl={card.authorAvatarUrl}
+          onAuthorClick={
+            card.authorId
+              ? () => openUserProfile(card.authorId, card.authorHandle)
+              : undefined
+          }
           {...(cardSize ? { size: cardSize } : {})}
         />
       );
@@ -9035,6 +9132,17 @@ export default function App() {
                     tooltip={currentAuthorName}
                     src={currentAuthorAvatarUrl}
                     name={currentAuthorName}
+                    onClick={
+                      currentShader?.owner_id
+                        ? () =>
+                            openUserProfile(
+                              currentShader.owner_id,
+                              currentShader.author_handle,
+                            )
+                        : currentAuthorIsYou && user?.id
+                          ? () => openUserProfile(user.id)
+                          : undefined
+                    }
                   />
                 )}
                 <fig-input-text
@@ -9285,6 +9393,42 @@ export default function App() {
 
   return (
     <>
+      {viewMode === "profile" && (
+        <ProfileView
+          identifier={routeProfile}
+          user={user}
+          onCanonicalIdentifier={canonicalizeProfileRoute}
+          onOpenShader={openHomeChoice}
+          onBack={() => window.history.back()}
+          onHome={openHome}
+          authOpen={authOpen}
+          onAuthOpenChange={setAuthOpen}
+          theme={theme}
+          onThemeChange={setTheme}
+          canvasTheme={canvasTheme}
+          onCanvasThemeChange={setCanvasTheme}
+          settingsOpen={settingsOpen}
+          onSettingsOpenChange={setSettingsOpen}
+          onProfileChange={(displayName, profile) => {
+            if (!user) return;
+            setCloudShaders((current) =>
+              current.map((shader) =>
+                shader.owner_id === user.id
+                  ? {
+                      ...shader,
+                      author_name: displayName,
+                      author_handle: profile?.handle || shader.author_handle,
+                    }
+                  : shader,
+              ),
+            );
+          }}
+          onViewProfile={() => {
+            if (user?.id) openUserProfile(user.id);
+          }}
+          onNotice={showNotice}
+        />
+      )}
       {viewMode === "home" && (
         <HomeView
           query={homeQuery}
@@ -9309,16 +9453,24 @@ export default function App() {
           onCanvasThemeChange={setCanvasTheme}
           settingsOpen={settingsOpen}
           onSettingsOpenChange={setSettingsOpen}
-          onProfileChange={(displayName) => {
+          onProfileChange={(displayName, profile) => {
             if (!user) return;
             setCloudShaders((current) =>
               current.map((shader) =>
                 shader.owner_id === user.id
-                  ? { ...shader, author_name: displayName }
+                  ? {
+                      ...shader,
+                      author_name: displayName,
+                      author_handle: profile?.handle || shader.author_handle,
+                    }
                   : shader,
               ),
             );
           }}
+          onViewProfile={() => {
+            if (user?.id) openUserProfile(user.id);
+          }}
+          onNotice={showNotice}
         />
       )}
 
@@ -9484,16 +9636,25 @@ export default function App() {
               onCanvasThemeChange={setCanvasTheme}
               settingsOpen={settingsOpen}
               onSettingsOpenChange={setSettingsOpen}
-              onProfileChange={(displayName) => {
+              onProfileChange={(displayName, profile) => {
                 if (!user) return;
                 setCloudShaders((current) =>
                   current.map((shader) =>
                     shader.owner_id === user.id
-                      ? { ...shader, author_name: displayName }
+                      ? {
+                          ...shader,
+                          author_name: displayName,
+                          author_handle:
+                            profile?.handle || shader.author_handle,
+                        }
                       : shader
                   )
                 );
               }}
+              onViewProfile={() => {
+                if (user?.id) openUserProfile(user.id);
+              }}
+              onNotice={showNotice}
             />
           </fig-footer>
         </nav>
@@ -9674,6 +9835,7 @@ export default function App() {
                     planShaderId={isOwner ? currentShader.id : null}
                     featuresRef={shaderFeaturesRef}
                     user={user}
+                    onUserProfile={() => openUserProfile(user.id)}
                     onApplySource={onSourceChange}
                     onAppliedCheckpoint={checkpointAgentVersion}
                     onOpenSettings={openSettings}

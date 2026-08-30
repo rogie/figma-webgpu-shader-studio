@@ -9,6 +9,7 @@ export default function ShaderNavCard({
   published,
   authorName,
   authorAvatarUrl,
+  onAuthorClick,
 }) {
   return (
     <fig-card
@@ -27,6 +28,7 @@ export default function ShaderNavCard({
             tooltip={authorName || "Anon"}
             src={authorAvatarUrl}
             name={authorName || "Anon"}
+            onClick={onAuthorClick}
           />
           <h3>{label}</h3>
         </label>

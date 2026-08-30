@@ -3,6 +3,7 @@ import { COMPOSITION_KIND } from "./composition.js";
 export const SHADER_ROUTE_SEGMENT = "shader";
 export const COMPOSER_ROUTE_SEGMENT = "composer";
 export const EMBED_ROUTE_SEGMENT = "embed";
+export const PROFILE_ROUTE_PREFIX = "@";
 
 function normalizeBasePath(basePath) {
   if (!basePath || basePath === "/") return "/";
@@ -16,6 +17,21 @@ export function parseAppRoute(pathname, basePath = "/") {
     .replace(/^\/+/, "")
     .replace(/\/$/, "");
   if (!routePath) return { id: null, kind: null };
+  if (routePath.startsWith(PROFILE_ROUTE_PREFIX)) {
+    const profileSegment = routePath.slice(PROFILE_ROUTE_PREFIX.length);
+    if (!profileSegment || profileSegment.includes("/")) {
+      return { id: null, kind: null };
+    }
+    try {
+      return {
+        id: null,
+        kind: null,
+        profile: decodeURIComponent(profileSegment),
+      };
+    } catch {
+      return { id: null, kind: null };
+    }
+  }
   if (
     routePath === SHADER_ROUTE_SEGMENT ||
     routePath === COMPOSER_ROUTE_SEGMENT
@@ -67,4 +83,9 @@ export function appItemPathname(id, kind, basePath = "/") {
 
 export function appEmbedPathname(id, kind, basePath = "/") {
   return `${appItemPathname(id, kind, basePath)}/${EMBED_ROUTE_SEGMENT}`;
+}
+
+export function appProfilePathname(identifier, basePath = "/") {
+  const base = normalizeBasePath(basePath);
+  return `${base}${PROFILE_ROUTE_PREFIX}${encodeURIComponent(identifier)}`;
 }

@@ -32,9 +32,13 @@ export default function LibraryFilterMenu({
   origin = "all",
   onOriginChange,
   authors = [],
+  showAuthors = true,
+  showOrigin = true,
 }) {
   const filtersActive =
-    kind !== "all" || author !== "all" || origin !== "all";
+    kind !== "all" ||
+    (showAuthors && author !== "all") ||
+    (showOrigin && origin !== "all");
 
   const onMenuChange = useFigMenuChange((value) => {
     const colon = value.indexOf(":");
@@ -79,32 +83,40 @@ export default function LibraryFilterMenu({
           {option.label}
         </FilterMenuItem>
       ))}
-      <fig-separator label="Authors" />
-      <FilterMenuItem value="author:all" checked={author === "all"}>
-        All authors
-      </FilterMenuItem>
-      {authors.map((option) => (
-        <FilterMenuItem
-          key={option.value}
-          value={`author:${option.value}`}
-          checked={author === option.value}
-        >
-          {option.label}
-        </FilterMenuItem>
-      ))}
-      <fig-separator label="Published" />
-      <FilterMenuItem value="origin:all" checked={origin === "all"}>
-        All
-      </FilterMenuItem>
-      <FilterMenuItem value="origin:draft" checked={origin === "draft"}>
-        Drafts
-      </FilterMenuItem>
-      <FilterMenuItem
-        value="origin:public"
-        checked={origin === "public"}
-      >
-        Published
-      </FilterMenuItem>
+      {showAuthors && (
+        <>
+          <fig-separator label="Authors" />
+          <FilterMenuItem value="author:all" checked={author === "all"}>
+            All authors
+          </FilterMenuItem>
+          {authors.map((option) => (
+            <FilterMenuItem
+              key={option.value}
+              value={`author:${option.value}`}
+              checked={author === option.value}
+            >
+              {option.label}
+            </FilterMenuItem>
+          ))}
+        </>
+      )}
+      {showOrigin && (
+        <>
+          <fig-separator label="Published" />
+          <FilterMenuItem value="origin:all" checked={origin === "all"}>
+            All
+          </FilterMenuItem>
+          <FilterMenuItem value="origin:draft" checked={origin === "draft"}>
+            Drafts
+          </FilterMenuItem>
+          <FilterMenuItem
+            value="origin:public"
+            checked={origin === "public"}
+          >
+            Published
+          </FilterMenuItem>
+        </>
+      )}
     </fig-menu>
   );
 }

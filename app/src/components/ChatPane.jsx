@@ -360,6 +360,7 @@ const ChatPane = forwardRef(function ChatPane(
     planShaderId,
     featuresRef,
     user,
+    onUserProfile,
     onApplySource,
     onAppliedCheckpoint,
     onOpenSettings,
@@ -1531,6 +1532,7 @@ ${pendingPlan.content}
                   name={user ? userName : ANON_YOU_LABEL}
                   tooltip={user ? userName : ANON_YOU_LABEL}
                   src={userAvatarUrl}
+                  onClick={user ? onUserProfile : undefined}
                 />
               </fig-chat-message>
             );

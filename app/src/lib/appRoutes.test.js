@@ -4,6 +4,7 @@ import { COMPOSITION_KIND } from "./composition.js";
 import {
   appEmbedPathname,
   appItemPathname,
+  appProfilePathname,
   parseAppRoute,
 } from "./appRoutes.js";
 
@@ -21,6 +22,24 @@ test("parses shader, composer, legacy, and home paths", () => {
     kind: null,
   });
   assert.deepEqual(parseAppRoute("/composer/"), { id: null, kind: null });
+});
+
+test("parses creator profile paths", () => {
+  assert.deepEqual(parseAppRoute("/@rogie"), {
+    id: null,
+    kind: null,
+    profile: "rogie",
+  });
+  assert.deepEqual(parseAppRoute("/@creator%20name"), {
+    id: null,
+    kind: null,
+    profile: "creator name",
+  });
+  assert.deepEqual(parseAppRoute("/@"), { id: null, kind: null });
+  assert.deepEqual(parseAppRoute("/@rogie/shaders"), {
+    id: null,
+    kind: null,
+  });
 });
 
 test("parses shader and composer embed paths", () => {
@@ -84,5 +103,10 @@ test("builds shader, composer, and embed pathnames", () => {
       "/figma-webgpu-shader-studio/"
     ),
     "/figma-webgpu-shader-studio/composer/draft%3A1/embed"
+  );
+  assert.equal(appProfilePathname("rogie"), "/@rogie");
+  assert.equal(
+    appProfilePathname("rogie", "/figma-webgpu-shader-studio/"),
+    "/figma-webgpu-shader-studio/@rogie",
   );
 });

@@ -1,8 +1,14 @@
 import {
   appEmbedPathname,
   appItemPathname,
+  appProfilePathname,
   parseAppRoute,
 } from "../lib/appRoutes.js";
+import {
+  isUuid,
+  normalizeProfileHandle,
+  profileHandleError,
+} from "../lib/profileHandles.js";
 import { supabase } from "../lib/supabase.js";
 import { formatSupabaseError } from "../lib/supabaseFetch.js";
 import { shaderPlanPath } from "../lib/chatPlans.js";
@@ -40,7 +46,7 @@ async function attachAuthorProfiles(client, shaders) {
 
   const result = await client
     .from("profiles")
-    .select("id, display_name, avatar_url")
+    .select("id, display_name, avatar_url, handle")
     .in("id", ownerIds);
   if (result.error) return shaders;
 
@@ -51,6 +57,7 @@ async function attachAuthorProfiles(client, shaders) {
     ...shader,
     author_name: profiles.get(shader.owner_id)?.display_name || null,
     author_avatar_url: profiles.get(shader.owner_id)?.avatar_url || null,
+    author_handle: profiles.get(shader.owner_id)?.handle || null,
   }));
 }
 
@@ -62,7 +69,7 @@ export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
     await client
       .from("shaders")
       .select(
-        "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
+        "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
       )
       .order("updated_at", { ascending: false })
       .limit(Math.max(1, Math.min(Number(limit) || LIBRARY_SHADER_LIMIT, 500)))
@@ -75,24 +82,122 @@ export async function getProfile(id) {
   return unwrap(
     await client
       .from("profiles")
-      .select("id, display_name")
+      .select("id, display_name, avatar_url, handle")
       .eq("id", id)
       .maybeSingle()
   );
 }
 
-export async function saveProfile(id, displayName) {
+export async function getProfileByHandleOrId(identifier) {
   const client = requireClient();
+  const normalized = normalizeProfileHandle(identifier);
+  if (normalized) {
+    const byHandle = unwrap(
+      await client
+        .from("profiles")
+        .select("id, display_name, avatar_url, handle")
+        .eq("handle", normalized)
+        .maybeSingle(),
+    );
+    if (byHandle) return byHandle;
+  }
+  if (!isUuid(identifier)) return null;
   return unwrap(
     await client
       .from("profiles")
-      .upsert(
-        { id, display_name: displayName, updated_at: new Date().toISOString() },
-        { onConflict: "id" }
-      )
-      .select("id, display_name")
-      .single()
+      .select("id, display_name, avatar_url, handle")
+      .eq("id", identifier)
+      .maybeSingle(),
   );
+}
+
+export async function saveProfile(id, { displayName, handle }) {
+  const client = requireClient();
+  const normalizedHandle = normalizeProfileHandle(handle);
+  const handleError = profileHandleError(normalizedHandle);
+  if (handleError) throw new Error(handleError);
+  const result = await client
+    .from("profiles")
+    .upsert(
+      {
+        id,
+        display_name: displayName,
+        handle: normalizedHandle,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    )
+    .select("id, display_name, avatar_url, handle")
+    .single();
+  if (result.error?.code === "23505") {
+    const error = new Error("That handle is already taken.");
+    error.code = result.error.code;
+    throw error;
+  }
+  return unwrap(result);
+}
+
+export async function isProfileHandleAvailable(handle, currentUserId = null) {
+  const normalizedHandle = normalizeProfileHandle(handle);
+  const handleError = profileHandleError(normalizedHandle);
+  if (handleError) return false;
+  const client = requireClient();
+  const profile = unwrap(
+    await client
+      .from("profiles")
+      .select("id")
+      .eq("handle", normalizedHandle)
+      .maybeSingle(),
+  );
+  return !profile || profile.id === currentUserId;
+}
+
+export async function listProfileShaders(
+  ownerId,
+  { includePrivate = false, offset = 0, limit = 48 } = {},
+) {
+  const client = requireClient();
+  const pageSize = Math.max(1, Math.min(Number(limit) || 48, 100));
+  const pageOffset = Math.max(0, Number(offset) || 0);
+  let query = client
+    .from("shaders")
+    .select(
+      "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at",
+      { count: "exact" },
+    )
+    .eq("owner_id", ownerId)
+    .order("updated_at", { ascending: false });
+  if (!includePrivate) query = query.eq("is_public", true);
+  const result = await query.range(pageOffset, pageOffset + pageSize - 1);
+  const shaders = unwrap(result);
+  return {
+    shaders: await attachAuthorProfiles(client, shaders),
+    total: result.count ?? shaders.length,
+  };
+}
+
+export async function getProfileShaderCounts(
+  ownerId,
+  { includePrivate = false } = {},
+) {
+  const client = requireClient();
+  const countKind = async (kind) => {
+    let query = client
+      .from("shaders")
+      .select("id", { count: "exact", head: true })
+      .eq("owner_id", ownerId)
+      .eq("kind", kind);
+    if (!includePrivate) query = query.eq("is_public", true);
+    const result = await query;
+    unwrap(result);
+    return result.count || 0;
+  };
+  const [compositions, effects, fills] = await Promise.all([
+    countKind("composition"),
+    countKind("effect"),
+    countKind("fill"),
+  ]);
+  return { compositions, effects, fills };
 }
 
 export async function getShader(id) {
@@ -519,5 +624,13 @@ export function makeShareUrl(id, kind) {
 export function makeEmbedUrl(id, kind) {
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);
   if (id) url.pathname = appEmbedPathname(id, kind, appBasePathname());
+  return url.toString();
+}
+
+export function makeProfileUrl(identifier) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  if (identifier) {
+    url.pathname = appProfilePathname(identifier, appBasePathname());
+  }
   return url.toString();
 }

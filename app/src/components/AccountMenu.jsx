@@ -18,7 +18,15 @@ import {
   disconnectFigma,
   testFigmaConnection,
 } from "../services/figmaShaders.js";
-import { getProfile, saveProfile } from "../services/shaders.js";
+import {
+  getProfile,
+  isProfileHandleAvailable,
+  saveProfile,
+} from "../services/shaders.js";
+import {
+  normalizeProfileHandle,
+  profileHandleError,
+} from "../lib/profileHandles.js";
 import {
   readPreviewPixelRatioMode,
   subscribePreviewPixelRatioMode,
@@ -44,6 +52,8 @@ export default function AccountMenu({
   settingsOpen = false,
   onSettingsOpenChange,
   onProfileChange,
+  onViewProfile,
+  onNotice,
   position = "bottom right",
   layout = "compact",
 }) {
@@ -60,6 +70,7 @@ export default function AccountMenu({
   const settingsAnchorRef = useRef(null);
   const accountMenuRef = useFigMenuChange((value) => {
     if (value === "settings") openSettings();
+    else if (value === "profile") onViewProfile?.();
     else if (value === "sign-out") logout();
     else if (value === "login") onOpenChange(true);
   });
@@ -90,6 +101,9 @@ export default function AccountMenu({
   const [displayName, setDisplayName] = useState(() =>
     accountDisplayName(user)
   );
+  const [handle, setHandle] = useState("");
+  const [handleChecking, setHandleChecking] = useState(false);
+  const [handleAvailable, setHandleAvailable] = useState(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsError, setSettingsError] = useState("");
@@ -130,6 +144,8 @@ export default function AccountMenu({
   useEffect(() => {
     if (!user) {
       setDisplayName("");
+      setHandle("");
+      setHandleAvailable(null);
       return;
     }
     let cancelled = false;
@@ -138,17 +154,21 @@ export default function AccountMenu({
       .then((profile) => {
         if (!cancelled && profile?.display_name) {
           setDisplayName(profile.display_name);
+          setHandle(profile.handle || "");
+          setHandleAvailable(profile.handle ? true : null);
         }
       })
       .catch((profileError) => {
         if (!cancelled) {
-          setSettingsError(profileError.message || String(profileError));
+          onNotice?.(profileError.message || String(profileError), {
+            error: true,
+          });
         }
       });
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [onNotice, user]);
 
   useEffect(() => {
     const popup = authPopupRef.current;
@@ -244,9 +264,13 @@ export default function AccountMenu({
       if (user) {
         const name = displayName.trim();
         if (!name) throw new Error("Display name is required.");
-        const profile = await saveProfile(user.id, name);
+        const profile = await saveProfile(user.id, {
+          displayName: name,
+          handle,
+        });
         setDisplayName(profile.display_name);
-        onProfileChange?.(profile.display_name);
+        setHandle(profile.handle);
+        onProfileChange?.(profile.display_name, profile);
       }
       setProviderKey("openai", openaiKey);
       setProviderKey("anthropic", anthropicKey);
@@ -260,9 +284,35 @@ export default function AccountMenu({
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
-      setSettingsError(saveError.message || String(saveError));
+      const message = saveError.message || String(saveError);
+      if (saveError.code === "23505") setSettingsError(message);
+      else onNotice?.(message, { error: true });
     } finally {
       setSettingsSaving(false);
+    }
+  };
+
+  const checkHandleAvailability = async () => {
+    const validationError = profileHandleError(handle);
+    if (validationError) {
+      setHandleAvailable(false);
+      setSettingsError(validationError);
+      return;
+    }
+    setHandleChecking(true);
+    setSettingsError("");
+    try {
+      const available = await isProfileHandleAvailable(handle, user?.id);
+      setHandleAvailable(available);
+      if (!available) setSettingsError("That handle is already taken.");
+    } catch (availabilityError) {
+      setHandleAvailable(null);
+      onNotice?.(
+        availabilityError.message || String(availabilityError),
+        { error: true },
+      );
+    } finally {
+      setHandleChecking(false);
     }
   };
 
@@ -308,8 +358,15 @@ export default function AccountMenu({
       {layout === "bar" ? (
         <div className="app-nav-account">
           {user ? (
-            <>
+            <fig-button
+              class="account-profile-button"
+              type="button"
+              variant="ghost"
+              size="large"
+              onClick={onViewProfile}
+            >
               <fig-avatar
+                slot="prepend"
                 class="account-avatar"
                 src={
                   user.user_metadata?.avatar_url ||
@@ -319,7 +376,7 @@ export default function AccountMenu({
                 name={accountName}
               />
               <fig-truncate>{accountName}</fig-truncate>
-            </>
+            </fig-button>
           ) : (
             <fig-button
               type="button"
@@ -369,6 +426,7 @@ export default function AccountMenu({
         </fig-tooltip>
         {user ? (
           <>
+            <fig-menu-item value="profile">View profile</fig-menu-item>
             <fig-menu-item value="settings">Settings</fig-menu-item>
             <fig-menu-item value="sign-out">Sign out</fig-menu-item>
           </>
@@ -532,6 +590,25 @@ export default function AccountMenu({
                 />
               </fig-field>
               <fig-field direction="horizontal">
+                <label>Handle</label>
+                <fig-input-text
+                  value={handle}
+                  maxlength="30"
+                  placeholder="@handle"
+                  full=""
+                  required=""
+                  onInput={(event) => {
+                    setHandle(normalizeProfileHandle(event.target.value));
+                    setHandleAvailable(null);
+                    setSettingsError("");
+                  }}
+                  onBlur={() => {
+                    checkHandleAvailability().catch(() => {});
+                  }}
+                  dangerouslySetInnerHTML={{ __html: "" }}
+                />
+              </fig-field>
+              <fig-field direction="horizontal">
                 <label>Email</label>
                 <fig-input-text
                   type="email"
@@ -677,7 +754,14 @@ export default function AccountMenu({
             type="button"
             variant="primary"
             disabled={
-              settingsSaving || (user && !displayName.trim()) ? "" : undefined
+              settingsSaving ||
+              handleAvailable === false ||
+              (user &&
+                (!displayName.trim() ||
+                  !handle.trim() ||
+                  Boolean(profileHandleError(handle))))
+                ? ""
+                : undefined
             }
             onClick={saveSettings}
           >

@@ -52,7 +52,11 @@
                     type: "video",
                     paint: {
                       type: "video",
-                      video: { url: defaultVideoUrl, scaleMode: "fit" },
+                      video: {
+                        assetPath: "owner/fixture/video.mp4",
+                        url: "https://expired.invalid/video.mp4",
+                        scaleMode: "fit",
+                      },
                     },
                   },
                 ],
@@ -175,7 +179,11 @@
             Object.fromEntries(
               paths.map((path) => [
                 path,
-                path === "owner/fixture/input.png" ? defaultImageUrl : "",
+                path === "owner/fixture/input.png"
+                  ? defaultImageUrl
+                  : path === "owner/fixture/video.mp4"
+                    ? defaultVideoUrl
+                    : "",
               ])
             ),
         }

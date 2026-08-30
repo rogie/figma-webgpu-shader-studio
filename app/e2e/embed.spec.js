@@ -92,7 +92,9 @@ test("composition embeds compile the pinned dependency source", async ({
   await expect(page.locator("#error")).toBeHidden();
 });
 
-test("video fills load as animated composition sources", async ({ page }) => {
+test("video fills refresh stale asset URLs and load as animated sources", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     Object.defineProperty(Navigator.prototype, "gpu", {
       configurable: true,
