@@ -317,3 +317,28 @@ test("filters published shaders by author", () => {
     cards[1],
   ]);
 });
+
+test("filters your items using card ownership", () => {
+  const cards = [
+    {
+      name: "Mine",
+      authorId: "author-1",
+      authorLabel: "You",
+      kind: "effect",
+      origin: "draft",
+      canDelete: true,
+    },
+    {
+      name: "Theirs",
+      authorId: "author-2",
+      authorLabel: "Grace",
+      kind: "effect",
+      origin: "public",
+      canDelete: false,
+    },
+  ];
+
+  assert.deepEqual(filterShaderLibraryCards(cards, { author: "me" }), [
+    cards[0],
+  ]);
+});

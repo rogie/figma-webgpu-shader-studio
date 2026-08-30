@@ -403,20 +403,22 @@ export default function AccountMenu({
             ref={settingsAnchorRef}
             fig-menu-trigger=""
             variant="ghost"
+            size={layout === "rail" ? "large" : undefined}
             icon="true"
             aria-label={
               layout === "bar" ? "Settings" : user ? "Account" : "Settings"
             }
             disabled={!user && loading ? "" : undefined}
           >
-            {layout === "bar" || !user ? (
+            {layout === "bar" || (layout !== "rail" && !user) ? (
               <fig-icon name="settings" />
             ) : (
               <fig-avatar
-                class="account-avatar"
+                class={layout === "rail" ? undefined : "account-avatar"}
+                style={layout === "rail" ? { "--size": "2rem" } : undefined}
                 src={
-                  user.user_metadata?.avatar_url ||
-                  user.user_metadata?.picture ||
+                  user?.user_metadata?.avatar_url ||
+                  user?.user_metadata?.picture ||
                   ""
                 }
                 name={accountName}

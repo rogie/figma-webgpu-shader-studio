@@ -5,6 +5,7 @@ import {
   appEmbedPathname,
   appItemPathname,
   appProfilePathname,
+  appViewPathname,
   parseAppRoute,
 } from "./appRoutes.js";
 
@@ -68,6 +69,28 @@ test("parses shader and composer embed paths", () => {
   });
 });
 
+test("parses shader and composer view paths", () => {
+  assert.deepEqual(parseAppRoute("/shader/abc/view"), {
+    id: "abc",
+    kind: null,
+    view: true,
+  });
+  assert.deepEqual(parseAppRoute("/composer/abc/view/"), {
+    id: "abc",
+    kind: COMPOSITION_KIND,
+    view: true,
+  });
+  assert.deepEqual(parseAppRoute("/shader/draft%3A1/view"), {
+    id: "draft:1",
+    kind: null,
+    view: true,
+  });
+  assert.deepEqual(parseAppRoute("/shader/abc/view/extra"), {
+    id: null,
+    kind: null,
+  });
+});
+
 test("respects a GitHub Pages base path and decodes ids", () => {
   const base = "/figma-webgpu-shader-studio/";
   assert.deepEqual(parseAppRoute(`${base}composer/draft%3A1`, base), {
@@ -96,6 +119,7 @@ test("builds shader, composer, and embed pathnames", () => {
     "/figma-webgpu-shader-studio/composer/abc"
   );
   assert.equal(appEmbedPathname("abc"), "/shader/abc/embed");
+  assert.equal(appViewPathname("abc"), "/shader/abc/view");
   assert.equal(
     appEmbedPathname(
       "draft:1",
@@ -108,5 +132,13 @@ test("builds shader, composer, and embed pathnames", () => {
   assert.equal(
     appProfilePathname("rogie", "/figma-webgpu-shader-studio/"),
     "/figma-webgpu-shader-studio/@rogie",
+  );
+  assert.equal(
+    appViewPathname(
+      "draft:1",
+      COMPOSITION_KIND,
+      "/figma-webgpu-shader-studio/",
+    ),
+    "/figma-webgpu-shader-studio/composer/draft%3A1/view",
   );
 });

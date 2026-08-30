@@ -174,7 +174,11 @@ export function filterShaderLibraryCards(
   return cards.filter((card) => {
     if (kind !== "all" && card.kind !== kind) return false;
     if (origin !== "all" && card.origin !== origin) return false;
-    if (author !== "all" && card.authorId !== author) return false;
+    if (author === "me") {
+      if (!card.canDelete) return false;
+    } else if (author !== "all" && card.authorId !== author) {
+      return false;
+    }
     if (!needle) return true;
     return (
       card.name.toLowerCase().includes(needle) ||

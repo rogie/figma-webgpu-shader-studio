@@ -8,6 +8,7 @@ import {
   readCanvasTheme,
   readChatHeight,
   readCodeWidth,
+  readEditorFilters,
   readLibraryView,
   readPlayState,
   readPreviewHeight,
@@ -82,5 +83,31 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
   assert.equal(
     readLibraryView(storage({ "figma-shader-studio:library-view": "cards" })),
     "list",
+  );
+});
+
+test("editor filters default to your items and restore saved choices", () => {
+  assert.deepEqual(readEditorFilters(storage()), {
+    kind: "all",
+    origin: "all",
+    author: "me",
+  });
+  assert.deepEqual(
+    readEditorFilters(
+      storage({
+        "figma-shader-studio:editor-filters": JSON.stringify({
+          kind: "fill",
+          origin: "public",
+          author: "author-1",
+        }),
+      }),
+    ),
+    { kind: "fill", origin: "public", author: "author-1" },
+  );
+  assert.deepEqual(
+    readEditorFilters(
+      storage({ "figma-shader-studio:editor-filters": "{" }),
+    ),
+    { kind: "all", origin: "all", author: "me" },
   );
 });

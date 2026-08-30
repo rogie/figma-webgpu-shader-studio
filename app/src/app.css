@@ -11,6 +11,7 @@ body,
 }
 
 :root {
+  --global-app-nav-width: 3rem;
   --sidebar-width: 240px;
   --sidebar-min-width: 12rem;
   --sidebar-fluid-width: clamp(
@@ -23,9 +24,63 @@ body,
 }
 
 #root {
+  position: relative;
   display: flex;
   background-color: var(--figma-color-bg);
   color: var(--figma-color-text);
+
+  .global-app-nav {
+    position: absolute;
+    z-index: 20;
+    inset: 0 auto 0 0;
+    width: var(--global-app-nav-width);
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacer-2-5);
+    padding: var(--spacer-2);
+    background: var(--figma-color-bg);
+    border-right: 1px solid var(--figma-color-border);
+
+    > fig-separator,
+    > .global-app-nav-actions > fig-separator {
+      --fig-separator-padding: 0;
+      width: 1rem;
+      min-width: 1rem;
+      max-width: 1rem;
+      margin: 0;
+    }
+  }
+
+  .global-app-nav-actions,
+  .global-app-nav-account {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacer-2);
+  }
+
+  .global-app-nav-main {
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .global-app-nav-account {
+    position: absolute;
+    bottom: var(--spacer-2);
+  }
+
+  .app-shell-content {
+    flex: 1 1 auto;
+    width: calc(100% - var(--global-app-nav-width));
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    margin-left: var(--global-app-nav-width);
+    display: flex;
+    overflow: hidden;
+  }
 
   .embed-view {
     position: relative;
@@ -54,6 +109,19 @@ body,
       color: var(--figma-color-text-secondary);
       background: var(--figma-color-bg);
     }
+  }
+
+  .composer-viewer .embed-state {
+    position: absolute;
+    z-index: 10;
+    inset: 0;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    padding: var(--spacer-4);
+    text-align: center;
+    color: var(--figma-color-text-secondary);
+    background: var(--figma-color-bg);
   }
 
   .editor-view {
@@ -195,8 +263,6 @@ body,
 
     .shader-editor-header {
       gap: var(--spacer-1);
-      padding-left: var(--spacer-0);
-      padding-right: 0;
 
       .shader-title {
         flex: 1 1 auto;
@@ -254,7 +320,6 @@ body,
           background-color: transparent;
           box-shadow: none !important;
           outline: none !important;
-          cursor: text;
           user-select: none;
           flex: 0 1 auto;
           width: auto;
@@ -264,14 +329,6 @@ body,
           > input {
             field-sizing: content;
             min-width: 3ch;
-            cursor: pointer;
-          }
-
-          &:hover,
-          &:has(:is(input, textarea):focus) {
-            background-color: var(--figma-color-bg-secondary);
-            box-shadow: none !important;
-            outline: none !important;
           }
         }
 
@@ -282,6 +339,28 @@ body,
 
       .shader-title:has(.shader-author-avatar) fig-input-text.shader-name {
         margin-left: 0;
+      }
+    }
+
+    > .shader-editor-header,
+    .composer-stage > .shader-editor-header {
+      padding-left: var(--spacer-0);
+      padding-right: 0;
+    }
+
+    .editor-view
+      &
+      .shader-editor-header
+      fig-input-text.shader-name[readonly]:not([readonly="false"]) {
+      > input {
+        cursor: pointer;
+      }
+
+      &:hover,
+      &:has(:is(input, textarea):focus) {
+        background-color: var(--figma-color-bg-secondary);
+        box-shadow: none !important;
+        outline: none !important;
       }
     }
 
@@ -779,6 +858,24 @@ dialog[is="fig-popup"].settings-popup {
   }
 }
 
+dialog[is="fig-popup"].app-search-popup {
+  width: 240px;
+  padding: 0;
+  pointer-events: auto;
+
+  .app-nav-home-tools {
+    display: flex;
+    align-items: center;
+    gap: var(--spacer-2);
+    min-width: 0;
+  }
+
+  .app-nav-search {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
 dialog[is="fig-popup"].auth-popup {
   width: 280px;
   padding: 0;
@@ -1030,12 +1127,9 @@ dialog.delete-shader-dialog {
   overflow: hidden;
   border: 1px solid var(--figma-color-border);
   border-radius: var(--viewer-radius);
+}
 
-  > fig-header {
-    flex: 0 0 auto;
-    padding-right: var(--spacer-2);
-  }
-
+:is(.shader-properties-panel, .view-properties-dialog) {
   fig-content.shader-properties-panel-content {
     flex: 1;
     min-height: 0;
@@ -1098,6 +1192,13 @@ dialog.delete-shader-dialog {
   }
 }
 
+:is(.shader-viewer, .composer-viewer)
+  > .shader-properties-panel
+  > fig-header {
+  flex: 0 0 auto;
+  padding-right: var(--spacer-2);
+}
+
 @media (max-width: 1180px) {
   :root {
     --code-width: 380px;
@@ -1105,7 +1206,7 @@ dialog.delete-shader-dialog {
 }
 
 /* Editor-only outer inset. Home uses .home-nav and is not wrapped here. */
-#root > .editor-view {
+#root > .app-shell-content > .editor-view {
   padding: 1rem;
   box-sizing: border-box;
 }

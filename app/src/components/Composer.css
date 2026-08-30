@@ -4,6 +4,63 @@
   align-items: stretch;
 }
 
+#root .composer-viewer.shader-view-page {
+  box-sizing: border-box;
+  position: relative;
+  padding: 0;
+}
+
+#root .composer-viewer.shader-view-page .composer-stage {
+  width: 100%;
+}
+
+#root
+  .composer-viewer.shader-view-page
+  .composer-preview.shader-viewer-visualizer,
+#root .composer-viewer.shader-view-page .canvas-stage {
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+#root .composer-viewer.shader-view-page .canvas-stage::before,
+#root .composer-viewer.shader-view-page .canvas-stage::after {
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
+}
+
+#root .composer-viewer.shader-view-page .view-properties-overlay {
+  position: absolute;
+  z-index: 11;
+  top: var(--spacer-3);
+  right: var(--spacer-3);
+  bottom: var(--spacer-3);
+  display: flex;
+  align-items: flex-start;
+  pointer-events: none;
+}
+
+#root .composer-viewer.shader-view-page .view-properties-dialog {
+  width: 240px;
+  max-width: calc(100vw - var(--spacer-6));
+  pointer-events: auto;
+}
+
+#root .composer-viewer.shader-view-page .view-properties-dialog.is-minimized {
+  width: max-content;
+  min-width: 0;
+}
+
+#root
+  .composer-viewer.shader-view-page
+  .shader-viewer-visualizer
+  .tools {
+  bottom: var(--spacer-3);
+}
+
 .composer-stage {
   display: flex;
   flex: 1 1 auto;

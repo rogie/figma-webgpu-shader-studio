@@ -10,7 +10,6 @@ import {
   getProfileShaderCounts,
   listProfileShaders,
 } from "../services/shaders.js";
-import AccountMenu from "./AccountMenu.jsx";
 import LibraryFilterMenu from "./LibraryFilterMenu.jsx";
 import ShaderCard from "./ShaderCard.jsx";
 import UserAvatar from "./UserAvatar.jsx";
@@ -45,16 +44,6 @@ export default function ProfileView({
   onOpenShader,
   onBack,
   onHome,
-  authOpen,
-  onAuthOpenChange,
-  theme,
-  onThemeChange,
-  canvasTheme,
-  onCanvasThemeChange,
-  settingsOpen,
-  onSettingsOpenChange,
-  onProfileChange,
-  onViewProfile,
   onNotice,
 }) {
   const chooserRef = useRef(null);
@@ -140,11 +129,16 @@ export default function ProfileView({
     const chooser = chooserRef.current;
     if (!chooser) return;
     const onChange = (event) => {
-      if (typeof event.detail === "string") onOpenShader?.(event.detail);
+      if (typeof event.detail !== "string") return;
+      const shaderId = event.detail.startsWith("cloud:")
+        ? event.detail.slice("cloud:".length)
+        : event.detail;
+      const shader = shaders.find((item) => item.id === shaderId);
+      if (shader) onOpenShader?.(shader.id, shader.kind);
     };
     chooser.addEventListener("change", onChange);
     return () => chooser.removeEventListener("change", onChange);
-  }, [loading, onOpenShader]);
+  }, [loading, onOpenShader, shaders]);
 
   const cards = useMemo(
     () =>
@@ -208,14 +202,6 @@ export default function ProfileView({
     : profile
       ? `@${profile.id}`
       : `@${identifier}`;
-  const handleProfileChange = (displayName, nextProfile) => {
-    if (nextProfile?.id === profile?.id) {
-      setProfile((current) => ({ ...current, ...nextProfile }));
-      if (nextProfile.handle) onCanonicalIdentifier?.(nextProfile.handle);
-    }
-    onProfileChange?.(displayName, nextProfile);
-  };
-
   return (
     <main className="home-nav profile-view">
       <div className="app-nav-headers">
@@ -241,19 +227,6 @@ export default function ProfileView({
               onKindChange={setKind}
               showAuthors={false}
               showOrigin={false}
-            />
-            <AccountMenu
-              open={authOpen}
-              onOpenChange={onAuthOpenChange}
-              theme={theme}
-              onThemeChange={onThemeChange}
-              canvasTheme={canvasTheme}
-              onCanvasThemeChange={onCanvasThemeChange}
-              settingsOpen={settingsOpen}
-              onSettingsOpenChange={onSettingsOpenChange}
-              onProfileChange={handleProfileChange}
-              onViewProfile={onViewProfile}
-              onNotice={onNotice}
             />
           </div>
         </fig-header>

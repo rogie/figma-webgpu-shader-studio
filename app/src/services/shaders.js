@@ -2,6 +2,7 @@ import {
   appEmbedPathname,
   appItemPathname,
   appProfilePathname,
+  appViewPathname,
   parseAppRoute,
 } from "../lib/appRoutes.js";
 import {
@@ -624,6 +625,12 @@ export function makeShareUrl(id, kind) {
 export function makeEmbedUrl(id, kind) {
   const url = new URL(import.meta.env.BASE_URL, window.location.origin);
   if (id) url.pathname = appEmbedPathname(id, kind, appBasePathname());
+  return url.toString();
+}
+
+export function makeViewUrl(id, kind) {
+  const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+  if (id) url.pathname = appViewPathname(id, kind, appBasePathname());
   return url.toString();
 }
 

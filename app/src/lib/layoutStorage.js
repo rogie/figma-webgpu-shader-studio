@@ -26,6 +26,8 @@ export const CANVAS_CONTROLS_STORAGE_KEY =
   "figma-shader-studio:show-canvas-handles";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
+export const EDITOR_FILTERS_STORAGE_KEY =
+  "figma-shader-studio:editor-filters";
 
 export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
   return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
@@ -112,4 +114,26 @@ export function readLibraryView(storage = globalThis.localStorage) {
   return storage?.getItem(LIBRARY_VIEW_STORAGE_KEY) === "grid"
     ? "grid"
     : "list";
+}
+
+export function readEditorFilters(storage = globalThis.localStorage) {
+  try {
+    const parsed = JSON.parse(
+      storage?.getItem(EDITOR_FILTERS_STORAGE_KEY) || "{}",
+    );
+    return {
+      kind: ["all", "effect", "fill", "composition"].includes(parsed.kind)
+        ? parsed.kind
+        : "all",
+      origin: ["all", "draft", "public"].includes(parsed.origin)
+        ? parsed.origin
+        : "all",
+      author:
+        typeof parsed.author === "string" && parsed.author
+          ? parsed.author
+          : "me",
+    };
+  } catch {
+    return { kind: "all", origin: "all", author: "me" };
+  }
 }

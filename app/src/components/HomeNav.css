@@ -10,21 +10,14 @@
   min-width: 0;
   min-height: 0;
 
-  fig-header.app-nav-header {
-    justify-content: flex-start;
-    align-items: center;
-    height: auto;
-    min-height: var(--spacer-6);
-    padding: var(--spacer-3);
-  }
-
   .app-nav-home-tools {
     display: flex;
     flex: 0 1 auto;
     align-items: center;
+    justify-content: flex-end;
     gap: var(--spacer-2);
     min-width: 0;
-    margin-left: auto;
+    padding: var(--spacer-3);
   }
 
   .profile-identity {
@@ -230,11 +223,6 @@
   }
 
   @media (max-width: 720px) {
-    .app-nav-headers {
-      padding-inline: var(--spacer-3);
-    }
-
-    fig-header.app-nav-header,
     .app-nav-home-tools {
       flex-wrap: wrap;
     }

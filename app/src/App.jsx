@@ -11,9 +11,8 @@ import CompositionEditor, {
   ExportPropertiesPane,
   FigmaPropertiesPane,
 } from "./components/CompositionEditor.jsx";
-import AccountMenu from "./components/AccountMenu.jsx";
+import AppNav from "./components/AppNav.jsx";
 import AppToasts from "./components/AppToasts.jsx";
-import CanvasControlsIcon from "./components/CanvasControlsIcon.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import ExportDialog from "./components/ExportDialog.jsx";
 import FigmaPlanDialog from "./components/FigmaPlanDialog.jsx";
@@ -26,12 +25,13 @@ import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
 import ListViewIcon from "./components/ListViewIcon.jsx";
 import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
-import PreviewFps from "./components/PreviewFps.jsx";
+import PreviewToolbar from "./components/PreviewToolbar.jsx";
 import ShaderActionsMenu from "./components/ShaderActionsMenu.jsx";
 import ShaderList from "./components/ShaderList.jsx";
 import ShaderCard from "./components/ShaderCard.jsx";
 import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
 import UserAvatar from "./components/UserAvatar.jsx";
+import ViewPropertiesDialog from "./components/ViewPropertiesDialog.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
 import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
@@ -180,6 +180,7 @@ import {
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   defaultCodeWidth,
+  EDITOR_FILTERS_STORAGE_KEY,
   LIBRARY_VIEW_STORAGE_KEY,
   MAX_APP_NAV_WIDTH,
   MIN_APP_NAV_WIDTH,
@@ -192,6 +193,7 @@ import {
   PLAY_STORAGE_KEY,
   readCanvasControlsVisible as savedCanvasControlsVisible,
   readCanvasTheme as savedCanvasTheme,
+  readEditorFilters as savedEditorFilters,
   readLibraryView as savedLibraryView,
   readPlayState as savedPlayState,
   readSidebarSections as savedSidebarSections,
@@ -232,6 +234,7 @@ import {
   dependencySnapshotForKey,
   resolvedByKeyWithDependencySnapshots,
 } from "./lib/compositionDependencies.js";
+import { cloudSessionComposition } from "./lib/cloudCompositionGraph.js";
 import {
   graphTypeForPaint,
   fillLoadErrorMessage,
@@ -294,6 +297,7 @@ import {
   makeHomeUrl,
   makeProfileUrl,
   makeShareUrl,
+  makeViewUrl,
   MAX_MEDIA_BYTES,
   removeAssets,
   removeShaderPlan,
@@ -733,7 +737,6 @@ async function hydrateCompositionMediaUrls(composition) {
     ...new Set(
       groups
         .flat()
-        .filter((fill) => !fillMediaUrl(fill))
         .map(fillMediaAssetPath)
         .filter(Boolean)
     ),
@@ -978,13 +981,15 @@ function publicItemsReferencing(shaderId, rows = []) {
   });
 }
 
-function replaceShaderUrl(id, kind, embed = false) {
+function replaceShaderUrl(id, kind, embed = false, view = false) {
   window.history.replaceState(
     {},
     "",
     id
       ? embed
         ? makeEmbedUrl(id, kind)
+        : view
+          ? makeViewUrl(id, kind)
         : makeShareUrl(id, kind)
       : makeHomeUrl()
   );
@@ -1105,6 +1110,7 @@ export default function App() {
   const [migrationRetryRevision, setMigrationRetryRevision] = useState(0);
   const [authOpen, setAuthOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportTab, setExportTab] = useState("image");
   const [videoExportSettings, setVideoExportSettings] = useState({
@@ -1178,16 +1184,24 @@ export default function App() {
   );
   const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
   const [routeEmbed, setRouteEmbed] = useState(routeEmbedRef.current);
+  const routeViewRef = useRef(Boolean(getAppRoute().view));
+  const [routeView, setRouteView] = useState(routeViewRef.current);
   const [embedStatus, setEmbedStatus] = useState(() =>
-    routeEmbedRef.current ? "loading" : "idle"
+    routeEmbedRef.current || routeViewRef.current ? "loading" : "idle"
   );
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
   const [homeAuthor, setHomeAuthor] = useState("all");
-  const [editorKind, setEditorKind] = useState("all");
-  const [editorOrigin, setEditorOrigin] = useState("all");
-  const [editorAuthor, setEditorAuthor] = useState("all");
+  const [editorKind, setEditorKind] = useState(
+    () => savedEditorFilters().kind,
+  );
+  const [editorOrigin, setEditorOrigin] = useState(
+    () => savedEditorFilters().origin,
+  );
+  const [editorAuthor, setEditorAuthor] = useState(
+    () => savedEditorFilters().author,
+  );
   const [libraryView, setLibraryView] = useState(savedLibraryView);
   const [figmaTokenConfigured, setFigmaTokenConfigured] = useState(
     () =>
@@ -1216,22 +1230,42 @@ export default function App() {
   );
   const viewMode = routeEmbed && routeId
     ? "embed"
-    : routeProfile
-      ? "profile"
-      : routeId
-        ? "editor"
-        : "home";
+    : routeView && routeId
+      ? "view"
+      : routeProfile
+        ? "profile"
+        : routeId
+          ? "editor"
+          : "home";
+  const [activeNavItem, setActiveNavItem] = useState(() =>
+    viewMode === "editor" ? "editor" : "home",
+  );
+
+  useEffect(() => {
+    if (viewMode === "editor") {
+      setActiveNavItem("editor");
+    } else if (viewMode === "profile") {
+      setActiveNavItem("home");
+    } else if (viewMode === "home") {
+      setActiveNavItem("home");
+    }
+  }, [viewMode]);
 
   const setShaderRoute = useCallback((id, kind, options = {}) => {
     const nextEmbed = Boolean(
       id && (options.embed ?? routeEmbedRef.current)
     );
+    const nextView = Boolean(
+      id && !nextEmbed && (options.view ?? routeViewRef.current)
+    );
     routeEmbedRef.current = nextEmbed;
-    replaceShaderUrl(id, kind, nextEmbed);
+    routeViewRef.current = nextView;
+    replaceShaderUrl(id, kind, nextEmbed, nextView);
     setRouteId(id || null);
     setRouteProfile(null);
     setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
     setRouteEmbed(nextEmbed);
+    setRouteView(nextView);
     if (!nextEmbed) setEmbedStatus("idle");
   }, []);
   const [thumbnails, setThumbnails] = useState(() => {
@@ -1277,7 +1311,6 @@ export default function App() {
   const noticeToastRef = useRef(null);
   const exportDialogRef = useRef(null);
   const exportTabsRef = useRef(null);
-  const editorViewTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
   const inputLoadingToastRef = useRef(null);
@@ -1777,6 +1810,24 @@ export default function App() {
   }, [libraryView, routeEmbed]);
 
   useEffect(() => {
+    if (editorAuthor === "me" && user?.id) {
+      setEditorAuthor(user.id);
+    }
+  }, [editorAuthor, user?.id]);
+
+  useEffect(() => {
+    if (routeEmbed) return;
+    localStorage.setItem(
+      EDITOR_FILTERS_STORAGE_KEY,
+      JSON.stringify({
+        kind: editorKind,
+        origin: editorOrigin,
+        author: editorAuthor,
+      }),
+    );
+  }, [editorAuthor, editorKind, editorOrigin, routeEmbed]);
+
+  useEffect(() => {
     if (!FIGMA_LIBRARY_UI_ENABLED) {
       setFigmaTokenConfigured(false);
       return undefined;
@@ -2175,17 +2226,6 @@ export default function App() {
     tabs?.addEventListener("input", onInput);
     return () => tabs?.removeEventListener("input", onInput);
   }, [exportOpen]);
-
-  useEffect(() => {
-    const tabs = editorViewTabsRef.current;
-    if (!tabs || viewMode !== "editor") return;
-    const onInput = (event) => {
-      const value = String(event.detail ?? event.target.value ?? "editor");
-      if (value === "shaders") setShaderRoute();
-    };
-    tabs.addEventListener("input", onInput);
-    return () => tabs.removeEventListener("input", onInput);
-  }, [setShaderRoute, viewMode]);
 
   useEffect(() => {
     const toast = videoExportToastRef.current;
@@ -2598,6 +2638,7 @@ export default function App() {
       const map = new Map(Object.entries(resolved));
       const layers = [];
       const fillWarnings = [];
+      let hasHtmlFill = false;
       const activeWebcamFillIds = new Set();
       for (const source of compositionMediaSourcesRef.current) {
         source.pause?.();
@@ -2684,6 +2725,26 @@ export default function App() {
       };
       for (const fill of graph.fills.slice().reverse()) {
         if (!fill.enabled) continue;
+        if (fill.type === "html") {
+          const element = htmlInputRef.current;
+          if (!element) {
+            await addFallbackFill(fill);
+            continue;
+          }
+          hasHtmlFill = true;
+          layers.push({
+            id: fill.id,
+            role: "fill",
+            enabled: true,
+            source: element,
+            sourceType: "html",
+            sourceScaleMode: "fill",
+            sourceOpacity: 1,
+            props: {},
+            params: {},
+          });
+          continue;
+        }
         if (fill.type === "shader" && fill.shaderId) {
           const loaded = loadLayer(
             fill.id,
@@ -2877,7 +2938,7 @@ export default function App() {
       try {
         ok = await host.setComposition(layers, {
           isFill: layers.some((layer) => layer.role === "fill"),
-          isAnimated: features.isAnimated,
+          isAnimated: features.isAnimated || hasHtmlFill,
           usesMouse: features.usesMouse,
           supportsRenderScale: false,
         });
@@ -2920,7 +2981,7 @@ export default function App() {
         setError(null);
         setThumbnailRefreshRevision((revision) => revision + 1);
       }
-      if (playPreferenceRef.current && features.isAnimated) {
+      if (playPreferenceRef.current && (features.isAnimated || hasHtmlFill)) {
         host.setActive(true);
         host.start();
         setRunning(true);
@@ -4636,7 +4697,10 @@ export default function App() {
             description: fullShader.description,
           }
         );
-        await activateBeforeHydration({
+        const sessionComposition = cloudSessionComposition(fullShader, {
+          defaultImageUrl: defaultInputUrl,
+        });
+        const hydratedComposition = await activateBeforeHydration({
           session: {
             sessionId: cloudChoiceId(fullShader.id),
             routeId: fullShader.id,
@@ -4644,7 +4708,7 @@ export default function App() {
             description: fullShader.description || "",
             source: fullShader.source || "",
             kind: fullShader.kind,
-            composition: fullShader.composition,
+            composition: sessionComposition,
             values: fullShader.parameter_values || {},
             public: fullShader.is_public,
             cloudShader: fullShader,
@@ -4654,6 +4718,19 @@ export default function App() {
           hydrate: hydrateCompositionMediaUrls,
           isCurrent: () => requestId === sessionRequestRef.current,
         });
+        if (!hydratedComposition || requestId !== sessionRequestRef.current) {
+          return;
+        }
+        if (fullShader.kind === COMPOSITION_KIND) {
+          const nextComposition = normalizeComposition(hydratedComposition);
+          compositionRef.current = nextComposition;
+          setComposition(nextComposition);
+        } else {
+          const nextEffectFills =
+            readEffectFillsFromComposition(hydratedComposition);
+          effectFillsRef.current = nextEffectFills;
+          setEffectFills(nextEffectFills);
+        }
       } catch (openError) {
         if (requestId !== sessionRequestRef.current) return;
         navigationStartedAtRef.current = 0;
@@ -5185,7 +5262,7 @@ export default function App() {
     ]
   );
 
-  const openEmbedRouteId = useCallback(
+  const openSharedRouteId = useCallback(
     async (id, expectedKind) => {
       if (!id) return;
       setEmbedStatus("loading");
@@ -5196,18 +5273,42 @@ export default function App() {
           { requireAccessible: true, expectedKind }
         );
         const activeRoute = getAppRoute();
-        if (activeRoute.embed && activeRoute.id === id) {
+        if ((activeRoute.embed || activeRoute.view) && activeRoute.id === id) {
           setEmbedStatus("ready");
         }
       } catch {
         const activeRoute = getAppRoute();
-        if (activeRoute.embed && activeRoute.id === id) {
+        if ((activeRoute.embed || activeRoute.view) && activeRoute.id === id) {
           setError(null);
           setEmbedStatus("unavailable");
         }
       }
     },
     [openCloudShader]
+  );
+
+  const openViewRoute = useCallback(
+    (id, kind) => {
+      if (!id) return;
+      persistActiveDraft();
+      window.history.pushState({}, "", makeViewUrl(id, kind));
+      routeEmbedRef.current = false;
+      routeViewRef.current = true;
+      setRouteId(id);
+      setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
+      setRouteProfile(null);
+      setRouteEmbed(false);
+      setRouteView(true);
+      openSharedRouteId(id, kind);
+    },
+    [openSharedRouteId, persistActiveDraft],
+  );
+  const openReferencedShaderInView = useCallback(
+    (key) => {
+      if (typeof key !== "string" || !key.startsWith("cloud:")) return;
+      openViewRoute(key.slice("cloud:".length), null);
+    },
+    [openViewRoute],
   );
 
   useEffect(() => {
@@ -5224,24 +5325,27 @@ export default function App() {
       id,
       kind: nextKind,
       embed,
+      view,
       profile: nextProfile,
     } = initialRoute;
     routeEmbedRef.current = Boolean(embed);
+    routeViewRef.current = Boolean(view);
     setRouteId(id);
     setRouteKind(nextKind);
     setRouteProfile(nextProfile || null);
     setRouteEmbed(Boolean(embed));
+    setRouteView(Boolean(view));
     if (nextProfile) {
       setEmbedStatus("idle");
-    } else if (id && embed) {
-      openEmbedRouteId(id, nextKind);
+    } else if (id && (embed || view)) {
+      openSharedRouteId(id, nextKind);
     } else if (id) {
       setEmbedStatus("idle");
       openRouteId(id);
     }
   }, [
     authLoading,
-    openEmbedRouteId,
+    openSharedRouteId,
     openRouteId,
     runtimeReady,
   ]);
@@ -5252,19 +5356,28 @@ export default function App() {
         id,
         kind: nextKind,
         embed,
+        view,
         profile: nextProfile,
       } = getAppRoute();
       if (id && embed) {
         window.location.reload();
         return;
       }
+      if (routeViewRef.current && !view) {
+        window.location.reload();
+        return;
+      }
       routeEmbedRef.current = Boolean(embed);
+      routeViewRef.current = Boolean(view);
       setRouteId(id);
       setRouteKind(nextKind);
       setRouteProfile(nextProfile || null);
       setRouteEmbed(Boolean(embed));
+      setRouteView(Boolean(view));
       if (nextProfile) {
         setEmbedStatus("idle");
+      } else if (id && view) {
+        openSharedRouteId(id, nextKind);
       } else if (id) {
         setEmbedStatus("idle");
         openRouteId(id);
@@ -5274,7 +5387,7 @@ export default function App() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [openEmbedRouteId, openRouteId]);
+  }, [openRouteId, openSharedRouteId]);
 
   const chooseItem = useCallback(
     (id) => {
@@ -5353,9 +5466,13 @@ export default function App() {
         kind = cloudShaders.find((item) => item.id === nextRouteId)?.kind;
       }
       pushShaderUrl(nextRouteId, kind);
+      routeEmbedRef.current = false;
+      routeViewRef.current = false;
       setRouteId(nextRouteId);
       setRouteKind(kind === COMPOSITION_KIND ? COMPOSITION_KIND : null);
       setRouteProfile(null);
+      setRouteEmbed(false);
+      setRouteView(false);
       chooseItem(id);
     },
     [chooseItem, cloudShaders, drafts]
@@ -5364,12 +5481,19 @@ export default function App() {
   const openProfile = useCallback(
     (identifier) => {
       if (!identifier) return;
+      const profileUrl = makeProfileUrl(identifier);
+      if (routeViewRef.current) {
+        window.location.assign(profileUrl);
+        return;
+      }
       persistActiveDraft();
-      window.history.pushState({}, "", makeProfileUrl(identifier));
+      window.history.pushState({}, "", profileUrl);
       routeEmbedRef.current = false;
+      routeViewRef.current = false;
       setRouteId(null);
       setRouteKind(null);
       setRouteEmbed(false);
+      setRouteView(false);
       setRouteProfile(identifier);
       setEmbedStatus("idle");
     },
@@ -5396,9 +5520,11 @@ export default function App() {
   const openHome = useCallback(() => {
     window.history.pushState({}, "", makeHomeUrl());
     routeEmbedRef.current = false;
+    routeViewRef.current = false;
     setRouteId(null);
     setRouteKind(null);
     setRouteEmbed(false);
+    setRouteView(false);
     setRouteProfile(null);
     setEmbedStatus("idle");
   }, []);
@@ -5466,7 +5592,7 @@ export default function App() {
   }, []);
 
   const resetProperties = useCallback((targetLayerId = null) => {
-    if (protectedPreview) return;
+    if (protectedPreview && viewMode !== "view") return;
     clearShaderVersionPreviewRef.current?.();
     if (sessionKindRef.current === COMPOSITION_KIND) {
       const graph = normalizeComposition(compositionRef.current);
@@ -5587,7 +5713,7 @@ export default function App() {
         setError(resetError.message || String(resetError));
       }
     },
-    [compile, drafts, protectedPreview, resolvedShaders]
+    [compile, drafts, protectedPreview, resolvedShaders, viewMode]
   );
 
   const savePropertiesAsDefault = useCallback(() => {
@@ -7214,7 +7340,7 @@ export default function App() {
 
   useEffect(() => {
     if (
-      routeEmbed ||
+      viewMode !== "editor" ||
       !user ||
       !currentShader ||
       pendingAgentCheckpoint ||
@@ -7290,12 +7416,12 @@ export default function App() {
     isPublic,
     pendingAgentCheckpoint,
     pendingMedia,
-    routeEmbed,
     saveShader,
     saving,
     shaderDescription,
     shaderName,
     user,
+    viewMode,
   ]);
 
   const publishShader = useCallback(async () => {
@@ -8278,7 +8404,7 @@ export default function App() {
           query: homeQuery,
           kind: homeKind,
           author: homeAuthor,
-        }).filter((card) => card.origin !== "draft"),
+        }).filter((card) => card.origin === "public"),
       ),
     [homeAuthor, homeKind, homeQuery, libraryCards]
   );
@@ -8318,7 +8444,7 @@ export default function App() {
 
   const onCompositionChange = useCallback(
     (next) => {
-      if (protectedPreview) return;
+      if (protectedPreview && viewMode !== "view") return;
       clearShaderVersionPreviewRef.current?.();
       let graph = normalizeComposition(next);
       if (!user && isDraftId(presetId)) {
@@ -8366,7 +8492,7 @@ export default function App() {
       setComposition(graph);
       setDirty(true);
     },
-    [pendingMedia, presetId, protectedPreview, user]
+    [pendingMedia, presetId, protectedPreview, user, viewMode]
   );
 
   const onCompositionSelectLayer = useCallback((layerId) => {
@@ -8547,27 +8673,6 @@ export default function App() {
     }
   }, [figmaImportCards, figmaImportCheckedKeys, openFigmaShader]);
 
-  const canvasControlsLabel = showCanvasHandles
-    ? "Hide canvas handles"
-    : "Show canvas handles";
-  const canvasControlsToggle = (
-    <fig-tooltip text={canvasControlsLabel}>
-      <fig-button
-        type="button"
-        variant="ghost"
-        icon="true"
-        aria-label={canvasControlsLabel}
-        onClick={() =>
-          setShowCanvasHandles((visible) => !visible)
-        }
-      >
-        <CanvasControlsIcon
-          color={showCanvasHandles ? undefined : "tertiary"}
-        />
-      </fig-button>
-    </fig-tooltip>
-  );
-
   const renderPropertyHeaderActions = (noun) => {
     const visibilityLabel = effectVisible ? `Hide ${noun}` : `Show ${noun}`;
     return (
@@ -8594,7 +8699,9 @@ export default function App() {
               <fig-menu-item value="reset">Reset to default</fig-menu-item>
               <fig-menu-item
                 value="save-defaults"
-                disabled={protectedPreview ? "" : undefined}
+                disabled={
+                  protectedPreview || viewMode === "view" ? "" : undefined
+                }
               >
                 Save as default
               </fig-menu-item>
@@ -8619,20 +8726,20 @@ export default function App() {
     );
   };
 
-  const propertiesPanel = (
-    <aside
-      ref={propertiesPanelRef}
-      className="shader-properties-panel"
-      aria-label={propertiesPanelTitle}
-    >
-      <fig-header>
-        <h2>{propertiesPanelTitle}</h2>
-        {isComposerView
-          ? null
-          : renderPropertyHeaderActions(isShaderFillPanel ? "fill" : null)}
-      </fig-header>
+  const renderPropertiesPanelContent = (viewDialog = null) => (
+    <>
+      {viewMode === "view" ? (
+        renderShaderViewHeader(viewDialog)
+      ) : (
+        <fig-header>
+          <h2>{propertiesPanelTitle}</h2>
+          {isComposerView
+            ? null
+            : renderPropertyHeaderActions(isShaderFillPanel ? "fill" : null)}
+        </fig-header>
+      )}
 
-      <fig-content
+      {!viewDialog?.minimized && <fig-content
         ref={propertiesPanelContentFadeRef}
         class="shader-properties-panel-content"
         padding="none"
@@ -8647,7 +8754,7 @@ export default function App() {
                 fillCards={compositionFillCards}
                 effectCards={compositionEffectCards}
                 nameCards={compositionNameCards}
-                readOnly={protectedPreview}
+                readOnly={viewMode === "view" ? false : protectedPreview}
                 layerControls={
                   <Suspense fallback={null}>
                     <Controls
@@ -8662,7 +8769,11 @@ export default function App() {
                 onChange={onCompositionChange}
                 onSelectLayer={onCompositionSelectLayer}
                 onPropertiesLayerChange={setCompositionPropsLayerId}
-                onOpenShader={openHomeChoice}
+                onOpenShader={
+                  viewMode === "view"
+                    ? openReferencedShaderInView
+                    : openHomeChoice
+                }
                 onResetLayer={resetProperties}
                 onExport={() => openExportDialog(exportTab)}
                 exportDisabled={Boolean(videoExportProgress)}
@@ -8693,7 +8804,7 @@ export default function App() {
                   }
                 }}
               />
-              {user && !protectedPreview && (
+              {viewMode !== "view" && user && !protectedPreview && (
                 <div className="sharing-controls properties-pane">
                   <fig-header borderless>
                     <h3>Visibility</h3>
@@ -8727,8 +8838,12 @@ export default function App() {
                 resolvedByKey={pinAwareResolvedByKey}
                 fillCards={compositionFillCards}
                 nameCards={compositionNameCards}
-                readOnly={protectedPreview}
-                onOpenShader={openHomeChoice}
+                readOnly={viewMode === "view" ? false : protectedPreview}
+                onOpenShader={
+                  viewMode === "view"
+                    ? openReferencedShaderInView
+                    : openHomeChoice
+                }
                 onResetLayer={resetEffectFillProperties}
                 onChange={(next) => {
                   clearShaderVersionPreviewRef.current?.();
@@ -8838,14 +8953,16 @@ export default function App() {
               disabled={Boolean(videoExportProgress)}
               onExport={() => openExportDialog(exportTab)}
             />
-            {activeFigmaLink.figma_shader_id && activeFigmaRecord && (
+            {viewMode !== "view" &&
+              activeFigmaLink.figma_shader_id &&
+              activeFigmaRecord && (
               <FigmaPropertiesPane
                 shader={activeFigmaRecord}
                 loading={activeFigmaDetailLoading}
                 error={activeFigmaDetailError}
               />
             )}
-            {user && !protectedPreview && (
+            {viewMode !== "view" && user && !protectedPreview && (
               <div className="sharing-controls properties-pane grouped-properties-pane">
                 <fig-group name="Visibility" collapsible="">
                   <fig-field label="Public" direction="horizontal">
@@ -8868,7 +8985,17 @@ export default function App() {
             )}
           </>
           )}
-      </fig-content>
+      </fig-content>}
+    </>
+  );
+
+  const renderPropertiesPanel = () => (
+    <aside
+      ref={propertiesPanelRef}
+      className="shader-properties-panel"
+      aria-label={propertiesPanelTitle}
+    >
+      {renderPropertiesPanelContent()}
     </aside>
   );
 
@@ -8909,10 +9036,15 @@ export default function App() {
     });
 
   const newShaderMenuRef = useFigMenuChange((value) => {
-    if (value === "effect") createDraft("blank-effect");
-    else if (value === "fill") createDraft("blank-fill");
-    else if (value === "composition") createCompositionDraft();
-    else if (value === "from-figma") setFigmaImportOpen(true);
+    if (value === "effect") {
+      createDraft("blank-effect");
+    } else if (value === "fill") {
+      createDraft("blank-fill");
+    } else if (value === "composition") {
+      createCompositionDraft();
+    } else if (value === "from-figma") {
+      setFigmaImportOpen(true);
+    }
   });
 
   const persistCurrentFigmaLink = useCallback(
@@ -9273,7 +9405,102 @@ export default function App() {
             )}
           </fig-header>
   );
+  function renderShaderViewHeader({ minimized = false, toggle } = {}) {
+    const toggleLabel = minimized ? "Show properties" : "Minimize properties";
+    return (
+      <fig-header
+        dialog-header=""
+        borderless={minimized ? "" : undefined}
+      >
+        {!minimized && (
+          <hstack>
+            {showCurrentAuthor && (
+              <AuthorAvatar
+                tooltip={currentAuthorName}
+                src={currentAuthorAvatarUrl}
+                name={currentAuthorName}
+                onClick={
+                  currentShader?.owner_id
+                    ? () =>
+                        openUserProfile(
+                          currentShader.owner_id,
+                          currentShader.author_handle,
+                        )
+                    : undefined
+                }
+              />
+            )}
+            <h3>{shaderName}</h3>
+          </hstack>
+        )}
+        {(isOwner && currentShader) || toggle ? (
+          <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
+            {!minimized && isOwner && currentShader && (
+              <fig-tooltip text="Edit">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Edit"
+                  onClick={() =>
+                    window.location.assign(
+                      makeShareUrl(currentShader.id, currentShader.kind),
+                    )
+                  }
+                >
+                  <fig-icon>
+                    <svg
+                      width="24"
+                      height="24"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      xmlns="http://www.w3.org/2000/svg"
+                      aria-hidden="true"
+                    >
+                      <path
+                        d="M16.0568 14.7627C16.2409 14.4122 16.7562 14.4125 16.9406 14.7627L16.9747 14.8428L17.2697 15.7285L18.1554 16.0234C18.613 16.176 18.6129 16.823 18.1554 16.9756L17.2697 17.2705L16.9747 18.1562C16.8221 18.6137 16.1751 18.6138 16.0226 18.1562L15.7277 17.2705L14.8419 16.9756C14.385 16.8228 14.3849 16.1762 14.8419 16.0234L15.7267 15.7275L16.0226 14.8428L16.0568 14.7627ZM14.7931 6C15.1836 5.60981 15.8167 5.6098 16.2072 6L18.0001 7.79297C18.3904 8.18342 18.3903 8.81654 18.0001 9.20703L9.50012 17.707C9.3127 17.8944 9.05807 17.9999 8.79309 18H7.00012C6.44802 17.9998 6.00012 17.5522 6.00012 17V15.207C6.00017 14.942 6.10572 14.6875 6.29309 14.5L14.7931 6ZM7.00012 15.207V17H8.79309L15.2931 10.5L13.5001 8.70703L7.00012 15.207ZM6.90442 5.92871C7.09513 5.35698 7.90405 5.35706 8.09485 5.92871L8.46301 7.03516L9.57043 7.4043C10.1419 7.59513 10.1419 8.40389 9.57043 8.59473L8.46301 8.96289L8.09485 10.0703C7.9041 10.642 7.09515 10.6421 6.90442 10.0703L6.53528 8.96289L5.42883 8.59473C4.8575 8.40381 4.85742 7.59513 5.42883 7.4043L6.53528 7.03516L6.90442 5.92871ZM14.2072 8L16.0001 9.79297L17.2931 8.5L15.5001 6.70703L14.2072 8Z"
+                        fill="currentColor"
+                        fillOpacity="0.9"
+                      />
+                    </svg>
+                  </fig-icon>
+                </fig-button>
+              </fig-tooltip>
+            )}
+            {toggle && (
+              <fig-tooltip text={toggleLabel}>
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label={toggleLabel}
+                  aria-controls="view-properties-dialog"
+                  aria-expanded={minimized ? "false" : "true"}
+                  onClick={toggle}
+                >
+                  <fig-icon name={minimized ? "adjust" : "close"} />
+                </fig-button>
+              </fig-tooltip>
+            )}
+          </hstack>
+        ) : null}
+      </fig-header>
+    );
+  }
 
+  const previewComposition = isComposerView
+    ? normalizeComposition(composition)
+    : null;
+  const compositionHasHtmlFill = Boolean(
+    previewComposition?.fills.some(
+      (fill) => fill.enabled && fill.type === "html",
+    ),
+  );
+  const compositionHasMediaFill = Boolean(
+    previewComposition?.fills.some(
+      (fill) => fill.enabled && mediaFillType(fill.type),
+    ),
+  );
   const previewCanvas = (
     <>
       {fatal ? (
@@ -9288,9 +9515,10 @@ export default function App() {
           onZoomChange={onPreviewZoomChange}
           zoomRequest={previewZoomRequest}
           inputSource={
-            kind === "effect" ||
-            (isComposerView &&
-              mediaFillType(composition?.fill?.type))
+            compositionHasHtmlFill
+              ? "html"
+              : kind === "effect" ||
+                  (isComposerView && compositionHasMediaFill)
               ? inputSource
               : "image"
           }
@@ -9313,56 +9541,25 @@ export default function App() {
   );
 
   const previewTools = (
-          <div
-            className="tools background--light"
-          >
-            {(!isComposerView || compositionPlayable) && (
-              <>
-                <fig-button
-                  type="toggle"
-                  variant="ghost"
-                  icon="true"
-                  selected={running}
-                  aria-label={running ? "Pause" : "Play"}
-                  onClick={togglePlay}
-                >
-                  <fig-icon name={running ? "pause" : "play"} />
-                </fig-button>
-                <fig-separator direction="vertical" />
-              </>
-            )}
-            {!fatal && (
-              <PreviewFps
-                hostRef={hostRef}
-                previewZoom={previewZoom}
-                onPreviewZoomChange={requestPreviewZoom}
-                showFps={!isComposerView || compositionPlayable}
-              />
-            )}
-            <fig-separator direction="vertical" />
-            {canvasControlsToggle}
-            <fig-separator direction="vertical" />
-            <fig-tooltip
-              text={
-                canvasTheme === "dark" ? "Use light canvas" : "Use dark canvas"
-              }
-            >
-              <fig-button
-                variant="ghost"
-                icon="true"
-                aria-label={
-                  canvasTheme === "dark"
-                    ? "Use light canvas"
-                    : "Use dark canvas"
-                }
-                onClick={() =>
-                  setCanvasTheme(canvasTheme === "dark" ? "light" : "dark")
-                }
-              >
-                <fig-icon name={canvasTheme === "dark" ? "moon" : "sun"} />
-              </fig-button>
-            </fig-tooltip>
-          </div>
+    <PreviewToolbar
+      running={running}
+      onTogglePlay={togglePlay}
+      showPlayback={!isComposerView || compositionPlayable}
+      fatal={fatal}
+      hostRef={hostRef}
+      previewZoom={previewZoom}
+      onPreviewZoomChange={requestPreviewZoom}
+      showFps={!isComposerView || compositionPlayable}
+      initialPixelRatioMode={viewMode === "view" ? "1x" : undefined}
+      showCanvasHandles={showCanvasHandles}
+      onToggleCanvasHandles={() =>
+        setShowCanvasHandles((visible) => !visible)
+      }
+      canvasTheme={canvasTheme}
+      onCanvasThemeChange={() =>
+        setCanvasTheme(canvasTheme === "dark" ? "light" : "dark")
+      }
+    />
   );
 
   const embedItemLabel =
@@ -9376,6 +9573,85 @@ export default function App() {
         : embedStatus === "ready" && error
           ? `This ${embedItemLabel} could not be rendered.`
           : "";
+
+  if (viewMode === "view") {
+    return (
+      <>
+        <ComposerView
+          viewerRef={viewerRef}
+          visualizerRef={visualizerRef}
+          className="shader-view-page"
+          preview={
+            <>
+              {previewCanvas}
+              {previewTools}
+              {embedStateMessage ? (
+                <div className="embed-state" role="status" aria-live="polite">
+                  {embedStateMessage}
+                </div>
+              ) : null}
+            </>
+          }
+          properties={
+            <ViewPropertiesDialog>
+              {(viewDialog) => renderPropertiesPanelContent(viewDialog)}
+            </ViewPropertiesDialog>
+          }
+        />
+        <ExportDialog
+          dialogRef={exportDialogRef}
+          tabsRef={exportTabsRef}
+          tab={exportTab}
+          settings={videoExportSettings}
+          resolutionOptions={resolutionOptions}
+          opaqueContent={opaqueContent}
+          imageFormatRef={imageFormatRef}
+          imageResolutionRef={imageResolutionRef}
+          imageAspectRef={imageAspectRef}
+          videoFormatRef={videoFormatRef}
+          videoResolutionRef={videoResolutionRef}
+          videoAspectRef={videoAspectRef}
+          videoFrameRateRef={videoFrameRateRef}
+          videoBitrateRef={videoBitrateRef}
+          embedFormatRef={embedFormatRef}
+          embedCode={embedCode}
+          embedUrl={embedUrl}
+          embedLinkAvailable={Boolean(embedUrl)}
+          iframeEmbedAvailable={iframeEmbedAvailable}
+          iframeEmbedUnavailableMessage={iframeEmbedUnavailableMessage}
+          onClose={() => setExportOpen(false)}
+          onExportImage={() => {
+            downloadPreviewImage().catch((downloadError) => {
+              setError(downloadError.message || String(downloadError));
+            });
+          }}
+          onExportVideo={() => {
+            exportPreviewVideo().catch((videoError) => {
+              setVideoExportProgress(null);
+              setError(videoError.message || String(videoError));
+            });
+          }}
+          onDownloadEmbed={downloadEmbedCode}
+          onCopyEmbed={copyEmbedCode}
+          onCopyEmbedLink={copyEmbedLink}
+          onDurationInput={(event) =>
+            setVideoExportSettings((settings) => ({
+              ...settings,
+              duration: Number(event.target.value ?? event.detail),
+            }))
+          }
+          onImageQualityInput={(event) =>
+            setVideoExportSettings((settings) => ({
+              ...settings,
+              imageQuality: resolveImageExportQuality(
+                event.target.value ?? event.detail,
+              ),
+            }))
+          }
+        />
+      </>
+    );
+  }
 
   if (viewMode === "embed") {
     return (
@@ -9397,82 +9673,80 @@ export default function App() {
 
   return (
     <>
+      <AppNav
+        activeView={activeNavItem}
+        onHome={() => {
+          setActiveNavItem("home");
+          openHome();
+        }}
+        onEditor={() => {
+          setActiveNavItem("editor");
+          openHomeChoice(presetId);
+        }}
+        onSearch={() => setSearchOpen((open) => !open)}
+        onSearchClose={() => setSearchOpen(false)}
+        searchOpen={searchOpen}
+        createMenuRef={newShaderMenuRef}
+        query={homeQuery}
+        onQueryChange={setHomeQuery}
+        kind={homeKind}
+        onKindChange={setHomeKind}
+        author={homeAuthor}
+        onAuthorChange={setHomeAuthor}
+        publishedAuthors={publishedAuthors}
+        showFigmaImport={FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured}
+        authOpen={authOpen}
+        onAuthOpenChange={setAuthOpen}
+        theme={theme}
+        onThemeChange={setTheme}
+        canvasTheme={canvasTheme}
+        onCanvasThemeChange={setCanvasTheme}
+        settingsOpen={settingsOpen}
+        onSettingsOpenChange={setSettingsOpen}
+        onProfileChange={(displayName, profile) => {
+          if (!user) return;
+          setCloudShaders((current) =>
+            current.map((shader) =>
+              shader.owner_id === user.id
+                ? {
+                    ...shader,
+                    author_name: displayName,
+                    author_handle: profile?.handle || shader.author_handle,
+                  }
+                : shader,
+            ),
+          );
+        }}
+        onViewProfile={() => {
+          if (user?.id) openUserProfile(user.id);
+        }}
+        onNotice={showNotice}
+      />
+      <div className="app-shell-content">
       {viewMode === "profile" && (
         <ProfileView
           identifier={routeProfile}
           user={user}
           onCanonicalIdentifier={canonicalizeProfileRoute}
-          onOpenShader={openHomeChoice}
+          onOpenShader={openViewRoute}
           onBack={() => window.history.back()}
           onHome={openHome}
-          authOpen={authOpen}
-          onAuthOpenChange={setAuthOpen}
-          theme={theme}
-          onThemeChange={setTheme}
-          canvasTheme={canvasTheme}
-          onCanvasThemeChange={setCanvasTheme}
-          settingsOpen={settingsOpen}
-          onSettingsOpenChange={setSettingsOpen}
-          onProfileChange={(displayName, profile) => {
-            if (!user) return;
-            setCloudShaders((current) =>
-              current.map((shader) =>
-                shader.owner_id === user.id
-                  ? {
-                      ...shader,
-                      author_name: displayName,
-                      author_handle: profile?.handle || shader.author_handle,
-                    }
-                  : shader,
-              ),
-            );
-          }}
-          onViewProfile={() => {
-            if (user?.id) openUserProfile(user.id);
-          }}
           onNotice={showNotice}
         />
       )}
       {viewMode === "home" && (
         <HomeView
-          query={homeQuery}
-          onQueryChange={setHomeQuery}
-          kind={homeKind}
-          onKindChange={setHomeKind}
-          author={homeAuthor}
-          onAuthorChange={setHomeAuthor}
-          publishedAuthors={publishedAuthors}
           choices={renderLibraryChoices(groupedHomeCards, {
             cardSize: "large",
           })}
-          onChoice={openHomeChoice}
-          onEditorSelect={() => openHomeChoice(presetId)}
-          authOpen={authOpen}
-          onAuthOpenChange={setAuthOpen}
-          theme={theme}
-          onThemeChange={setTheme}
-          canvasTheme={canvasTheme}
-          onCanvasThemeChange={setCanvasTheme}
-          settingsOpen={settingsOpen}
-          onSettingsOpenChange={setSettingsOpen}
-          onProfileChange={(displayName, profile) => {
-            if (!user) return;
-            setCloudShaders((current) =>
-              current.map((shader) =>
-                shader.owner_id === user.id
-                  ? {
-                      ...shader,
-                      author_name: displayName,
-                      author_handle: profile?.handle || shader.author_handle,
-                    }
-                  : shader,
-              ),
-            );
+          onChoice={(key) => {
+            const card = libraryCards.find((item) => item.key === key);
+            if (card?.cloud?.id) {
+              openViewRoute(card.cloud.id, card.kind);
+            } else {
+              openHomeChoice(key);
+            }
           }}
-          onViewProfile={() => {
-            if (user?.id) openUserProfile(user.id);
-          }}
-          onNotice={showNotice}
         />
       )}
 
@@ -9483,52 +9757,6 @@ export default function App() {
           style={{ "--app-nav-width": `${appNavWidth}px` }}
         >
           <div className="app-nav-headers">
-            <fig-header class="app-nav-header">
-              <fig-tabs
-                ref={editorViewTabsRef}
-                name="app-view"
-                value="editor"
-              >
-                <fig-tab value="shaders">Shaders</fig-tab>
-                <fig-tab value="editor">Editor</fig-tab>
-              </fig-tabs>
-              <div className="app-nav-header-actions">
-                <fig-menu
-                  ref={newShaderMenuRef}
-                  class="new-shader-menu"
-                  position="bottom right"
-                >
-                  <fig-tooltip text="New Figma shader">
-                    <fig-button
-                      fig-menu-trigger=""
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="New Figma shader"
-                    >
-                      <fig-icon name="add" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-menu-item value="effect">
-                    Shader effect
-                  </fig-menu-item>
-                  <fig-menu-item value="fill">
-                    Shader fill
-                  </fig-menu-item>
-                  <fig-menu-item value="composition">
-                    Composition
-                  </fig-menu-item>
-                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured && (
-                    <>
-                      <fig-separator />
-                      <fig-menu-item value="from-figma">
-                        From Figma…
-                      </fig-menu-item>
-                    </>
-                  )}
-                </fig-menu>
-              </div>
-            </fig-header>
             <fig-header class="app-nav-library-filters">
               <fig-input-text
                 class="app-nav-search"
@@ -9626,39 +9854,6 @@ export default function App() {
             figmaSyncing={figmaSyncing}
             onAction={onShaderAction}
           />
-          <fig-footer sticky="">
-            <AccountMenu
-              layout="bar"
-              position="top right"
-              open={authOpen}
-              onOpenChange={setAuthOpen}
-              theme={theme}
-              onThemeChange={setTheme}
-              canvasTheme={canvasTheme}
-              onCanvasThemeChange={setCanvasTheme}
-              settingsOpen={settingsOpen}
-              onSettingsOpenChange={setSettingsOpen}
-              onProfileChange={(displayName, profile) => {
-                if (!user) return;
-                setCloudShaders((current) =>
-                  current.map((shader) =>
-                    shader.owner_id === user.id
-                      ? {
-                          ...shader,
-                          author_name: displayName,
-                          author_handle:
-                            profile?.handle || shader.author_handle,
-                        }
-                      : shader
-                  )
-                );
-              }}
-              onViewProfile={() => {
-                if (user?.id) openUserProfile(user.id);
-              }}
-              onNotice={showNotice}
-            />
-          </fig-footer>
         </nav>
 
         <div
@@ -9698,7 +9893,7 @@ export default function App() {
               {previewTools}
             </>
           }
-          properties={propertiesPanel}
+          properties={renderPropertiesPanel()}
         />
       ) : (
         <ShaderView
@@ -9854,7 +10049,7 @@ export default function App() {
               {previewTools}
             </>
           }
-          properties={propertiesPanel}
+          properties={renderPropertiesPanel()}
           onResizeCode={resizeCodePane}
           onResetCodeSize={() =>
             stacked
@@ -9901,6 +10096,7 @@ export default function App() {
       )}
       </div>
       )}
+      </div>
 
       <ExportDialog
         dialogRef={exportDialogRef}

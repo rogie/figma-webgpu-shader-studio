@@ -3,6 +3,7 @@ import { COMPOSITION_KIND } from "./composition.js";
 export const SHADER_ROUTE_SEGMENT = "shader";
 export const COMPOSER_ROUTE_SEGMENT = "composer";
 export const EMBED_ROUTE_SEGMENT = "embed";
+export const VIEW_ROUTE_SEGMENT = "view";
 export const PROFILE_ROUTE_PREFIX = "@";
 
 function normalizeBasePath(basePath) {
@@ -42,6 +43,7 @@ export function parseAppRoute(pathname, basePath = "/") {
   let idSegment = routePath;
   let kind = null;
   let embed = false;
+  let view = false;
   if (routePath.startsWith(`${SHADER_ROUTE_SEGMENT}/`)) {
     idSegment = routePath.slice(SHADER_ROUTE_SEGMENT.length + 1);
   } else if (routePath.startsWith(`${COMPOSER_ROUTE_SEGMENT}/`)) {
@@ -59,6 +61,12 @@ export function parseAppRoute(pathname, basePath = "/") {
     if (idSegment.endsWith(embedSuffix)) {
       idSegment = idSegment.slice(0, -embedSuffix.length);
       embed = true;
+    } else {
+      const viewSuffix = `/${VIEW_ROUTE_SEGMENT}`;
+      if (idSegment.endsWith(viewSuffix)) {
+        idSegment = idSegment.slice(0, -viewSuffix.length);
+        view = true;
+      }
     }
     if (!idSegment || idSegment.includes("/")) {
       return { id: null, kind: null };
@@ -68,7 +76,8 @@ export function parseAppRoute(pathname, basePath = "/") {
   if (!idSegment) return { id: null, kind: null };
   try {
     const route = { id: decodeURIComponent(idSegment), kind };
-    return embed ? { ...route, embed: true } : route;
+    if (embed) return { ...route, embed: true };
+    return view ? { ...route, view: true } : route;
   } catch {
     return { id: null, kind: null };
   }
@@ -83,6 +92,10 @@ export function appItemPathname(id, kind, basePath = "/") {
 
 export function appEmbedPathname(id, kind, basePath = "/") {
   return `${appItemPathname(id, kind, basePath)}/${EMBED_ROUTE_SEGMENT}`;
+}
+
+export function appViewPathname(id, kind, basePath = "/") {
+  return `${appItemPathname(id, kind, basePath)}/${VIEW_ROUTE_SEGMENT}`;
 }
 
 export function appProfilePathname(identifier, basePath = "/") {

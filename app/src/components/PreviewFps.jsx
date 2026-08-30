@@ -14,10 +14,11 @@ function PreviewFps({
   previewZoom = 1,
   onPreviewZoomChange,
   showFps = true,
+  initialPixelRatioMode,
 }) {
   const [fps, setFps] = useState(0);
   const [pixelRatioMode, setPixelRatioMode] = useState(
-    readPreviewPixelRatioMode
+    () => initialPixelRatioMode || readPreviewPixelRatioMode(),
   );
   const resolutionControlRef = useRef(null);
   const zoomControlRef = useRef(null);
@@ -75,6 +76,12 @@ function PreviewFps({
       }),
     [hostRef]
   );
+
+  useEffect(() => {
+    const mode = initialPixelRatioMode || readPreviewPixelRatioMode();
+    setPixelRatioMode(mode);
+    hostRef.current?.setPreviewPixelRatioMode?.(mode);
+  }, [hostRef, initialPixelRatioMode]);
 
   useEffect(() => {
     let previousFrame = null;

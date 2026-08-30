@@ -4,9 +4,9 @@ import {
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
-  readEffectFillsFromComposition,
   referencedShaderKeys,
 } from "./lib/composition.js";
+import { cloudCompositionGraph } from "./lib/cloudCompositionGraph.js";
 import { dependencySnapshotForKey } from "./lib/compositionDependencies.js";
 import {
   isPaintFillType,
@@ -447,62 +447,6 @@ async function setComposition(
   if (isAnimated || usesMouse) host.start();
 }
 
-function effectGraph(row) {
-  let fills = readEffectFillsFromComposition(row.composition);
-  if (!fills.length) {
-    fills = [
-      {
-        id: "input",
-        type: "image",
-        enabled: true,
-        values: {},
-        paint: {
-          type: "image",
-          image: row.input_path
-            ? { assetPath: row.input_path, scaleMode: "fill" }
-            : { url: defaultInputUrl, scaleMode: "fill" },
-        },
-      },
-    ];
-  }
-  return normalizeComposition({ fills, effects: [] });
-}
-
-function compositionGraph(row) {
-  const graph = normalizeComposition(row.composition);
-  if (
-    !row.input_path ||
-    graph.fills.some(
-      (fill) => fill.enabled && isPaintFillType(fill.paint?.type)
-    )
-  ) {
-    return graph;
-  }
-
-  const fillIndex = graph.fills.findIndex(
-    (fill) =>
-      fill.enabled && (fill.type === "image" || fill.type === "video")
-  );
-  if (fillIndex < 0) return graph;
-
-  const video = String(row.input_mime_type || "").startsWith("video/");
-  const fills = graph.fills.slice();
-  fills[fillIndex] = {
-    ...fills[fillIndex],
-    type: video ? "video" : "image",
-    paint: video
-      ? {
-          type: "video",
-          video: { assetPath: row.input_path, scaleMode: "fit" },
-        }
-      : {
-          type: "image",
-          image: { assetPath: row.input_path, scaleMode: "fill" },
-        },
-  };
-  return normalizeComposition({ ...graph, fills });
-}
-
 const embedPreviewCache = new Map();
 
 function embedPreviewCacheKey(route) {
@@ -523,7 +467,7 @@ async function prepareEmbedPreview(route, services = {}) {
   if (row.kind === "fill") return { row, isComposition, graph: null, resolved: null };
 
   const graph = await hydrateFillAssets(
-    isComposition ? compositionGraph(row) : effectGraph(row),
+    cloudCompositionGraph(row, { defaultImageUrl: defaultInputUrl }),
     {
       requirePublic: row.is_public,
       ownerShaderId: row.id,
