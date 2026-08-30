@@ -26,16 +26,18 @@ export default function PreviewToolbar({
     <div className="tools background--light">
       {showPlayback && (
         <>
-          <fig-button
-            type="toggle"
-            variant="ghost"
-            icon="true"
-            selected={running}
-            aria-label={running ? "Pause" : "Play"}
-            onClick={onTogglePlay}
-          >
-            <fig-icon name={running ? "pause" : "play"} />
-          </fig-button>
+          <fig-tooltip text={running ? "Pause" : "Play"}>
+            <fig-button
+              type="toggle"
+              variant="ghost"
+              icon="true"
+              selected={running}
+              aria-label={running ? "Pause" : "Play"}
+              onClick={onTogglePlay}
+            >
+              <fig-icon name={running ? "pause" : "play"} />
+            </fig-button>
+          </fig-tooltip>
           <fig-separator direction="vertical" />
         </>
       )}

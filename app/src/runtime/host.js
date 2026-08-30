@@ -125,8 +125,8 @@ export class ShaderHost {
       mousePosition: { x: 0, y: 0 },
     };
     // Actual GPU presents. Independent of frame.frame, which is the shader
-    // clock and resets on compile / pause. Compositions often present from
-    // video, HTML, or redraws without advancing that clock.
+    // clock and resets on compile. Compositions often present from video, HTML,
+    // or redraws without advancing that clock.
     this.presentedFrames = 0;
 
     this.ready = false;
@@ -1131,7 +1131,7 @@ export class ShaderHost {
     const playbackGeneration = this._playbackGeneration;
     this._beginCapture();
     try {
-      if (wasRunning) this.stop();
+      if (wasRunning) this.pause();
 
       const texture = this._present();
       const imageData = await this.readbackTextureImageData(texture);
@@ -2227,8 +2227,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
     this._syncCompositionSourcePlayback();
     const now = performance.now();
-    // Resume from the current frame clock so temporary stop()/start() pairs
-    // (thumbnail capture) do not jump, and a zeroed pause restarts at t=0.
+    // Resume from the current frame clock so pause/resume and temporary
+    // stop()/start() pairs (thumbnail capture) continue from the same time.
     this.startTime = now - (Number(this.frame.time) || 0);
     this.lastTime = now;
     if (this._needsAnimationFrame()) {
@@ -2236,6 +2236,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     } else {
       this.redraw();
     }
+  }
+
+  play() {
+    this.start();
+  }
+
+  pause() {
+    this.stop({ resetTime: false });
   }
 
   renderFrame(time, deltaTime, frameNumber) {
@@ -2256,11 +2264,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   /**
-   * @param {{ resetTime?: boolean }} [options]
-   *   resetTime — user pause: snap the preview back to t=0. Leave false for
-   *   internal stops (thumbnail capture, compile) that must keep the frame.
+   * Halt playback and reset the shader clock to t=0. Pass `{ resetTime: false }`
+   * only for internal halts that must keep the current frame; user pause should
+   * call `pause()` instead.
    */
-  stop({ resetTime = false } = {}) {
+  stop({ resetTime = true } = {}) {
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
@@ -2338,14 +2346,14 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       this._present();
     } catch (err) {
       this.onError(err && err.message ? err.message : String(err));
-      this.stop();
+      this.pause();
       return;
     }
     this._scheduleLoop();
   }
 
   destroy() {
-    this.stop();
+    this.pause();
     clearTimeout(this._fillResizeTimer);
     this._fillResizeTimer = 0;
     clearTimeout(this._zoomResizeTimer);

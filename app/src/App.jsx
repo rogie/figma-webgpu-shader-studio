@@ -2604,7 +2604,7 @@ export default function App() {
       );
       const compileStartedAt = perfNow();
       const compileGeneration = ++compileGenerationRef.current;
-      host.stop();
+      host.pause();
       setFillsLoading(
         graph.fills.some(
           (fill) =>
@@ -2984,10 +2984,10 @@ export default function App() {
       }
       if (playPreferenceRef.current && (features.isAnimated || hasHtmlFill)) {
         host.setActive(true);
-        host.start();
+        host.play();
         setRunning(true);
       } else {
-        host.stop();
+        host.pause();
         setRunning(false);
       }
       recordNavigationFirstFrame();
@@ -3090,7 +3090,7 @@ export default function App() {
         return;
       }
       const compileGeneration = ++compileGenerationRef.current;
-      host.stop();
+      host.pause();
 
       let loaded;
       try {
@@ -3098,7 +3098,7 @@ export default function App() {
       } catch (compileError) {
         if (compileGeneration !== compileGenerationRef.current) return;
         setError(compileError.message);
-        host.stop();
+        host.pause();
         setRunning(false);
         return;
       }
@@ -3156,10 +3156,10 @@ export default function App() {
           // Restore the user's play/pause preference after shader switches.
           if (playPreferenceRef.current) {
             host.setActive(true);
-            host.start();
+            host.play();
             setRunning(true);
           } else {
-            host.stop();
+            host.pause();
             setRunning(false);
           }
           recordNavigationFirstFrame();
@@ -4486,7 +4486,7 @@ export default function App() {
 
       await persistBeforeSessionChange();
       pendingValuesRef.current = {};
-      hostRef.current?.stop();
+      hostRef.current?.pause();
       setRunning(playPreferenceRef.current);
       setError(null);
       setIsPublic(false);
@@ -5762,20 +5762,29 @@ export default function App() {
     setRenaming(false);
   }, []);
 
-  const togglePlay = useCallback(() => {
+  const play = useCallback(() => {
     const host = hostRef.current;
     if (!host) return;
-    const next = !running;
-    playPreferenceRef.current = next;
-    localStorage.setItem(PLAY_STORAGE_KEY, String(next));
-    if (next) {
-      host.setActive(true);
-      host.start();
-    } else {
-      host.stop({ resetTime: true });
-    }
-    setRunning(next);
-  }, [running]);
+    playPreferenceRef.current = true;
+    localStorage.setItem(PLAY_STORAGE_KEY, "true");
+    host.setActive(true);
+    host.play();
+    setRunning(true);
+  }, []);
+
+  const pause = useCallback(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    playPreferenceRef.current = false;
+    localStorage.setItem(PLAY_STORAGE_KEY, "false");
+    host.pause();
+    setRunning(false);
+  }, []);
+
+  const togglePlay = useCallback(() => {
+    if (running) pause();
+    else play();
+  }, [pause, play, running]);
 
   const pickFile = useCallback(
     async (file) => {
@@ -7101,7 +7110,7 @@ export default function App() {
 
         const nextFeatures = inferFeatures(target.source);
         const previewGeneration = ++compileGenerationRef.current;
-        host.stop();
+        host.pause();
         const ok = await host.setModule(
           { setup: loaded.setup, render: loaded.render },
           {
@@ -7133,7 +7142,7 @@ export default function App() {
         host.setParams(nextValues);
         host.setActive(true);
         if (playPreferenceRef.current && nextFeatures.isAnimated) {
-          host.start();
+          host.play();
         } else {
           host.redraw();
         }

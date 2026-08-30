@@ -45,7 +45,7 @@ test("play schedules RAF even when animation source inference is false", () => {
   }
 });
 
-test("user pause resets time to zero and redraws", () => {
+test("user pause keeps the current frame time", () => {
   const raf = stubAnimationFrame();
   try {
     const host = makeHost();
@@ -59,7 +59,34 @@ test("user pause resets time to zero and redraws", () => {
     host.running = true;
     host.rafId = 7;
 
-    host.stop({ resetTime: true });
+    host.pause();
+
+    assert.equal(host.running, false);
+    assert.equal(host.rafId, 0);
+    assert.equal(host.frame.time, 1500);
+    assert.equal(host.frame.deltaTime, 16);
+    assert.equal(host.frame.frame, 90);
+    assert.equal(redraws, 0);
+  } finally {
+    raf.restore();
+  }
+});
+
+test("stop resets the frame clock and redraws", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+    host.frame.time = 1500;
+    host.frame.deltaTime = 16;
+    host.frame.frame = 90;
+    host.running = true;
+    host.rafId = 7;
+
+    host.stop();
 
     assert.equal(host.running, false);
     assert.equal(host.rafId, 0);
@@ -68,6 +95,28 @@ test("user pause resets time to zero and redraws", () => {
     assert.equal(host.frame.frame, 0);
     assert.equal(redraws, 1);
   } finally {
+    raf.restore();
+  }
+});
+
+test("play after pause continues from the paused time", () => {
+  const raf = stubAnimationFrame();
+  const originalNow = performance.now;
+  try {
+    const host = makeHost();
+    host.frame.time = 1500;
+    host.running = true;
+    host.rafId = 7;
+    host.pause();
+
+    const now = 10_000;
+    performance.now = () => now;
+    host.play();
+
+    assert.equal(host.running, true);
+    assert.equal(host.startTime, now - 1500);
+  } finally {
+    performance.now = originalNow;
     raf.restore();
   }
 });
@@ -81,7 +130,7 @@ test("internal stop keeps the current frame time", () => {
   host.frame.time = 1500;
   host.frame.frame = 90;
 
-  host.stop();
+  host.stop({ resetTime: false });
 
   assert.equal(host.frame.time, 1500);
   assert.equal(host.frame.frame, 90);
@@ -107,11 +156,11 @@ test("video playback follows the shader play state", () => {
       cancelVideoFrameCallback() {},
     };
 
-    host.start();
+    host.play();
     assert.equal(plays, 1);
     assert.equal(pauses, 0);
 
-    host.stop({ resetTime: true });
+    host.pause();
     assert.equal(pauses, 1);
   } finally {
     raf.restore();
@@ -585,9 +634,9 @@ test("thumbnail capture resumes play when a newer module left the host stopped",
     host.start();
     assert.equal(host.running, true);
 
-    const originalStop = host.stop.bind(host);
-    host.stop = () => {
-      originalStop();
+    const originalPause = host.pause.bind(host);
+    host.pause = () => {
+      originalPause();
       // Simulate compile overlapping the capture: generation advances and the
       // new module's start() has not run yet.
       host._playbackGeneration += 1;
@@ -711,7 +760,7 @@ test("supported shaders supersample after zoom settles without replacing input",
   }
 });
 
-test("playback disables supersampling and user pause restores it", () => {
+test("playback disables supersampling and stop restores it", () => {
   const raf = stubAnimationFrame();
   try {
     const host = makeHost();
@@ -737,7 +786,11 @@ test("playback disables supersampling and user pause restores it", () => {
     assert.equal(host.frame.renderScale, 1);
     assert.equal(resets, 1);
 
-    host.stop({ resetTime: true });
+    host.pause();
+    assert.equal(host.canvas.width, 1000);
+    assert.equal(host.frame.renderScale, 1);
+
+    host.stop();
     assert.equal(host.canvas.width, 2000);
     assert.equal(host.frame.renderScale, 2);
     assert.equal(resets, 2);
@@ -1268,7 +1321,7 @@ test("composition video and webcam sources follow the host play state", () => {
     assert.deepEqual(video.state, { plays: 2, pauses: 1 });
     assert.deepEqual(webcam.state, { plays: 2, pauses: 1 });
 
-    host.stop({ resetTime: true });
+    host.pause();
     assert.deepEqual(video.state, { plays: 2, pauses: 2 });
     assert.deepEqual(webcam.state, { plays: 2, pauses: 2 });
     assert.deepEqual(disabledVideo.state, { plays: 0, pauses: 4 });

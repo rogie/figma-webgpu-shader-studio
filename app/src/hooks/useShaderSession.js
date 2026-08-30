@@ -111,7 +111,7 @@ export function useShaderSession({
         );
       }
       pendingValuesRef.current = nextValues;
-      hostRef.current?.stop();
+      hostRef.current?.pause();
       setRunning(playPreferenceRef.current);
       setError(null);
       setCurrentShader(cloudShader);
