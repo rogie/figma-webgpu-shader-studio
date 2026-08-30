@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { ANON_YOU_LABEL } from "../lib/shaderLibrary.js";
+import "./UserAvatar.css";
 
 export default function UserAvatar({
   class: className,
@@ -7,9 +8,21 @@ export default function UserAvatar({
   src,
   tooltip,
   onClick,
+  isYou = false,
+  size,
 }) {
   const ref = useRef(null);
   const isAnonYou = name === ANON_YOU_LABEL;
+  const isCurrentUser = isYou || isAnonYou;
+  const avatarClass = ["user-avatar", className].filter(Boolean).join(" ");
+  const profileLabel = isCurrentUser
+    ? "View your profile"
+    : `View ${name || "creator"} profile`;
+  const tooltipText = onClick
+    ? profileLabel
+    : isCurrentUser
+      ? "You"
+      : tooltip;
 
   useEffect(() => {
     if (!isAnonYou) return;
@@ -22,17 +35,19 @@ export default function UserAvatar({
   const avatarImage = (
     <fig-avatar
       ref={isAnonYou ? ref : undefined}
-      {...(className ? { class: className } : {})}
+      class={avatarClass}
       src={src || ""}
+      style={size ? { "--size": size } : undefined}
       {...(isAnonYou ? { initials: "A" } : { name: name || "Anon" })}
     />
   );
   const avatar = onClick ? (
     <fig-button
+      class="user-avatar-button"
       type="button"
       variant="ghost"
       icon="true"
-      aria-label={`View ${name || "creator"} profile`}
+      aria-label={profileLabel}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
@@ -45,8 +60,8 @@ export default function UserAvatar({
     avatarImage
   );
 
-  if (tooltip) {
-    return <fig-tooltip text={tooltip}>{avatar}</fig-tooltip>;
+  if (tooltipText) {
+    return <fig-tooltip text={tooltipText}>{avatar}</fig-tooltip>;
   }
 
   return avatar;

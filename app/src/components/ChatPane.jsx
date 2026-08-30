@@ -242,6 +242,7 @@ const ChatComposer = memo(function ChatComposer({
         <fig-input-text
           class="chat-input"
           multiline=""
+          autoresize=""
           value={draft}
           placeholder={
             mode === "plan"
@@ -360,7 +361,6 @@ const ChatPane = forwardRef(function ChatPane(
     planShaderId,
     featuresRef,
     user,
-    onUserProfile,
     onApplySource,
     onAppliedCheckpoint,
     onOpenSettings,
@@ -1532,7 +1532,7 @@ ${pendingPlan.content}
                   name={user ? userName : ANON_YOU_LABEL}
                   tooltip={user ? userName : ANON_YOU_LABEL}
                   src={userAvatarUrl}
-                  onClick={user ? onUserProfile : undefined}
+                  isYou
                 />
               </fig-chat-message>
             );

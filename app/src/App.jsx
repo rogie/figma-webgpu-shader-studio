@@ -999,7 +999,7 @@ function pushShaderUrl(id, kind) {
   window.history.pushState({}, "", makeShareUrl(id, kind));
 }
 
-function AuthorAvatar({ class: className, tooltip, src, name, onClick }) {
+function AuthorAvatar({ class: className, tooltip, src, name, onClick, isYou }) {
   return (
     <UserAvatar
       class={className}
@@ -1007,6 +1007,7 @@ function AuthorAvatar({ class: className, tooltip, src, name, onClick }) {
       src={src}
       name={name}
       onClick={onClick}
+      isYou={isYou}
     />
   );
 }
@@ -9013,6 +9014,7 @@ export default function App() {
           published={card.origin === "public"}
           authorName={card.authorName || card.authorLabel}
           authorAvatarUrl={card.authorAvatarUrl}
+          isYou={Boolean(user && card.authorId === user.id)}
           showPublishedIcon={false}
           previewId={card.cloud?.id}
           previewKind={card.kind}
@@ -9268,6 +9270,7 @@ export default function App() {
                     tooltip={currentAuthorName}
                     src={currentAuthorAvatarUrl}
                     name={currentAuthorName}
+                    isYou={currentAuthorIsYou}
                     onClick={
                       currentShader?.owner_id
                         ? () =>
@@ -9419,6 +9422,7 @@ export default function App() {
                 tooltip={currentAuthorName}
                 src={currentAuthorAvatarUrl}
                 name={currentAuthorName}
+                isYou={currentAuthorIsYou}
                 onClick={
                   currentShader?.owner_id
                     ? () =>
@@ -9729,8 +9733,6 @@ export default function App() {
           user={user}
           onCanonicalIdentifier={canonicalizeProfileRoute}
           onOpenShader={openViewRoute}
-          onBack={() => window.history.back()}
-          onHome={openHome}
           onNotice={showNotice}
         />
       )}
@@ -10032,7 +10034,6 @@ export default function App() {
                     planShaderId={isOwner ? currentShader.id : null}
                     featuresRef={shaderFeaturesRef}
                     user={user}
-                    onUserProfile={() => openUserProfile(user.id)}
                     onApplySource={onSourceChange}
                     onAppliedCheckpoint={checkpointAgentVersion}
                     onOpenSettings={openSettings}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { useAuth } from "../contexts/AuthContext.jsx";
+import UserAvatar from "./UserAvatar.jsx";
 import {
   getProviderKeys,
   setProviderKey,
@@ -352,6 +353,10 @@ export default function AccountMenu({
     accountDisplayName(user) ||
     user?.email ||
     "Account";
+  const showAccountAvatar = !(
+    layout === "bar" ||
+    (layout !== "rail" && !user)
+  );
 
   return (
     <>
@@ -401,6 +406,7 @@ export default function AccountMenu({
         >
           <fig-button
             ref={settingsAnchorRef}
+            class={showAccountAvatar ? "user-avatar-button" : undefined}
             fig-menu-trigger=""
             variant="ghost"
             size={layout === "rail" ? "large" : undefined}
@@ -410,19 +416,18 @@ export default function AccountMenu({
             }
             disabled={!user && loading ? "" : undefined}
           >
-            {layout === "bar" || (layout !== "rail" && !user) ? (
-              <fig-icon name="settings" />
-            ) : (
-              <fig-avatar
-                class={layout === "rail" ? undefined : "account-avatar"}
-                style={layout === "rail" ? { "--size": "2rem" } : undefined}
+            {showAccountAvatar ? (
+              <UserAvatar
                 src={
                   user?.user_metadata?.avatar_url ||
                   user?.user_metadata?.picture ||
                   ""
                 }
                 name={accountName}
+                size={layout === "rail" ? "2rem" : undefined}
               />
+            ) : (
+              <fig-icon name="settings" />
             )}
           </fig-button>
         </fig-tooltip>

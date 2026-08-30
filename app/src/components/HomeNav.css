@@ -10,16 +10,6 @@
   min-width: 0;
   min-height: 0;
 
-  .app-nav-home-tools {
-    display: flex;
-    flex: 0 1 auto;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--spacer-2);
-    min-width: 0;
-    padding: var(--spacer-3);
-  }
-
   .profile-identity {
     display: flex;
     align-items: center;
@@ -223,10 +213,6 @@
   }
 
   @media (max-width: 720px) {
-    .app-nav-home-tools {
-      flex-wrap: wrap;
-    }
-
     .profile-identity {
       gap: var(--spacer-4);
       padding-block: var(--spacer-5);

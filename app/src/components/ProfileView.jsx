@@ -1,21 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { COMPOSITION_KIND } from "../lib/composition.js";
-import {
-  buildShaderLibraryCards,
-  filterShaderLibraryCards,
-} from "../lib/shaderLibrary.js";
+import { buildShaderLibraryCards } from "../lib/shaderLibrary.js";
 import {
   getAssetUrls,
   getProfileByHandleOrId,
   getProfileShaderCounts,
   listProfileShaders,
 } from "../services/shaders.js";
-import LibraryFilterMenu from "./LibraryFilterMenu.jsx";
 import ShaderCard from "./ShaderCard.jsx";
 import UserAvatar from "./UserAvatar.jsx";
 
 const PAGE_SIZE = 48;
-const opaqueContent = { __html: "" };
 
 function groupCards(cards) {
   const groups = [
@@ -42,8 +37,6 @@ export default function ProfileView({
   user,
   onCanonicalIdentifier,
   onOpenShader,
-  onBack,
-  onHome,
   onNotice,
 }) {
   const chooserRef = useRef(null);
@@ -56,8 +49,6 @@ export default function ProfileView({
     effects: 0,
     fills: 0,
   });
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState("all");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState("");
@@ -150,17 +141,7 @@ export default function ProfileView({
       }),
     [ownProfile, shaders, thumbnailUrls, user],
   );
-  const visibleCards = useMemo(
-    () =>
-      groupCards(
-        filterShaderLibraryCards(cards, {
-          query,
-          kind,
-          origin: "public",
-        }),
-      ),
-    [cards, kind, query],
-  );
+  const visibleCards = useMemo(() => groupCards(cards), [cards]);
 
   const loadMore = async () => {
     if (!profile || loadingMore || shaders.length >= total) return;
@@ -204,40 +185,13 @@ export default function ProfileView({
       : `@${identifier}`;
   return (
     <main className="home-nav profile-view">
-      <div className="app-nav-headers">
-        <fig-header class="app-nav-header">
-          <fig-button type="button" variant="ghost" onClick={onBack}>
-            Back
-          </fig-button>
-          <fig-button type="button" variant="ghost" onClick={onHome}>
-            Shaders
-          </fig-button>
-          <div className="app-nav-home-tools">
-            <fig-input-text
-              class="app-nav-search"
-              type="search"
-              placeholder="Search creations"
-              value={query}
-              full=""
-              onInput={(event) => setQuery(event.target.value)}
-              dangerouslySetInnerHTML={opaqueContent}
-            />
-            <LibraryFilterMenu
-              kind={kind}
-              onKindChange={setKind}
-              showAuthors={false}
-              showOrigin={false}
-            />
-          </div>
-        </fig-header>
-      </div>
-
       {profile && (
         <section className="profile-identity" aria-label="Creator profile">
           <UserAvatar
             class="profile-avatar"
             src={profile.avatar_url}
             name={profile.display_name || "Creator"}
+            isYou={ownProfile}
           />
           <div className="profile-identity-copy">
             <h1>{profile.display_name || "Creator"}</h1>
@@ -298,11 +252,9 @@ export default function ProfileView({
         </fig-chooser>
       ) : (
         <div className="profile-state">
-          {query || kind !== "all"
-            ? "No creations match these filters."
-            : ownProfile
-              ? "You haven’t published anything yet."
-              : "This creator hasn’t published anything yet."}
+          {ownProfile
+            ? "You haven’t published anything yet."
+            : "This creator hasn’t published anything yet."}
         </div>
       )}
 

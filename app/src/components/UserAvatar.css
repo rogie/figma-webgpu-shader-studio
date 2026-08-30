@@ -1,0 +1,11 @@
+.user-avatar {
+  flex: 0 0 auto;
+}
+.user-avatar-button{
+  border-radius: 50%;
+  &:hover{
+    outline: var(--figma-focus-outline);
+    outline-width: 1.5px;
+    outline-offset: 0.5px;
+  }
+}

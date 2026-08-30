@@ -13,6 +13,7 @@ export default function ShaderCard({
   authorName,
   authorAvatarUrl,
   onAuthorClick,
+  isYou = false,
   showAvatar = true,
   showPublishedIcon = true,
   previewId,
@@ -148,6 +149,7 @@ export default function ShaderCard({
               src={authorAvatarUrl}
               name={authorName || "Anon"}
               onClick={onAuthorClick}
+              isYou={isYou}
             />
           )}
           <h3>{label}</h3>

@@ -10,6 +10,7 @@ export default function ShaderNavCard({
   authorName,
   authorAvatarUrl,
   onAuthorClick,
+  isYou = false,
 }) {
   return (
     <fig-card
@@ -29,6 +30,7 @@ export default function ShaderNavCard({
             src={authorAvatarUrl}
             name={authorName || "Anon"}
             onClick={onAuthorClick}
+            isYou={isYou}
           />
           <h3>{label}</h3>
         </label>

@@ -113,6 +113,15 @@
       fig-ai-prompt{
         --fig-ai-prompt-margin-inline: var(--spacer-3);
 
+        > fig-input-text[autoresize]:not([autoresize="false"]) > textarea {
+          max-height: clamp(
+            6rem,
+            calc(var(--chat-height, 260px) - 7.5rem),
+            16rem
+          );
+          overflow-y: auto;
+        }
+
         > .chat-latest-activity {
           margin: var(--spacer-2) var(--spacer-2) 0;
         }
