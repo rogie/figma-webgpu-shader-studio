@@ -111,6 +111,7 @@ function PlayControls({ running, onTogglePlay, hostRef }) {
           step="0.1"
           precision="1"
           elastic="false"
+          variant="minimal"
           size="small"
           aria-label="Time"
           spin={running ? "false" : "true"}
