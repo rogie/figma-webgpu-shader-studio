@@ -252,6 +252,50 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   but distribution and competitive-use implications should be reviewed before
   release.
 
+## 8.9.32 notes
+
+- Propskit default size is now the 40px large row. `size="large"` remains a
+  supported alias; `size="small"` is the compact 32px layout. This app already
+  sets `size="large"` on properties and composition fill controls, so layout
+  does not change. `propskit-group` can set `size="small"` on nested controls
+  that do not define their own size; this app does not use `propskit-group`.
+- Adds `<propskit-wheel>` (numeric scrubber with tick wheel) and
+  `variant="minimal"` on switch/color/fill/gradient/select/text/number/slider/
+  position/wheel. Neither is adopted here — Figma `defineProperties` has no
+  wheel type, and the properties panel already uses full-row chrome.
+- Hue and opacity `propskit-slider` filled-text contrast now follows the
+  current hue/mix color (including `color(srgb …)`). Color/fill swatches use a
+  transparent host background so checkerboard shows through. No app CSS change
+  required; `--propskit-color-height` on the composition fill row already
+  matches the large 2rem height.
+
+## 8.9.33 notes
+
+- Extracts `<fig-input-wheel>` as a standalone lab control. `<propskit-wheel>`
+  now composes that child plus an optional number field (`text="false"` hides
+  the number). This app still does not use either wheel control.
+- No README/API changes to properties, fill, chat, or canvas surfaces this
+  app already wires.
+
+## 8.9.34 notes
+
+- `<fig-input-wheel>` and `<propskit-wheel>` add `spin` (default `true`).
+  `spin="false"` keeps ticks stationary while still updating `value` and the
+  number field. `fig-input-wheel` also exposes `spinTo(value)` when spin is on.
+- `PlayControls` already uses `<propskit-wheel>` in the preview toolbar:
+  `label=""`, `units="seconds"`, `size="small"`, live `value` from host time,
+  `disabled` while playing, `spin="false"` while playing and `spin="true"`
+  while paused. No extra wiring required for this bump.
+- Properties, fill, chat, and canvas surfaces are unchanged.
+
+## 8.9.35 notes
+
+- Adds `--font-variant-numeric: lining-nums tabular-nums slashed-zero` and
+  applies it to `propskit-wheel` number fields. `PlayControls` picks this up
+  with no app CSS change. Preview FPS still uses local `tabular-nums`;
+  leave that unless the toolbar should share the token.
+- README APIs for properties, fill, chat, and canvas are unchanged.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

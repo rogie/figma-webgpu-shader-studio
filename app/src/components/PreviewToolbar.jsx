@@ -1,4 +1,5 @@
 import CanvasControlsIcon from "./CanvasControlsIcon.jsx";
+import PlayControls from "./PlayControls.jsx";
 import PreviewFps from "./PreviewFps.jsx";
 
 export default function PreviewToolbar({
@@ -26,18 +27,11 @@ export default function PreviewToolbar({
     <div className="tools background--light">
       {showPlayback && (
         <>
-          <fig-tooltip text={running ? "Pause" : "Play"}>
-            <fig-button
-              type="toggle"
-              variant="ghost"
-              icon="true"
-              selected={running}
-              aria-label={running ? "Pause" : "Play"}
-              onClick={onTogglePlay}
-            >
-              <fig-icon name={running ? "pause" : "play"} />
-            </fig-button>
-          </fig-tooltip>
+          <PlayControls
+            running={running}
+            onTogglePlay={onTogglePlay}
+            hostRef={hostRef}
+          />
           <fig-separator direction="vertical" />
         </>
       )}

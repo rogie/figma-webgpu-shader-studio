@@ -99,6 +99,59 @@ test("stop resets the frame clock and redraws", () => {
   }
 });
 
+test("seek jumps the frame clock and redraws when paused", () => {
+  const originalNow = performance.now;
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+    const now = 10_000;
+    performance.now = () => now;
+
+    host.seek(2500);
+
+    assert.equal(host.frame.time, 2500);
+    assert.equal(host.frame.deltaTime, 0);
+    assert.equal(host.startTime, now - 2500);
+    assert.equal(host.lastTime, now);
+    assert.equal(redraws, 1);
+  } finally {
+    performance.now = originalNow;
+  }
+});
+
+test("seek continues playback from the new time without redrawing", () => {
+  const originalNow = performance.now;
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+    host.running = true;
+    const now = 10_000;
+    performance.now = () => now;
+
+    host.seek(500);
+
+    assert.equal(host.running, true);
+    assert.equal(host.frame.time, 500);
+    assert.equal(host.startTime, now - 500);
+    assert.equal(redraws, 0);
+  } finally {
+    performance.now = originalNow;
+  }
+});
+
+test("seek clamps negative time to zero", () => {
+  const host = makeHost();
+  host.redraw = () => {};
+  host.seek(-100);
+  assert.equal(host.frame.time, 0);
+});
+
 test("play after pause continues from the paused time", () => {
   const raf = stubAnimationFrame();
   const originalNow = performance.now;

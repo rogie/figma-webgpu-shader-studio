@@ -2246,6 +2246,20 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.stop({ resetTime: false });
   }
 
+  /**
+   * Jump the shader clock to `time` milliseconds. Playback continues from
+   * the new time if already running; when paused, the current frame is redrawn.
+   */
+  seek(time) {
+    const next = Math.max(0, Number(time) || 0);
+    this.frame.time = next;
+    this.frame.deltaTime = 0;
+    const now = performance.now();
+    this.startTime = now - next;
+    this.lastTime = now;
+    if (!this.running && this.ready && this.renderFn) this.redraw();
+  }
+
   renderFrame(time, deltaTime, frameNumber) {
     if (!this.ready || !this.renderFn) return null;
     this.frame.time = time;

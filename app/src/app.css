@@ -1,3 +1,12 @@
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("https://cdnjs.cloudflare.com/ajax/libs/inter-ui/3.19.3/Inter%20(web)/Inter-roman.var.woff2?v=3.19")
+    format("woff2-variations");
+}
+
 html,
 body,
 #root {
@@ -11,6 +20,9 @@ body,
 }
 
 :root {
+  --font-family:
+    Inter, AppleSystemUIFont, BlinkMacSystemFont, avenir next, avenir, segoe ui,
+    helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
   --global-app-nav-width: 3rem;
   --sidebar-width: 240px;
   --sidebar-min-width: 12rem;
@@ -768,6 +780,21 @@ body,
         background: var(--figma-color-bg);
         border-radius: var(--radius-large);
         box-shadow: var(--figma-elevation-200);
+
+        .play-controls {
+          display: flex;
+          align-items: center;
+          gap: var(--spacer-2);
+        }
+
+        .play-controls-time {
+          flex: 0 0 auto;
+          width: 10rem;
+        }
+
+        .play-controls-time propskit-wheel {
+          --propskit-wheel-horizontal-padding: 0px;
+        }
       }
 
       &:has(> .canvas-stage.is-dragging) > .tools {
