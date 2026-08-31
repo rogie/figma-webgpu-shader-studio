@@ -317,6 +317,13 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - `propskit-wheel` elastic stretch now starts at the composed row edge, not
   the inset child wheel. No app wiring change; this surface keeps elastic off.
 
+## 8.9.39 notes
+
+- `fig-input-number` keeps trailing zeros when `precision` is set, including
+  through `propskit-wheel`. `PlayControls` already uses `precision="1"` on the
+  preview time wheel, so `1.0s` stays one decimal without extra wiring.
+- README APIs for properties, fill, chat, and canvas are unchanged.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

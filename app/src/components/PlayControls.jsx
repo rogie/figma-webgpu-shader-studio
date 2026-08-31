@@ -31,7 +31,7 @@ function PlayControls({ running, onTogglePlay, hostRef }) {
     const applyValue = (event) => {
       const next = readPropskitSliderNumber(event);
       if (!Number.isFinite(next)) return;
-      hostRef.current?.seek?.(Math.max(0, next) * 1000);
+      hostRef.current?.seek?.(Math.max(0, next) * 1000, { present: "frame" });
     };
     const handleFocusIn = () => {
       editingRef.current = true;

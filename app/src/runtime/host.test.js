@@ -152,6 +152,39 @@ test("seek clamps negative time to zero", () => {
   assert.equal(host.frame.time, 0);
 });
 
+test("seek skips redraw when the clock is already at that time", () => {
+  const host = makeHost();
+  let redraws = 0;
+  host.redraw = () => {
+    redraws += 1;
+  };
+  host.seek(2500);
+  host.seek(2500);
+  assert.equal(redraws, 1);
+});
+
+test("seek can present the latest time on the next animation frame", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    host.redraw = () => {
+      redraws += 1;
+    };
+
+    host.seek(100, { present: "frame" });
+    host.seek(250, { present: "frame" });
+    assert.equal(host.frame.time, 250);
+    assert.equal(redraws, 0);
+
+    raf.flush();
+    assert.equal(redraws, 1);
+    assert.equal(host.frame.time, 250);
+  } finally {
+    raf.restore();
+  }
+});
+
 test("play after pause continues from the paused time", () => {
   const raf = stubAnimationFrame();
   const originalNow = performance.now;

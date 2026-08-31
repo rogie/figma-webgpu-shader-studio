@@ -132,6 +132,7 @@ export class ShaderHost {
     this.ready = false;
     this.running = false;
     this.rafId = 0;
+    this._seekPresentRaf = 0;
     this.startTime = 0;
     this.lastTime = 0;
     this._playbackGeneration = 0;
@@ -2214,6 +2215,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   start() {
     if (!this.renderFn) return;
+    this._cancelSeekPresent();
     this.running = true;
     const sizeChanged =
       this.supportsRenderScale && this._applyAdaptiveOutputSize();
@@ -2248,16 +2250,39 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   /**
    * Jump the shader clock to `time` milliseconds. Playback continues from
-   * the new time if already running; when paused, the current frame is redrawn.
+   * the new time if already running. When paused, pass `{ present: "frame" }`
+   * to show the latest time on the next animation frame so scrubbing does not
+   * block pointer input with a GPU present per event.
    */
-  seek(time) {
+  seek(time, { present = "sync" } = {}) {
     const next = Math.max(0, Number(time) || 0);
+    const changed = next !== this.frame.time;
     this.frame.time = next;
     this.frame.deltaTime = 0;
     const now = performance.now();
     this.startTime = now - next;
     this.lastTime = now;
-    if (!this.running && this.ready && this.renderFn) this.redraw();
+    if (this.running || !changed) return;
+    if (present === "frame") {
+      this._scheduleSeekPresent();
+      return;
+    }
+    if (this.ready && this.renderFn) this.redraw();
+  }
+
+  _scheduleSeekPresent() {
+    if (this._seekPresentRaf) return;
+    this._seekPresentRaf = requestAnimationFrame(() => {
+      this._seekPresentRaf = 0;
+      if (this.running || !this.ready || !this.renderFn) return;
+      this.redraw();
+    });
+  }
+
+  _cancelSeekPresent() {
+    if (!this._seekPresentRaf) return;
+    cancelAnimationFrame(this._seekPresentRaf);
+    this._seekPresentRaf = 0;
   }
 
   renderFrame(time, deltaTime, frameNumber) {
@@ -2283,6 +2308,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
    * call `pause()` instead.
    */
   stop({ resetTime = true } = {}) {
+    this._cancelSeekPresent();
     this.running = false;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
@@ -2367,6 +2393,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   }
 
   destroy() {
+    this._cancelSeekPresent();
     this.pause();
     clearTimeout(this._fillResizeTimer);
     this._fillResizeTimer = 0;
