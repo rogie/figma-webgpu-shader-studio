@@ -1,11 +1,11 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { readPropskitSliderNumber } from "./controls/controlValues.js";
 
 const opaqueContent = { __html: "" };
-const TIME_PRECISION = 0;
+const TIME_PRECISION = 1;
 
 function secondsFromHost(host) {
-  const ms = Number(host?.frame?.time) || 0;
+  const ms = Math.max(0, Number(host?.frame?.time) || 0);
   return Number((ms / 1000).toFixed(TIME_PRECISION));
 }
 
@@ -17,62 +17,75 @@ function isWheelBusy(wheel) {
   );
 }
 
-export default function PlayControls({ running, onTogglePlay, hostRef }) {
+function PlayControls({ running, onTogglePlay, hostRef }) {
   const wheelRef = useRef(null);
-  const draggingRef = useRef(false);
+  const editingRef = useRef(false);
+  const wasRunningRef = useRef(running);
+  const didStampRef = useRef(false);
   const label = running ? "Pause" : "Play";
 
   useEffect(() => {
     const wheel = wheelRef.current;
     if (!wheel) return undefined;
 
-    const applySeconds = (event) => {
+    const applyValue = (event) => {
       const next = readPropskitSliderNumber(event);
       if (!Number.isFinite(next)) return;
       hostRef.current?.seek?.(Math.max(0, next) * 1000);
     };
-    const handleInput = (event) => {
-      draggingRef.current = true;
-      applySeconds(event);
+    const handleFocusIn = () => {
+      editingRef.current = true;
     };
-    const handleChange = (event) => {
-      draggingRef.current = false;
-      applySeconds(event);
-    };
-    const endDrag = () => {
-      draggingRef.current = false;
+    const handleFocusOut = () => {
+      requestAnimationFrame(() => {
+        const node = wheelRef.current;
+        editingRef.current = Boolean(node && isWheelBusy(node));
+      });
     };
 
-    wheel.addEventListener("input", handleInput);
-    wheel.addEventListener("change", handleChange);
-    wheel.addEventListener("pointerup", endDrag);
-    wheel.addEventListener("pointercancel", endDrag);
+    wheel.addEventListener("input", applyValue);
+    wheel.addEventListener("change", applyValue);
+    wheel.addEventListener("focusin", handleFocusIn);
+    wheel.addEventListener("focusout", handleFocusOut);
     return () => {
-      wheel.removeEventListener("input", handleInput);
-      wheel.removeEventListener("change", handleChange);
-      wheel.removeEventListener("pointerup", endDrag);
-      wheel.removeEventListener("pointercancel", endDrag);
+      wheel.removeEventListener("input", applyValue);
+      wheel.removeEventListener("change", applyValue);
+      wheel.removeEventListener("focusin", handleFocusIn);
+      wheel.removeEventListener("focusout", handleFocusOut);
     };
   }, [hostRef]);
 
+  useLayoutEffect(() => {
+    const wheel = wheelRef.current;
+    if (!wheel || running || editingRef.current) {
+      wasRunningRef.current = running;
+      return;
+    }
+    const shouldStamp = !didStampRef.current || wasRunningRef.current;
+    wasRunningRef.current = running;
+    didStampRef.current = true;
+    if (!shouldStamp) return;
+    wheel.setAttribute("value", String(secondsFromHost(hostRef.current)));
+  }, [hostRef, running]);
+
   useEffect(() => {
+    if (!running) return undefined;
     const wheel = wheelRef.current;
     if (!wheel) return undefined;
 
     const sync = () => {
-      if (draggingRef.current || isWheelBusy(wheel)) return;
+      if (editingRef.current || isWheelBusy(wheel)) return;
       const next = String(secondsFromHost(hostRef.current));
       if (wheel.getAttribute("value") === next) return;
       wheel.setAttribute("value", next);
     };
 
-    sync();
     let rafId = requestAnimationFrame(function loop() {
       sync();
       rafId = requestAnimationFrame(loop);
     });
     return () => cancelAnimationFrame(rafId);
-  }, [hostRef]);
+  }, [hostRef, running]);
 
   return (
     <div className="play-controls">
@@ -95,7 +108,8 @@ export default function PlayControls({ running, onTogglePlay, hostRef }) {
           units="seconds"
           min="0"
           default="0"
-          precision="0"
+          step="0.1"
+          precision="1"
           size="small"
           aria-label="Time"
           spin={running ? "false" : "true"}
@@ -106,3 +120,5 @@ export default function PlayControls({ running, onTogglePlay, hostRef }) {
     </div>
   );
 }
+
+export default memo(PlayControls);
