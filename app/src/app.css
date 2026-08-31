@@ -20,9 +20,6 @@ body,
 }
 
 :root {
-  --font-family:
-    Inter, AppleSystemUIFont, BlinkMacSystemFont, avenir next, avenir, segoe ui,
-    helvetica neue, helvetica, Cantarell, Ubuntu, roboto, noto, arial, sans-serif;
   --global-app-nav-width: 3rem;
   --sidebar-width: 240px;
   --sidebar-min-width: 12rem;

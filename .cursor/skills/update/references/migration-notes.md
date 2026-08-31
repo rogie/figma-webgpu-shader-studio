@@ -296,6 +296,27 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   leave that unless the toolbar should share the token.
 - README APIs for properties, fill, chat, and canvas are unchanged.
 
+## 8.9.36 notes
+
+- FigUI3's default `--font-family` now starts with Inter. This app already loads
+  Inter 3.19.3 via `@font-face` in `app.css`; the duplicate `--font-family`
+  override was removed so the token comes from FigUI3.
+
+## 8.9.37 notes
+
+- Fast `fig-input-wheel` scrubbing adds a brief tick motion blur. Handle pull
+  no longer stretches the input-wheel host; `propskit-wheel` still optionally
+  stretches the row (`elastic`). Horizontal tick inset is doubled.
+- `PlayControls` already sets `elastic="false"` on the preview time wheel, so
+  the row does not stretch. Motion blur and inset pick up automatically.
+- `fig-input-wheel` no longer documents an `elastic` attribute; elastic is a
+  propskit-wheel row behavior.
+
+## 8.9.38 notes
+
+- `propskit-wheel` elastic stretch now starts at the composed row edge, not
+  the inset child wheel. No app wiring change; this surface keeps elastic off.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:
