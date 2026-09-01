@@ -39,6 +39,16 @@ function unwrap(result) {
   return result.data;
 }
 
+/** Library cards: omit source, composition, snapshots, and input blobs. */
+export const SHADER_LIBRARY_COLUMNS =
+  "id, owner_id, name, description, kind, is_public, thumbnail_path, features, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
+
+/** Editor, view, and embed: the visual document plus listing metadata. */
+export const SHADER_DOCUMENT_COLUMNS =
+  "id, owner_id, name, description, source, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
+
+const PUBLIC_REFERENCE_COLUMNS = "id, name, kind, is_public, composition";
+
 async function attachAuthorProfiles(client, shaders) {
   const ownerIds = [
     ...new Set(shaders.map((shader) => shader.owner_id).filter(Boolean)),
@@ -70,18 +80,33 @@ async function attachAuthorProfile(client, shader) {
 
 const LIBRARY_SHADER_LIMIT = 200;
 
-export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
-  const client = requireClient();
+export async function listShaders({
+  limit = LIBRARY_SHADER_LIMIT,
+  client: suppliedClient = null,
+} = {}) {
+  const client = suppliedClient || requireClient();
   const shaders = unwrap(
     await client
       .from("shaders")
-      .select(
-        "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at"
-      )
+      .select(SHADER_LIBRARY_COLUMNS)
       .order("updated_at", { ascending: false })
       .limit(Math.max(1, Math.min(Number(limit) || LIBRARY_SHADER_LIMIT, 500)))
   );
   return attachAuthorProfiles(client, shaders);
+}
+
+export async function listPublicShaderGraphs({
+  limit = 500,
+  client: suppliedClient = null,
+} = {}) {
+  const client = suppliedClient || requireClient();
+  return unwrap(
+    await client
+      .from("shaders")
+      .select(PUBLIC_REFERENCE_COLUMNS)
+      .eq("is_public", true)
+      .limit(Math.max(1, Math.min(Number(limit) || 500, 500)))
+  );
 }
 
 export async function getProfile(id) {
@@ -168,10 +193,7 @@ export async function listProfileShaders(
   const pageOffset = Math.max(0, Number(offset) || 0);
   let query = client
     .from("shaders")
-    .select(
-      "id, owner_id, name, description, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at",
-      { count: "exact" },
-    )
+    .select(SHADER_LIBRARY_COLUMNS, { count: "exact" })
     .eq("owner_id", ownerId)
     .order("updated_at", { ascending: false });
   if (!includePrivate) query = query.eq("is_public", true);
@@ -210,7 +232,11 @@ export async function getProfileShaderCounts(
 export async function getShader(id, { client: suppliedClient = null } = {}) {
   const client = suppliedClient || requireClient();
   const shader = unwrap(
-    await client.from("shaders").select("*").eq("id", id).single()
+    await client
+      .from("shaders")
+      .select(SHADER_DOCUMENT_COLUMNS)
+      .eq("id", id)
+      .single()
   );
   return attachAuthorProfile(client, shader);
 }
@@ -218,7 +244,11 @@ export async function getShader(id, { client: suppliedClient = null } = {}) {
 export async function getShaderMaybe(id, { client: suppliedClient = null } = {}) {
   const client = suppliedClient || requireClient();
   const shader = unwrap(
-    await client.from("shaders").select("*").eq("id", id).maybeSingle()
+    await client
+      .from("shaders")
+      .select(SHADER_DOCUMENT_COLUMNS)
+      .eq("id", id)
+      .maybeSingle()
   );
   return attachAuthorProfile(client, shader);
 }
@@ -325,7 +355,10 @@ export async function getShadersByIds(
   if (!unique.length) return [];
   const client = suppliedClient || requireClient();
   const shaders = unwrap(
-    await client.from("shaders").select("*").in("id", unique)
+    await client
+      .from("shaders")
+      .select(SHADER_DOCUMENT_COLUMNS)
+      .in("id", unique)
   );
   return attachAuthorProfiles(client, shaders);
 }
@@ -368,7 +401,9 @@ export async function getShaderVersion(shaderId, versionId) {
   return unwrap(
     await client
       .from("shader_versions")
-      .select("*")
+      .select(
+        "id, shader_id, version_number, state_revision, checkpoint_kind, summary, source, kind, parameter_values, features, composition, input_path, input_name, input_mime_type, dependency_snapshots, snapshot_schema_version, restored_from_version_id, created_at",
+      )
       .eq("shader_id", shaderId)
       .eq("id", versionId)
       .single()

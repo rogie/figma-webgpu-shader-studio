@@ -6,6 +6,7 @@ import {
   figmaShaderLink,
   isDraftId,
   shaderContentFingerprint,
+  shaderMetadataUnchanged,
 } from "./shaderIdentity.js";
 
 test("normalizes draft and cloud identifiers", () => {
@@ -34,6 +35,42 @@ test("normalizes optional Figma shader metadata", () => {
     figma_shader_kind: null,
     figma_shader_version: null,
   });
+});
+
+test("shader metadata skip compares name, description, visibility, and Figma link", () => {
+  const current = {
+    name: "CRT",
+    description: "Scanlines",
+    is_public: true,
+    figma_shader_id: "fig",
+    figma_shader_kind: "fill",
+    figma_shader_version: "1",
+  };
+  assert.equal(
+    shaderMetadataUnchanged(current, {
+      name: "CRT",
+      description: "Scanlines",
+      ...figmaShaderLink(current),
+    }),
+    true,
+  );
+  assert.equal(
+    shaderMetadataUnchanged(current, {
+      name: "CRT (1P)",
+      description: "Scanlines",
+      ...figmaShaderLink(current),
+    }),
+    false,
+  );
+  assert.equal(
+    shaderMetadataUnchanged(current, {
+      name: "CRT",
+      description: "Scanlines",
+      is_public: false,
+      ...figmaShaderLink(current),
+    }),
+    false,
+  );
 });
 
 test("content fingerprints include every persisted state field", () => {

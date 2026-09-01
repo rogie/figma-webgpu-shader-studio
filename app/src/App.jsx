@@ -214,6 +214,7 @@ import {
   resolvedLibraryKind,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
+  isDocumentPlayable,
   mediaFillType,
   normalizeComposition,
   parseCompositionShaderId,
@@ -250,6 +251,7 @@ import {
   cloudIdForDraft,
   figmaShaderLink,
   isDraftId,
+  shaderMetadataUnchanged,
 } from "./lib/shaderIdentity.js";
 import { activateBeforeHydration } from "./lib/sessionRequests.js";
 import {
@@ -292,6 +294,7 @@ import {
   listShaderAssetPaths,
   listShaderVersions,
   listShaders,
+  listPublicShaderGraphs,
   listRetainedShaderAssetPaths,
   makeEmbedUrl,
   makeHomeUrl,
@@ -1654,6 +1657,17 @@ export default function App() {
       kind === COMPOSITION_KIND &&
       isCompositionPlayable(composition, pinAwareResolvedByKey),
     [composition, kind, pinAwareResolvedByKey]
+  );
+  const previewPlayable = useMemo(
+    () =>
+      isDocumentPlayable({
+        kind: sessionKind,
+        source,
+        composition,
+        effectFills,
+        resolvedByKey: pinAwareResolvedByKey,
+      }),
+    [composition, effectFills, pinAwareResolvedByKey, sessionKind, source],
   );
   const shaderFeatures = useMemo(
     () =>
@@ -6471,9 +6485,11 @@ export default function App() {
             ...figmaShaderLink(currentShader || draftLink),
           };
           if (!background) metadataPayload.is_public = publicFlag;
-          saved = await updateShader(currentShader.id, metadataPayload, {
-            expectedStateRevision: saved.state_revision,
-          });
+          if (!shaderMetadataUnchanged(currentShader, metadataPayload)) {
+            saved = await updateShader(currentShader.id, metadataPayload, {
+              expectedStateRevision: saved.state_revision,
+            });
+          }
         } else {
           if (isDraftId(saveTargetId)) {
             const promoted = await createOrResumeCloudDraft({
@@ -7468,7 +7484,7 @@ export default function App() {
     }
     if (!isOwner || saving) return;
     try {
-      const rows = await listShaders({ limit: 500 });
+      const rows = await listPublicShaderGraphs({ limit: 500 });
       const parents = publicItemsReferencing(currentShader?.id, rows);
       if (parents.length) {
         throw new Error(
@@ -7918,7 +7934,7 @@ export default function App() {
     async (shader) => {
       if (!user || !shader || shader.owner_id !== user.id) return false;
       try {
-        const rows = await listShaders({ limit: 500 });
+        const rows = await listPublicShaderGraphs({ limit: 500 });
         const parents = publicItemsReferencing(shader.id, rows);
         if (parents.length) {
           throw new Error(
@@ -9557,7 +9573,7 @@ export default function App() {
     <PreviewToolbar
       running={running}
       onTogglePlay={togglePlay}
-      showPlayback={!isComposerView || compositionPlayable}
+      showPlayback={previewPlayable}
       fatal={fatal}
       hostRef={hostRef}
       previewZoom={previewZoom}

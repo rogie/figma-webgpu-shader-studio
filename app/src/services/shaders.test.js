@@ -9,11 +9,15 @@ const vite = await createServer({
 after(() => vite.close());
 
 const {
+  SHADER_DOCUMENT_COLUMNS,
+  SHADER_LIBRARY_COLUMNS,
   buildSaveShaderStateRpcArgs,
   contentAddressedAssetPath,
   getShader,
   getShaderMaybe,
   getShadersByIds,
+  listPublicShaderGraphs,
+  listShaders,
   updateShader,
   uploadAsset,
 } = await vite.ssrLoadModule("/src/services/shaders.js");
@@ -211,34 +215,42 @@ function shaderReadClient({
   profileError = null,
 }) {
   const calls = [];
+  const shaderQuery = {
+    select(columns) {
+      calls.push(["select", columns]);
+      return shaderQuery;
+    },
+    eq(column, value) {
+      calls.push(["eq", column, value]);
+      return shaderQuery;
+    },
+    order() {
+      return shaderQuery;
+    },
+    limit() {
+      return Promise.resolve({
+        data: shaders ?? (shader ? [shader] : []),
+        error: null,
+      });
+    },
+    in() {
+      return Promise.resolve({
+        data: shaders ?? (shader ? [shader] : []),
+        error: null,
+      });
+    },
+    async single() {
+      return { data: shader, error: null };
+    },
+    async maybeSingle() {
+      return { data: shader, error: null };
+    },
+  };
   return {
     calls,
     from(table) {
       calls.push(["from", table]);
-      if (table === "shaders") {
-        return {
-          select() {
-            return {
-              eq() {
-                return {
-                  async single() {
-                    return { data: shader, error: null };
-                  },
-                  async maybeSingle() {
-                    return { data: shader, error: null };
-                  },
-                };
-              },
-              async in() {
-                return {
-                  data: shaders ?? (shader ? [shader] : []),
-                  error: null,
-                };
-              },
-            };
-          },
-        };
-      }
+      if (table === "shaders") return shaderQuery;
       return {
         select() {
           return {
@@ -317,6 +329,63 @@ test("getShadersByIds attaches author profiles to each shader", async () => {
   const loaded = await getShadersByIds(["shader-1", "shader-2"], { client });
   assert.equal(loaded[0].author_name, "rogie");
   assert.equal(loaded[1].author_avatar_url, "https://example.com/other.png");
+  assert.equal(
+    client.calls.find((call) => call[0] === "select")[1],
+    SHADER_DOCUMENT_COLUMNS,
+  );
+});
+
+test("listShaders omits source, composition, and dependency snapshots", async () => {
+  const client = shaderReadClient({
+    shaders: [{ id: "shader-1", owner_id: "owner-1" }],
+    profiles: [
+      {
+        id: "owner-1",
+        display_name: "rogie",
+        avatar_url: null,
+        handle: "rogie",
+      },
+    ],
+  });
+
+  await listShaders({ client });
+  const columns = client.calls.find((call) => call[0] === "select")[1];
+  assert.equal(columns, SHADER_LIBRARY_COLUMNS);
+  assert.equal(columns.includes("source"), false);
+  assert.equal(columns.includes("composition"), false);
+  assert.equal(columns.includes("dependency_snapshots"), false);
+  assert.equal(columns.includes("parameter_values"), false);
+});
+
+test("listPublicShaderGraphs loads only public composition refs", async () => {
+  const client = shaderReadClient({
+    shaders: [{ id: "parent", name: "CRT", kind: "composition", is_public: true }],
+  });
+  await listPublicShaderGraphs({ client });
+  assert.deepEqual(
+    client.calls.filter((call) => call[0] === "eq"),
+    [["eq", "is_public", true]],
+  );
+  assert.match(
+    client.calls.find((call) => call[0] === "select")[1],
+    /composition/,
+  );
+  assert.equal(
+    client.calls.find((call) => call[0] === "select")[1].includes("source"),
+    false,
+  );
+});
+
+test("getShader fetches the visual document instead of select *", async () => {
+  const client = shaderReadClient({
+    shader: { id: "shader-1", owner_id: "owner-1" },
+    profiles: [],
+  });
+  await getShader("shader-1", { client });
+  assert.equal(
+    client.calls.find((call) => call[0] === "select")[1],
+    SHADER_DOCUMENT_COLUMNS,
+  );
 });
 
 test("metadata updates reject an intervening visual state revision", async () => {

@@ -481,6 +481,28 @@ export function isCompositionPlayable(graph, resolvedByKey = new Map()) {
   });
 }
 
+export function isDocumentPlayable({
+  kind,
+  source,
+  composition,
+  effectFills,
+  resolvedByKey = new Map(),
+} = {}) {
+  if (kind === COMPOSITION_KIND) {
+    return isCompositionPlayable(composition, resolvedByKey);
+  }
+  if (typeof source === "string" && inferFeatures(source).isAnimated) {
+    return true;
+  }
+  if (kind === "effect") {
+    return isCompositionPlayable(
+      { fills: Array.isArray(effectFills) ? effectFills : [] },
+      resolvedByKey,
+    );
+  }
+  return false;
+}
+
 export function collectCompositionFeatures(graph, resolvedByKey = new Map()) {
   const normalized = normalizeComposition(graph);
   let usesMouse = false;

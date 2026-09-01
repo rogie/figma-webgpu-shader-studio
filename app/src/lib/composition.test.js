@@ -10,6 +10,7 @@ import {
   firstFillShaderKey,
   hasCompositionFill,
   isCompositionPlayable,
+  isDocumentPlayable,
   hasCompositionGraph,
   libraryKind,
   mergeLayerValues,
@@ -534,6 +535,78 @@ test("playable when video fill, animated fill, or enabled animated effect", () =
       resolved
     ),
     false
+  );
+});
+
+test("document playback follows shader time, video fills, and animated fills", () => {
+  const resolved = new Map([
+    ["cloud:sphere", { kind: "fill", source: "frame.time" }],
+  ]);
+
+  assert.equal(
+    isDocumentPlayable({
+      kind: "fill",
+      source: "return vec4(1.0);",
+    }),
+    false,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "fill",
+      source: "return vec4(frame.time);",
+    }),
+    true,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "effect",
+      source: "return vec4(1.0);",
+      effectFills: [{ type: "image", enabled: true, paint: { type: "image" } }],
+    }),
+    false,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "effect",
+      source: "return vec4(1.0);",
+      effectFills: [
+        {
+          type: "image",
+          enabled: true,
+          paint: { type: "video", video: { url: "/v.mp4" } },
+        },
+      ],
+    }),
+    true,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "effect",
+      source: "return vec4(1.0);",
+      effectFills: [
+        { type: "shader", enabled: true, shaderId: "cloud:sphere" },
+      ],
+      resolvedByKey: resolved,
+    }),
+    true,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: COMPOSITION_KIND,
+      composition: { fill: { type: "image" }, effects: [] },
+    }),
+    false,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: COMPOSITION_KIND,
+      composition: {
+        fill: { type: "shader", shaderId: "cloud:sphere" },
+        effects: [],
+      },
+      resolvedByKey: resolved,
+    }),
+    true,
   );
 });
 

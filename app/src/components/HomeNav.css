@@ -37,7 +37,7 @@
     }
 
     h1 {
-      font-size: 2rem;
+      font-size: 1.5rem;
       line-height: 1.15;
       overflow-wrap: anywhere;
     }
@@ -219,10 +219,6 @@
 
       .profile-avatar {
         --size: 4.5rem;
-      }
-
-      h1 {
-        font-size: 1.5rem;
       }
     }
 

@@ -45,3 +45,27 @@ export function figmaShaderLink(shader) {
         : null,
   };
 }
+
+export function shaderMetadataUnchanged(current, payload) {
+  if (!current || !payload) return false;
+  const currentLink = figmaShaderLink(current);
+  const nextLink = figmaShaderLink(payload);
+  if ((current.name || "") !== (payload.name || "")) return false;
+  if ((current.description || "") !== (payload.description || "")) {
+    return false;
+  }
+  if (currentLink.figma_shader_id !== nextLink.figma_shader_id) return false;
+  if (currentLink.figma_shader_kind !== nextLink.figma_shader_kind) {
+    return false;
+  }
+  if (currentLink.figma_shader_version !== nextLink.figma_shader_version) {
+    return false;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(payload, "is_public") &&
+    Boolean(current.is_public) !== Boolean(payload.is_public)
+  ) {
+    return false;
+  }
+  return true;
+}
