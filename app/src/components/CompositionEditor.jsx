@@ -287,6 +287,7 @@ function PropertiesLayerRow({
           variant={expanded ? "ghost" : "input"}
           size="large"
           full=""
+          align="start"
           title={name}
           aria-haspopup="dialog"
           aria-expanded={expanded ? "true" : "false"}

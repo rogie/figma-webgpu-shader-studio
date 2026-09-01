@@ -29,7 +29,6 @@
 .properties-layer-row > fig-button {
   height: var(--spacer-5);
   padding: 0 var(--spacer-2-5);
-  justify-content: flex-start;
 }
 
 .properties-layer-row-label {

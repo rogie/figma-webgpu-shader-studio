@@ -324,6 +324,28 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   preview time wheel, so `1.0s` stays one decimal without extra wiring.
 - README APIs for properties, fill, chat, and canvas are unchanged.
 
+## 8.9.40 notes
+
+- `fig-button` gains `align` (`start` / `center` / `end`; default `center`) for
+  content alignment. Large buttons with a prepended `fig-icon[slot="prepend"]`
+  also tighten left padding.
+- Effect layer name buttons in `CompositionEditor` now use `align="start"`
+  instead of a `justify-content` override. Height/padding still match the fill
+  field (`size="large"` + `padding: 0 var(--spacer-2-5)`).
+
+## 8.9.41 notes
+
+- PropsKit slider and wheel show the grabbing cursor only after the drag
+  threshold, reserve focused number-field chrome for text editing, and let
+  `propskit-wheel` scrub across the full row. Arrow keys in the wheel number
+  field spin ticks. `PlayControls` and `Controls.jsx` pick this up with no
+  wiring change.
+
+## 8.9.42 notes
+
+- Patch-only: `fig-input-wheel` and `propskit-slider` handles drop soft
+  shadows. Preview time wheel and property sliders pick this up automatically.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:
