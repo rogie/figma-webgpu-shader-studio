@@ -8710,6 +8710,20 @@ export default function App() {
       >
         {noun ? (
           <>
+            <fig-tooltip text={visibilityLabel}>
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label={visibilityLabel}
+                onClick={() => {
+                  hostRef.current?.setActive(true);
+                  setEffectVisible((visible) => !visible);
+                }}
+              >
+                <fig-icon name={effectVisible ? "visible" : "hidden"} />
+              </fig-button>
+            </fig-tooltip>
             <fig-menu ref={propertiesMoreMenuRef} position="bottom right">
               <fig-tooltip text="More">
                 <fig-button
@@ -8732,20 +8746,6 @@ export default function App() {
                 Save as default
               </fig-menu-item>
             </fig-menu>
-            <fig-tooltip text={visibilityLabel}>
-              <fig-button
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label={visibilityLabel}
-                onClick={() => {
-                  hostRef.current?.setActive(true);
-                  setEffectVisible((visible) => !visible);
-                }}
-              >
-                <fig-icon name={effectVisible ? "visible" : "hidden"} />
-              </fig-button>
-            </fig-tooltip>
           </>
         ) : null}
       </hstack>
@@ -9404,13 +9404,7 @@ export default function App() {
                         currentShader && !dirty && !hasUncheckpointedChanges
                       )
                     }
-                    saveLabel={
-                      saving
-                        ? "Saving…"
-                        : currentShader && isOwner
-                          ? "Save version"
-                          : "Save"
-                    }
+                    saveLabel={saving ? "Saving…" : "Save"}
                     showDownload={!isComposerView}
                     showFigmaPush={
                       FIGMA_LIBRARY_UI_ENABLED &&
@@ -9857,13 +9851,7 @@ export default function App() {
                 currentShader && !dirty && !hasUncheckpointedChanges
               )
             }
-            saveLabel={
-              saving
-                ? "Saving…"
-                : currentShader && isOwner
-                  ? "Save version"
-                  : "Save"
-            }
+            saveLabel={saving ? "Saving…" : "Save"}
             showRename={!protectedPreview}
             showSave={!protectedPreview}
             showDownload={!isComposerView}
