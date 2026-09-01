@@ -26,6 +26,12 @@
   padding-inline: var(--spacer-3) var(--spacer-2);
 }
 
+.properties-layer-row > fig-button {
+  height: var(--spacer-5);
+  padding: 0 var(--spacer-2-5);
+  justify-content: flex-start;
+}
+
 .properties-layer-row-label {
   display: block;
   flex: 1 1 auto;
@@ -56,4 +62,18 @@ fig-content.composition-layer-props-content {
   min-height: 0;
   overflow: auto;
   scrollbar-width: thin;
+}
+
+.shader-fill-mode-chrome {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  background: var(--figma-color-bg);
+}
+
+.shader-fill-mode-props {
+  position: relative;
+  z-index: 0;
 }

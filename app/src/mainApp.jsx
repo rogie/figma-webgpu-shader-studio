@@ -12,7 +12,10 @@ import "@rogieking/figui3/fig-editor.js";
 // 8.1+ no longer pulls lab styles through fig-editor.css — import explicitly.
 import "@rogieking/figui3/fig-lab.css";
 import "@rogieking/figui3/fig-lab.js";
+import { installCanvasHandlePopupGuard } from "./lib/canvasHandlePopupGuard.js";
 import "./app.css";
+
+installCanvasHandlePopupGuard();
 
 const playground = import.meta.env.DEV
   ? new URLSearchParams(window.location.search).get("playground")

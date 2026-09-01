@@ -14,6 +14,7 @@ import {
 } from "../lib/composition.js";
 import { graphTypeForPaint, isPaintFillType, resolvePaintFill } from "../lib/paintFill.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
+import { popupProtectedFromHandleDismiss } from "../lib/canvasHandlePopupGuard.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import { syncOverflowFade } from "../lib/overflowFade.js";
@@ -284,6 +285,7 @@ function PropertiesLayerRow({
         <fig-button
           type="button"
           variant={expanded ? "ghost" : "input"}
+          size="large"
           full=""
           title={name}
           aria-haspopup="dialog"
@@ -414,47 +416,49 @@ function ShaderFillMode({
   }, [dialogAnchor]);
 
   return (
-    <fig-content ref={rootRef} style={{ paddingTop: 0 }}>
-      <fig-header id={pickerAnchorId} borderless="">
-        <fig-select
-          ref={selectRef}
-          id={pickerTriggerId}
-          variant="ghost"
-          value={selectValue}
-          label={selectLabel}
-          options={selectOptions}
-          disabled={disabled ? "" : undefined}
-          aria-label="Choose shader fill"
-          aria-haspopup="dialog"
-          dangerouslySetInnerHTML={opaqueContent}
-        />
-        <hstack
-          style={{
-            marginLeft: "auto",
-            "--hstack-gap": "var(--spacer-1)",
-          }}
-        >
-          <OpenShaderButton
-            shaderId={shaderId}
-            noun="shader fill"
-            disabled={disabled}
-            onOpen={onOpenShader}
+    <fig-content ref={rootRef} style={{ paddingTop: 0, position: "relative" }}>
+      <div className="shader-fill-mode-chrome">
+        <fig-header id={pickerAnchorId} borderless="">
+          <fig-select
+            ref={selectRef}
+            id={pickerTriggerId}
+            variant="ghost"
+            value={selectValue}
+            label={selectLabel}
+            options={selectOptions}
+            disabled={disabled ? "" : undefined}
+            aria-label="Choose shader fill"
+            aria-haspopup="dialog"
+            dangerouslySetInnerHTML={opaqueContent}
           />
-          <ResetPropertiesButton
-            hidden={disabled}
-            disabled={resetDisabled}
-            onReset={onResetProperties}
-          />
-        </hstack>
-      </fig-header>
-      <fig-field style={{ paddingTop: 0 }}>
-        <fig-preview fit="cover" full="" aspect-ratio="16 / 9">
-          {thumbnailUrl ? (
-            <img src={thumbnailUrl} alt={name || "Shader fill"} />
-          ) : null}
-        </fig-preview>
-      </fig-field>
-      {properties}
+          <hstack
+            style={{
+              marginLeft: "auto",
+              "--hstack-gap": "var(--spacer-1)",
+            }}
+          >
+            <OpenShaderButton
+              shaderId={shaderId}
+              noun="shader fill"
+              disabled={disabled}
+              onOpen={onOpenShader}
+            />
+            <ResetPropertiesButton
+              hidden={disabled}
+              disabled={resetDisabled}
+              onReset={onResetProperties}
+            />
+          </hstack>
+        </fig-header>
+        <fig-field style={{ paddingTop: 0 }}>
+          <fig-preview fit="cover" full="" aspect-ratio="16 / 9">
+            {thumbnailUrl ? (
+              <img src={thumbnailUrl} alt={name || "Shader fill"} />
+            ) : null}
+          </fig-preview>
+        </fig-field>
+      </div>
+      <div className="shader-fill-mode-props">{properties}</div>
     </fig-content>
   );
 }
@@ -478,6 +482,7 @@ function ImageFillInput({
   dialogAnchor,
   autoOpen = false,
   onOpenPicker,
+  onClosePicker,
   onAutoOpened,
 }) {
   const ref = useRef(null);
@@ -547,15 +552,18 @@ function ImageFillInput({
           : picker.value;
       if (detail?.type === "webcam") onChange(detail, false);
     };
+    const handleClose = () => onClosePicker?.();
     node.addEventListener("input", handleValue);
     node.addEventListener("change", handleValue);
     picker.addEventListener("webcamstream", handleWebcamStream);
+    picker.addEventListener("close", handleClose);
     return () => {
       node.removeEventListener("input", handleValue);
       node.removeEventListener("change", handleValue);
       picker.removeEventListener("webcamstream", handleWebcamStream);
+      picker.removeEventListener("close", handleClose);
     };
-  }, [allowShader, onChange]);
+  }, [allowShader, onChange, onClosePicker]);
 
   useLayoutEffect(() => {
     const host = ref.current;
@@ -756,6 +764,7 @@ function FillLayerEditor({
   onToggleVisible,
   onRemove,
   onOpenPicker,
+  onClosePicker,
   autoOpen = false,
   onAutoOpened,
 }) {
@@ -998,7 +1007,8 @@ function FillLayerEditor({
         pickerTriggerId={fillShaderTriggerId(fill.id)}
         dialogAnchor={fill.id}
         autoOpen={autoOpen}
-        onOpenPicker={onOpenPicker}
+        onOpenPicker={() => onOpenPicker?.(fill.id)}
+        onClosePicker={() => onClosePicker?.(fill.id)}
         onAutoOpened={onAutoOpened}
       />
     );
@@ -1020,7 +1030,7 @@ function FillLayerEditor({
           className="composition-fill-control"
           onPointerDown={() => onSelect?.(fill.id)}
           onFocusCapture={() => onSelect?.(fill.id)}
-          onClickCapture={onOpenPicker}
+          onClickCapture={() => onOpenPicker?.(fill.id)}
         >
           {control}
         </div>
@@ -1063,6 +1073,7 @@ export default function CompositionEditor({
     source: "nested",
   });
   const [propertiesLayerId, setPropertiesLayerId] = useState(null);
+  const [fillCanvasLayerId, setFillCanvasLayerId] = useState(null);
   const [autoOpenFillId, setAutoOpenFillId] = useState(null);
   const propertiesLayerIdRef = useRef(null);
   propertiesLayerIdRef.current = propertiesLayerId;
@@ -1134,10 +1145,11 @@ export default function CompositionEditor({
 
   const openPropertiesLayerId =
     propertiesLayerId && propertiesLayerEnabled ? propertiesLayerId : null;
+  const handlesLayerId = openPropertiesLayerId || fillCanvasLayerId;
 
   useEffect(() => {
-    onPropertiesLayerChange?.(openPropertiesLayerId);
-  }, [onPropertiesLayerChange, openPropertiesLayerId]);
+    onPropertiesLayerChange?.(handlesLayerId);
+  }, [onPropertiesLayerChange, handlesLayerId]);
 
   useEffect(
     () => () => onPropertiesLayerChange?.(null),
@@ -1179,6 +1191,8 @@ export default function CompositionEditor({
     const popup = propertiesPopupRef.current;
     if (!popup) return undefined;
 
+    // Keep light dismiss for clicks elsewhere. Canvas-handle pointerdowns
+    // are ignored by installCanvasHandlePopupGuard (closedby none for the drag).
     popup.setAttribute("closedby", "any");
     if ("closedBy" in popup) popup.closedBy = "any";
 
@@ -1187,6 +1201,10 @@ export default function CompositionEditor({
     };
     const onClose = () => {
       if (!propertiesLayerIdRef.current) return;
+      if (popupProtectedFromHandleDismiss(popup)) {
+        popup.open = true;
+        return;
+      }
       setPropertiesLayerId(null);
     };
     popup.addEventListener("cancel", onCancel);
@@ -1217,9 +1235,16 @@ export default function CompositionEditor({
   const onEffectPickerOpenChange = useCallback((next) => {
     setEffectPickerOpen(next);
   }, []);
-  const onFillControlOpen = useCallback(() => {
+  const onFillControlOpen = useCallback((fillId) => {
     setPropertiesLayerId(null);
     setEffectPickerOpen(false);
+    if (fillId) {
+      onSelectLayer?.(fillId);
+      setFillCanvasLayerId(fillId);
+    }
+  }, [onSelectLayer]);
+  const onFillControlClose = useCallback((fillId) => {
+    setFillCanvasLayerId((current) => (current === fillId ? null : current));
   }, []);
 
   const addEffect = useCallback(
@@ -1315,6 +1340,7 @@ export default function CompositionEditor({
   const removeFill = useCallback(
     (fillId) => {
       if (propertiesLayerId === fillId) setPropertiesLayerId(null);
+      setFillCanvasLayerId((current) => (current === fillId ? null : current));
       if (autoOpenFillId === fillId) setAutoOpenFillId(null);
       const fills = normalized.fills.filter((fill) => fill.id !== fillId);
       if (fillPicker.targetId === fillId) {
@@ -1378,6 +1404,7 @@ export default function CompositionEditor({
       const effect = normalized.effects.find((item) => item.id === layerId);
       const enabled = fill ? fill.enabled : effect?.enabled;
       if (!enabled) return;
+      setFillCanvasLayerId(null);
       if (propertiesLayerIdRef.current === layerId) {
         setPropertiesLayerId(null);
         return;
@@ -1550,6 +1577,7 @@ export default function CompositionEditor({
                 onToggleVisible={toggleFillVisible}
                 onRemove={removeFill}
                 onOpenPicker={onFillControlOpen}
+                onClosePicker={onFillControlClose}
                 autoOpen={autoOpenFillId === fill.id}
                 onAutoOpened={clearAutoOpenFill}
               />
