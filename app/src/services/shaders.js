@@ -62,6 +62,12 @@ async function attachAuthorProfiles(client, shaders) {
   }));
 }
 
+async function attachAuthorProfile(client, shader) {
+  if (!shader) return shader;
+  const [withAuthor] = await attachAuthorProfiles(client, [shader]);
+  return withAuthor;
+}
+
 const LIBRARY_SHADER_LIMIT = 200;
 
 export async function listShaders({ limit = LIBRARY_SHADER_LIMIT } = {}) {
@@ -201,18 +207,20 @@ export async function getProfileShaderCounts(
   return { compositions, effects, fills };
 }
 
-export async function getShader(id) {
-  const client = requireClient();
-  return unwrap(
+export async function getShader(id, { client: suppliedClient = null } = {}) {
+  const client = suppliedClient || requireClient();
+  const shader = unwrap(
     await client.from("shaders").select("*").eq("id", id).single()
   );
+  return attachAuthorProfile(client, shader);
 }
 
-export async function getShaderMaybe(id) {
-  const client = requireClient();
-  return unwrap(
+export async function getShaderMaybe(id, { client: suppliedClient = null } = {}) {
+  const client = suppliedClient || requireClient();
+  const shader = unwrap(
     await client.from("shaders").select("*").eq("id", id).maybeSingle()
   );
+  return attachAuthorProfile(client, shader);
 }
 
 export async function createShader(payload) {
@@ -309,13 +317,17 @@ export async function saveShaderState(options) {
   );
 }
 
-export async function getShadersByIds(ids) {
+export async function getShadersByIds(
+  ids,
+  { client: suppliedClient = null } = {},
+) {
   const unique = [...new Set((ids || []).filter(Boolean))];
   if (!unique.length) return [];
-  const client = requireClient();
-  return unwrap(
+  const client = suppliedClient || requireClient();
+  const shaders = unwrap(
     await client.from("shaders").select("*").in("id", unique)
   );
+  return attachAuthorProfiles(client, shaders);
 }
 
 export async function listShaderVersions(

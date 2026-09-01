@@ -11,6 +11,9 @@ after(() => vite.close());
 const {
   buildSaveShaderStateRpcArgs,
   contentAddressedAssetPath,
+  getShader,
+  getShaderMaybe,
+  getShadersByIds,
   updateShader,
   uploadAsset,
 } = await vite.ssrLoadModule("/src/services/shaders.js");
@@ -199,6 +202,121 @@ test("buildSaveShaderStateRpcArgs distinguishes an explicit media clear", () => 
   assert.equal(args.p_input_name, null);
   assert.equal(args.p_input_mime_type, null);
   assert.deepEqual(args.p_dependency_snapshots, {});
+});
+
+function shaderReadClient({
+  shader = null,
+  shaders = null,
+  profiles = [],
+  profileError = null,
+}) {
+  const calls = [];
+  return {
+    calls,
+    from(table) {
+      calls.push(["from", table]);
+      if (table === "shaders") {
+        return {
+          select() {
+            return {
+              eq() {
+                return {
+                  async single() {
+                    return { data: shader, error: null };
+                  },
+                  async maybeSingle() {
+                    return { data: shader, error: null };
+                  },
+                };
+              },
+              async in() {
+                return {
+                  data: shaders ?? (shader ? [shader] : []),
+                  error: null,
+                };
+              },
+            };
+          },
+        };
+      }
+      return {
+        select() {
+          return {
+            async in() {
+              return { data: profiles, error: profileError };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+test("getShader attaches the public author profile for logged-out viewers", async () => {
+  const client = shaderReadClient({
+    shader: { id: "shader-1", owner_id: "owner-1", name: "CRT (1P)" },
+    profiles: [
+      {
+        id: "owner-1",
+        display_name: "rogie",
+        avatar_url: "https://avatars.githubusercontent.com/u/1577835?v=4",
+        handle: "rogie",
+      },
+    ],
+  });
+
+  const loaded = await getShader("shader-1", { client });
+
+  assert.equal(loaded.author_name, "rogie");
+  assert.equal(
+    loaded.author_avatar_url,
+    "https://avatars.githubusercontent.com/u/1577835?v=4",
+  );
+  assert.equal(loaded.author_handle, "rogie");
+  assert.deepEqual(
+    client.calls.filter((call) => call[0] === "from"),
+    [
+      ["from", "shaders"],
+      ["from", "profiles"],
+    ],
+  );
+});
+
+test("getShaderMaybe leaves a missing shader as null", async () => {
+  const client = shaderReadClient({ shader: null });
+  const loaded = await getShaderMaybe("missing", { client });
+  assert.equal(loaded, null);
+  assert.deepEqual(
+    client.calls.filter((call) => call[0] === "from"),
+    [["from", "shaders"]],
+  );
+});
+
+test("getShadersByIds attaches author profiles to each shader", async () => {
+  const client = shaderReadClient({
+    shaders: [
+      { id: "shader-1", owner_id: "owner-1" },
+      { id: "shader-2", owner_id: "owner-2" },
+    ],
+    profiles: [
+      {
+        id: "owner-1",
+        display_name: "rogie",
+        avatar_url: "https://example.com/rogie.png",
+        handle: "rogie",
+      },
+      {
+        id: "owner-2",
+        display_name: "other",
+        avatar_url: "https://example.com/other.png",
+        handle: "other",
+      },
+    ],
+  });
+
+  const loaded = await getShadersByIds(["shader-1", "shader-2"], { client });
+  assert.equal(loaded[0].author_name, "rogie");
+  assert.equal(loaded[1].author_avatar_url, "https://example.com/other.png");
 });
 
 test("metadata updates reject an intervening visual state revision", async () => {
