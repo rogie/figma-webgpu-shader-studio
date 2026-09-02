@@ -28,6 +28,7 @@ import {
   supportsCopyElementImageToTexture,
   supportsHtmlInCanvas,
 } from "./runtime/htmlInCanvas.js";
+import { ShaderHost } from "./runtime/host.js";
 import { loadModule } from "./runtime/loader.js";
 import { inferFeatures, mergeShaderFeatures, supportsRenderScale } from "./runtime/params.js";
 import {
@@ -320,7 +321,10 @@ async function loadPaintLayer(fill, canvas, host, resources) {
   if (fill.type === "html") {
     return loadHtmlLayer(fill, canvas, host, resources);
   }
-  let paint = resolvePaintFill(fill.paint, { defaultImageUrl: defaultInputUrl });
+  let paint = resolvePaintFill(fill.paint, {
+    defaultImageUrl: defaultInputUrl,
+    defaultVideoUrl,
+  });
   if (!isPaintFillType(paint?.type)) {
     if (fill.type === "none") return null;
     paint = sampleFallbackPaint(defaultInputUrl);
@@ -543,7 +547,11 @@ async function startEmbed(
   canvas,
   showError,
   services = {},
-  { viewportElement = null, setTitle = true } = {},
+  {
+    viewportElement = null,
+    setTitle = true,
+    respectDocumentVisibility = true,
+  } = {},
 ) {
   const { row, isComposition, graph, resolved } =
     await getPreparedEmbedPreview(route, services);
@@ -579,7 +587,7 @@ async function startEmbed(
   };
   const syncActivity = () => {
     const active =
-      document.visibilityState !== "hidden" &&
+      (!respectDocumentVisibility || document.visibilityState !== "hidden") &&
       intersecting &&
       requestedActive;
     host.setActive(active);
@@ -720,6 +728,7 @@ export function mountEmbedPreview(route, canvas, onError = () => {}) {
   return startEmbed(route, canvas, onError, {}, {
     viewportElement: canvas,
     setTitle: false,
+    respectDocumentVisibility: false,
   });
 }
 

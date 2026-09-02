@@ -346,6 +346,22 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - Patch-only: `fig-input-wheel` and `propskit-slider` handles drop soft
   shadows. Preview time wheel and property sliders pick this up automatically.
 
+## 8.9.43 notes
+
+- `propskit-slider` now fades and scales its handle based on proximity to the
+  label and numeric value, revealing it on hover/focus. Property sliders in
+  `Controls.jsx` pick this up automatically.
+- `fig-group` headings truncate long names instead of overflowing, and
+  `fig-avatar` drops its inset border. Existing groups and avatars need no app
+  wiring or CSS changes.
+
+## 8.9.44 notes
+
+- Collapsible `fig-group` and `propskit-group` chevrons now sit beside the
+  heading instead of inside it, preserving heading truncation and reset-button
+  spacing. Existing groups pick this up automatically.
+- No README/API changes and no app wiring or CSS changes are required.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:
