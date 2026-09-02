@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { supportsRenderScale, valuesMatchDefaults } from "./params.js";
+import { inferFeatures, mergeShaderFeatures, supportsRenderScale, valuesMatchDefaults } from "./params.js";
 
 test("valuesMatchDefaults treats missing keys as defaults", () => {
   const props = {
@@ -26,6 +26,27 @@ test("valuesMatchDefaults rejects stale keys unless they are undefined", () => {
   assert.equal(valuesMatchDefaults({}, { amount: 2 }), false);
   assert.equal(valuesMatchDefaults(null, { amount: 2 }), false);
   assert.equal(valuesMatchDefaults(null, { amount: undefined }), true);
+});
+
+test("inferFeatures does not treat frame.audio as animation or mouse", () => {
+  assert.deepEqual(
+    inferFeatures("export function render(device, frame) { return frame.audio.volume; }"),
+    { isAnimated: false, usesMouse: false }
+  );
+});
+
+test("mergeShaderFeatures keeps supportsAudio declaration-only", () => {
+  assert.deepEqual(
+    mergeShaderFeatures({ isAnimated: true, usesMouse: false }, {}),
+    { isAnimated: true, usesMouse: false }
+  );
+  assert.deepEqual(
+    mergeShaderFeatures(
+      { isAnimated: false, usesMouse: false },
+      { supportsAudio: true }
+    ),
+    { isAnimated: false, usesMouse: false, supportsAudio: true }
+  );
 });
 
 test("supportsRenderScale requires an explicit source directive", () => {

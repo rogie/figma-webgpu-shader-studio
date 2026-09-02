@@ -9,6 +9,8 @@ import {
   readChatHeight,
   readCodeWidth,
   readEditorFilters,
+  readExperimentalAudio,
+  readAppNavCollapsed,
   readLibraryView,
   readPlayState,
   readPreviewHeight,
@@ -75,6 +77,13 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
     readPlayState(storage({ "figma-shader-studio:play": "false" })),
     false,
   );
+  assert.equal(readExperimentalAudio(storage()), false);
+  assert.equal(
+    readExperimentalAudio(
+      storage({ "figma-shader-studio:experimental-audio": "true" }),
+    ),
+    true,
+  );
   assert.equal(readLibraryView(storage()), "list");
   assert.equal(
     readLibraryView(storage({ "figma-shader-studio:library-view": "grid" })),
@@ -83,6 +92,13 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
   assert.equal(
     readLibraryView(storage({ "figma-shader-studio:library-view": "cards" })),
     "list",
+  );
+  assert.equal(readAppNavCollapsed(storage()), false);
+  assert.equal(
+    readAppNavCollapsed(
+      storage({ "figma-shader-studio:app-nav-collapsed": "true" }),
+    ),
+    true,
   );
 });
 

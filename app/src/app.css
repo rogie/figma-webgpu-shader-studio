@@ -21,6 +21,7 @@ body,
 
 :root {
   --global-app-nav-width: 3rem;
+  --panel-drag-handle-width: var(--spacer-4);
   --sidebar-width: 240px;
   --sidebar-min-width: 12rem;
   --sidebar-fluid-width: clamp(
@@ -30,6 +31,12 @@ body,
   );
   --code-width: 480px;
   --viewer-radius: 0.5rem;
+}
+
+@property --library-slide {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
 }
 
 #root {
@@ -91,6 +98,11 @@ body,
     overflow: hidden;
   }
 
+  &:not(:has(> .global-app-nav)) .app-shell-content {
+    width: 100%;
+    margin-left: 0;
+  }
+
   .embed-view {
     position: relative;
     display: block;
@@ -147,9 +159,22 @@ body,
     }
   }
 
+  .library-rail {
+    display: flex;
+    flex: 0 0 auto;
+    align-self: stretch;
+    height: 100%;
+    min-width: 0;
+    --library-slide: 0px;
+    margin-right: var(--library-slide);
+    transform: translateX(var(--library-slide));
+    will-change: transform;
+    transition: --library-slide 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
   .app-nav {
     --app-nav-width: 240px;
-    flex: 0 0 auto;
+    flex: 0 0 var(--app-nav-width);
     align-self: stretch;
     width: var(--app-nav-width);
     height: 100%;
@@ -159,15 +184,12 @@ body,
     flex-direction: column;
     justify-content: flex-start;
     align-items: stretch;
-    min-width: 12rem;
+    min-width: 0;
     min-height: 0;
     margin: 0;
     overflow: hidden;
-    border: 1px solid var(--figma-color-border);
-    border-radius: var(--viewer-radius);
-    transition:
-      margin 220ms ease,
-      border-color 220ms ease;
+    background: var(--figma-color-bg-secondary);
+    border-right: 1px solid var(--figma-color-border);
 
     .new-shader-menu {
       display: flex;
@@ -207,22 +229,25 @@ body,
 
       .app-nav-library-toggles {
         flex: 0 0 auto;
-        --hstack-gap: 0;
+        --hstack-gap: var(--spacer-1);
       }
     }
 
     > fig-footer {
       justify-content: space-between;
       align-items: center;
+      padding-block: var(--spacer-1);
     }
 
     .app-nav-account {
       display: flex;
+      flex: 1 1 auto;
       align-items: center;
       gap: var(--spacer-2);
       min-width: 0;
 
       .account-profile-button {
+        min-width: 0;
         padding-left: var(--spacer-1);
 
         fig-avatar {
@@ -232,32 +257,50 @@ body,
     }
   }
 
-  .app-nav-resizer {
+  :is(.pane-resizer, .app-nav-resizer) {
     position: relative;
-    flex: 0 0 var(--spacer-3);
-    align-self: stretch;
-    height: 100%;
-    margin: 0;
-    cursor: col-resize;
     touch-action: none;
     outline: none;
 
     &::after {
       content: "";
       position: absolute;
-      inset-block: 0;
+      top: 50%;
       left: 50%;
       width: 2px;
-      transform: translateX(-50%);
-      background: transparent;
+      height: var(--panel-drag-handle-width);
+      max-height: 100%;
+      border-radius: 1px;
+      transform: translate(-50%, -50%);
+      background: var(--figma-color-border);
+      pointer-events: none;
       transition: background-color 120ms ease;
     }
 
     &:hover::after,
     &:focus-visible::after,
     &:active::after {
-      background: var(--figma-color-border-brand-strong);
+      background: var(--figma-color-border-selected);
     }
+
+    &[aria-orientation="horizontal"],
+    &.pane-resizer-row {
+      &::after {
+        width: var(--panel-drag-handle-width);
+        max-width: 100%;
+        height: 2px;
+        max-height: none;
+      }
+    }
+  }
+
+  .app-nav-resizer {
+    flex: 0 0 var(--spacer-3);
+    align-self: stretch;
+    height: 100%;
+    margin: 0;
+    cursor: col-resize;
+    overflow: hidden;
   }
 
   :is(.shader-viewer, .composer-viewer) {
@@ -352,7 +395,7 @@ body,
     }
 
     > .shader-editor-header,
-    .composer-stage > .shader-editor-header {
+    .composer-viewer > .shader-editor-header {
       padding-left: var(--spacer-0);
       padding-right: 0;
     }
@@ -721,6 +764,13 @@ body,
           pointer-events: none;
         }
 
+        &.is-loading {
+          .canvas-frame,
+          .canvas-controls-overlay {
+            visibility: hidden;
+          }
+        }
+
       }
 
       .preview-performance {
@@ -729,15 +779,14 @@ body,
         gap: 0;
         color: var(--figma-color-text);
 
-        .preview-resolution,
         .preview-zoom {
           flex: 0 0 auto;
         }
 
         .preview-fps {
-          min-width: 3.5rem;
+          min-width: 2.5rem;
           height: 100%;
-          padding-inline: var(--spacer-1);
+          padding-inline: 0;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -1099,7 +1148,7 @@ dialog.figma-import-dialog {
     width: calc(100% - var(--spacer-3) * 2);
   }
 
-  fig-chooser.figma-import-list {
+  .shader-list.figma-import-list {
     max-height: min(60vh, 32rem);
 
     .shader-list-item {
@@ -1114,14 +1163,6 @@ dialog.figma-import-dialog {
       color: var(--figma-color-text-secondary);
       font-size: var(--body-small-fontSize);
       white-space: nowrap;
-    }
-
-    > fig-separator {
-      position: sticky;
-      top: 0;
-      z-index: 2;
-      padding-block: var(--spacer-2) var(--fig-chooser-gap);
-      background: var(--figma-color-bg);
     }
   }
 
@@ -1184,6 +1225,32 @@ dialog.delete-shader-dialog {
 
   .properties-pane:has(> fig-header:only-child) {
     padding-bottom: 0;
+
+    > fig-header {
+      color: var(--figma-color-text-secondary);
+
+      fig-button[variant="ghost"] {
+        color: var(--figma-color-text-secondary);
+      }
+
+      &:hover,
+      &:focus-within {
+        color: var(--figma-color-text);
+
+        fig-button[variant="ghost"] {
+          color: var(--figma-color-text);
+        }
+      }
+    }
+  }
+
+  @media (hover: none) {
+    .properties-pane:has(> fig-header:only-child) > fig-header,
+    .properties-pane:has(> fig-header:only-child)
+      > fig-header
+      fig-button[variant="ghost"] {
+      color: var(--figma-color-text);
+    }
   }
 
   .properties-pane:last-child {
@@ -1217,7 +1284,7 @@ dialog.delete-shader-dialog {
 }
 
 :is(.shader-viewer, .composer-viewer)
-  > .shader-properties-panel
+  .shader-properties-panel
   > fig-header {
   flex: 0 0 auto;
   padding-right: var(--spacer-2);
@@ -1229,8 +1296,36 @@ dialog.delete-shader-dialog {
   }
 }
 
-/* Editor-only outer inset. Home uses .home-nav and is not wrapped here. */
+/* Viewer inset only. The library nav sits flush to the global nav and viewport. */
 #root > .app-shell-content > .editor-view {
-  padding: 1rem;
+  padding: 0;
   box-sizing: border-box;
+  overflow: hidden;
+
+  > :is(.shader-viewer, .composer-viewer) {
+    height: auto;
+    margin: 0 1rem 1rem 0;
+    transition: margin-left 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  &[data-library-collapsed="true"] > .library-rail {
+    --library-slide: calc(-1 * var(--app-nav-shift));
+    pointer-events: none;
+  }
+
+  &[data-library-collapsed="true"] > :is(.shader-viewer, .composer-viewer) {
+    margin-left: 1rem;
+  }
+
+  &[data-library-motion="opening"] > .library-rail,
+  &[data-library-motion="opening"] > :is(.shader-viewer, .composer-viewer) {
+    transition: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #root .library-rail,
+  #root > .app-shell-content > .editor-view > :is(.shader-viewer, .composer-viewer) {
+    transition: none;
+  }
 }

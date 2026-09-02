@@ -138,7 +138,7 @@ export default function CodePane({
             <strong>
               {location
                 ? `Syntax error · Line ${location.line}, column ${location.column + 1}`
-                : "Shader error"}
+                : "Compile error"}
             </strong>
             {!expanded && <span className="code-error-summary">{error}</span>}
             <fig-button

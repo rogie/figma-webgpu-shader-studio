@@ -1,6 +1,7 @@
 import {
   COMPOSITION_KIND,
   compositionRefAliases,
+  enabledVideoFillSoundtrack,
   mergeLayerValues,
   normalizeComposition,
   parseCompositionShaderId,
@@ -17,13 +18,18 @@ import {
 } from "./lib/paintFill.js";
 import defaultInputUrl from "./assets/default-input.png";
 import defaultVideoUrl from "./assets/default-input.mp4";
-import { ShaderHost } from "./runtime/host.js";
+import { audioPlaybackSettings, enabledAudioFileInput } from "./lib/documentInputs.js";
+import {
+  documentAudioAssetPaths,
+  hydrateAudioInputsWithUrls,
+} from "./lib/documentInputMedia.js";
+import { AudioInputBus } from "./runtime/audioInput.js";
 import {
   supportsCopyElementImageToTexture,
   supportsHtmlInCanvas,
 } from "./runtime/htmlInCanvas.js";
 import { loadModule } from "./runtime/loader.js";
-import { inferFeatures, supportsRenderScale } from "./runtime/params.js";
+import { inferFeatures, mergeShaderFeatures, supportsRenderScale } from "./runtime/params.js";
 import {
   getAssetUrls,
   getShader,
@@ -94,15 +100,21 @@ async function hydrateFillAssets(
   } = {}
 ) {
   const normalized = normalizeComposition(graph);
-  const paths = normalized.fills
-    .map(fillAssetPath)
-    .filter(Boolean);
+  const paths = [
+    ...new Set(
+      [
+        ...normalized.fills.map(fillAssetPath),
+        ...documentAudioAssetPaths(normalized.inputs),
+      ].filter(Boolean)
+    ),
+  ];
   if (
     requirePublic &&
     paths.some((path) => String(path).split("/")[1] !== ownerShaderId)
   ) {
     throw new Error("A referenced fill asset is not publicly readable.");
   }
+  if (!paths.length) return normalized;
   const urlsByPath = await loadAssetUrls(paths);
   if (paths.some((path) => !urlsByPath[path])) {
     throw new Error("A referenced fill asset is unavailable.");
@@ -112,6 +124,7 @@ async function hydrateFillAssets(
     fills: normalized.fills.map((fill) =>
       withFillAssetUrl(fill, urlsByPath)
     ),
+    inputs: hydrateAudioInputsWithUrls(normalized.inputs, urlsByPath),
   });
 }
 
@@ -195,9 +208,9 @@ async function waitForVideo(video) {
   await video.play().catch(() => {});
 }
 
-function loadShaderLayer(id, role, source, values) {
+function loadShaderLayer(id, role, source, values, declaredFeatures) {
   const loaded = loadModule(source);
-  const features = inferFeatures(source);
+  const features = mergeShaderFeatures(inferFeatures(source), declaredFeatures);
   return {
     layer: {
       id,
@@ -392,7 +405,8 @@ async function setComposition(
         fill.id,
         "fill",
         dependency.source,
-        fill.values
+        fill.values,
+        dependency.features
       );
       layers.push(loaded.layer);
       featureList.push(loaded.features);
@@ -418,7 +432,8 @@ async function setComposition(
       effect.id,
       "effect",
       dependency.source,
-      effect.values
+      effect.values,
+      dependency.features
     );
     layers.push(loaded.layer);
     featureList.push(loaded.features);
@@ -429,7 +444,8 @@ async function setComposition(
       ownEffect.id,
       "effect",
       ownEffect.source,
-      ownEffect.values
+      ownEffect.values,
+      ownEffect.features
     );
     layers.push(loaded.layer);
     featureList.push(loaded.features);
@@ -437,14 +453,17 @@ async function setComposition(
 
   const isAnimated = featureList.some((features) => features.isAnimated);
   const usesMouse = featureList.some((features) => features.usesMouse);
+  const supportsAudio = featureList.some((features) => features.supportsAudio);
   const ok = await host.setComposition(layers, {
     isFill: layers.some((layer) => layer.role === "fill"),
-    isAnimated,
+    isAnimated: isAnimated || supportsAudio,
     usesMouse,
     supportsRenderScale: false,
+    supportsAudio,
   });
   if (!ok) throw new Error("The shader could not be rendered.");
-  if (isAnimated || usesMouse) host.start();
+  if (isAnimated || usesMouse || supportsAudio) host.start();
+  return { supportsAudio };
 }
 
 const embedPreviewCache = new Map();
@@ -464,7 +483,26 @@ async function prepareEmbedPreview(route, services = {}) {
   ) {
     throw new Error("This shader is unavailable.");
   }
-  if (row.kind === "fill") return { row, isComposition, graph: null, resolved: null };
+  if (row.kind === "fill") {
+    const composition = await hydrateFillAssets(
+      {
+        fills: [],
+        effects: [],
+        inputs: row.composition?.inputs,
+      },
+      {
+        requirePublic: row.is_public,
+        ownerShaderId: row.id,
+        getAssetUrls: services.getAssetUrls,
+      },
+    );
+    return {
+      row: { ...row, composition },
+      isComposition,
+      graph: null,
+      resolved: null,
+    };
+  }
 
   const graph = await hydrateFillAssets(
     cloudCompositionGraph(row, { defaultImageUrl: defaultInputUrl }),
@@ -520,6 +558,8 @@ async function startEmbed(
   const Host = services.ShaderHost || ShaderHost;
   const host = new Host(canvas, { onError: showError });
   await host.init();
+  const audioBus = new AudioInputBus();
+  host.setAudioBus(audioBus);
   const viewportSize = () => {
     const rect = viewportElement?.getBoundingClientRect?.();
     return {
@@ -570,6 +610,7 @@ async function startEmbed(
     window.removeEventListener("pagehide", cleanup);
     resizeObserver?.disconnect();
     intersectionObserver.disconnect();
+    audioBus.dispose();
     host.destroy();
     for (const resource of resources) {
       if (typeof resource?.getTracks === "function") {
@@ -590,25 +631,70 @@ async function startEmbed(
     },
   };
 
+  const bindAudioGesture = (supportsAudio, documentGraph) => {
+    if (!supportsAudio) return;
+    const start = async () => {
+      canvas.removeEventListener("pointerdown", start);
+      try {
+        await audioBus.resume();
+        const audioFile = enabledAudioFileInput(documentGraph?.inputs);
+        if (audioFile?.audio?.url) {
+          const el = document.createElement("audio");
+          el.crossOrigin = "anonymous";
+          const playback = audioPlaybackSettings(audioFile.audio);
+          el.loop = playback.loop;
+          el.preload = "auto";
+          el.src = audioFile.audio.url;
+          resources.push(el);
+          await audioBus.attachElement(el, {
+            gain: playback.gain,
+            monitor: playback.monitor,
+          });
+          await audioBus.syncPlayback({ running: true });
+          return;
+        }
+        if (enabledVideoFillSoundtrack(documentGraph)) {
+          const videoEl = resources.find(
+            (resource) =>
+              resource?.tagName === "VIDEO" && resource.src && !resource.srcObject,
+          );
+          if (videoEl) await audioBus.attachElement(videoEl);
+        }
+      } catch {
+        // Stay silent; frame.audio remains zeroed.
+      }
+    };
+    canvas.addEventListener("pointerdown", start);
+    resources.push({
+      remove() {
+        canvas.removeEventListener("pointerdown", start);
+      },
+    });
+  };
+
   if (row.kind === "fill") {
     const loaded = loadModule(row.source);
-    const features = inferFeatures(row.source);
+    const features = mergeShaderFeatures(inferFeatures(row.source), row.features);
     host.setParams(mergeLayerValues(loaded.props, row.parameter_values || {}));
     const ok = await host.setModule(
       { setup: loaded.setup, render: loaded.render },
       {
         isFill: true,
-        isAnimated: features.isAnimated,
+        isAnimated: features.isAnimated || features.supportsAudio,
         usesMouse: features.usesMouse,
         supportsRenderScale: supportsRenderScale(row.source),
+        supportsAudio: Boolean(features.supportsAudio),
       }
     );
     if (!ok) throw new Error("The shader could not be rendered.");
-    if (features.isAnimated || features.usesMouse) host.start();
+    if (features.isAnimated || features.usesMouse || features.supportsAudio) {
+      host.start();
+    }
+    bindAudioGesture(Boolean(features.supportsAudio), row.composition);
     return controller;
   }
 
-  await setComposition(
+  const compositionResult = await setComposition(
     host,
     canvas,
     graph,
@@ -619,8 +705,13 @@ async function startEmbed(
           id: `cloud:${row.id}`,
           source: row.source,
           values: row.parameter_values || {},
+          features: row.features,
         },
     resources
+  );
+  bindAudioGesture(
+    Boolean(compositionResult?.supportsAudio || row.features?.supportsAudio),
+    graph,
   );
   return controller;
 }

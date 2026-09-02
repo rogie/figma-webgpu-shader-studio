@@ -33,6 +33,11 @@ import {
   subscribePreviewPixelRatioMode,
   writePreviewPixelRatioMode,
 } from "../runtime/dpi.js";
+import {
+  readExperimentalAudio,
+  subscribeExperimentalAudio,
+  writeExperimentalAudio,
+} from "../lib/layoutStorage.js";
 function accountDisplayName(user) {
   return (
     user?.user_metadata?.user_name ||
@@ -92,6 +97,9 @@ export default function AccountMenu({
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
   );
+  const [experimentalAudio, setExperimentalAudio] = useState(
+    readExperimentalAudio
+  );
   const [figmaConnected, setFigmaConnected] = useState(
     () => Boolean(getFigmaAccessToken())
   );
@@ -132,6 +140,11 @@ export default function AccountMenu({
 
   useEffect(
     () => subscribePreviewPixelRatioMode(setPixelRatioMode),
+    []
+  );
+
+  useEffect(
+    () => subscribeExperimentalAudio(setExperimentalAudio),
     []
   );
 
@@ -580,6 +593,22 @@ export default function AccountMenu({
                   Dark
                 </fig-segment>
               </fig-segmented-control>
+            </fig-field>
+          </fig-group>
+
+          <fig-group name="Experimental" collapsible="">
+            <fig-field direction="horizontal">
+              <label>Audio</label>
+              <fig-switch
+                checked={experimentalAudio}
+                label="Not available in Figma."
+                onInput={(event) => {
+                  const next = Boolean(event.target.checked);
+                  setExperimentalAudio(next);
+                  writeExperimentalAudio(next);
+                }}
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
             </fig-field>
           </fig-group>
 

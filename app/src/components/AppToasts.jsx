@@ -32,8 +32,6 @@ export default function AppToasts({
   videoExportToastRef,
   videoExportedToastRef,
   videoExportProgress,
-  inputLoadingToastRef,
-  inputLoadingLabel = "Loading input…",
   noticeToastRef,
   notice,
   onNoticeClose,
@@ -67,18 +65,6 @@ export default function AppToasts({
           Exporting video…{" "}
           {Math.round((videoExportProgress?.progress || 0) * 100)}%
         </span>
-      </dialog>
-      <dialog
-        is="fig-toast"
-        ref={inputLoadingToastRef}
-        class="input-loading-toast"
-        theme="dark"
-        live="polite"
-        duration="0"
-        offset="24"
-      >
-        <fig-spinner aria-label={inputLoadingLabel} />
-        <span>{inputLoadingLabel}</span>
       </dialog>
       <dialog
         is="fig-toast"

@@ -64,6 +64,19 @@ export function preferredExportVideoCodecs(format, supportedCodecs = []) {
   return preference.filter((codec) => supported.has(codec));
 }
 
+const MP4_AUDIO_CODEC_PREFERENCE = ["aac", "opus"];
+const WEBM_AUDIO_CODEC_PREFERENCE = ["opus", "vorbis"];
+
+export function preferredExportAudioCodecs(format, supportedCodecs = []) {
+  const preference =
+    resolveVideoExportFormat(format) === "webm"
+      ? WEBM_AUDIO_CODEC_PREFERENCE
+      : MP4_AUDIO_CODEC_PREFERENCE;
+  const supported = new Set(supportedCodecs);
+  if (!supported.size) return preference;
+  return preference.filter((codec) => supported.has(codec));
+}
+
 export function evenExportSize(width, height) {
   const even = (value) => Math.max(2, Math.round(Number(value) || 1) & ~1);
   return { width: even(width), height: even(height) };

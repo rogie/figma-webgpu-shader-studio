@@ -1,6 +1,6 @@
 #root .composer-viewer {
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   align-items: stretch;
 }
 
@@ -69,7 +69,17 @@
   min-height: 0;
 }
 
-.composer-stage > .shader-editor-header {
+.composer-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: row;
+  align-items: stretch;
+  min-width: 0;
+  min-height: 0;
+}
+
+.composer-stage > .shader-editor-header,
+#root .composer-viewer > .shader-editor-header {
   flex: 0 0 auto;
 }
 
@@ -81,14 +91,14 @@
   height: auto;
 }
 
-#root .composer-viewer > .shader-properties-panel {
+#root .composer-viewer .shader-properties-panel {
   flex: 0 1 var(--sidebar-fluid-width);
 }
 
 @container editor (max-width: 900px) {
   #root .composer-viewer {
     display: flex;
-    flex-direction: row;
+    flex-direction: column;
     align-items: stretch;
   }
 

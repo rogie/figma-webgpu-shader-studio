@@ -2,14 +2,20 @@ type ChatContext = {
   source: string;
   kind: string;
   fileName: string;
-  features?: { isAnimated?: boolean; usesMouse?: boolean };
+  features?: { isAnimated?: boolean; usesMouse?: boolean; supportsAudio?: boolean };
   skills?: string;
   mode?: "agent" | "plan";
+  experimentalAudio?: boolean;
+  compileError?: string;
 };
 
 export function buildSystemPrompt(ctx: ChatContext): string {
   const features = ctx.features
-    ? `isAnimated=${Boolean(ctx.features.isAnimated)}, usesMouse=${Boolean(ctx.features.usesMouse)}`
+    ? `isAnimated=${Boolean(ctx.features.isAnimated)}, usesMouse=${Boolean(ctx.features.usesMouse)}${
+        ctx.experimentalAudio
+          ? `, supportsAudio=${Boolean(ctx.features.supportsAudio)}`
+          : ""
+      }`
     : "unknown";
 
   const skillsBlock = ctx.skills?.trim()
@@ -44,6 +50,19 @@ Prefer short, direct explanations. Lead with the answer, avoid repetition, and i
 5. End with exactly ONE fenced code block tagged typescript or ts containing the COMPLETE updated module source — not a partial patch, not multiple fences.
 6. That fenced module is applied automatically to the live editor and WebGPU preview as soon as you emit it — always return the full runnable module when making a change.`;
 
+  const audioGuidance = ctx.experimentalAudio
+    ? ""
+    : "- Do not mention frame.audio, supportsAudio, or audio inputs. Those APIs are unavailable in this session.\n";
+  const compileError = String(ctx.compileError || "").trim();
+  const compileErrorBlock = compileError
+    ? `
+
+Current preview compile error from main.ts / WGSL. If the user is asking about a broken shader or this diagnostic, fix it in the module:
+\`\`\`
+${compileError}
+\`\`\``
+    : "";
+
   return `You are an expert Figma WebGPU shader module assistant inside Shader Studio.
 
 You help the user iterate on ONE open shader TypeScript module (${ctx.fileName}).
@@ -57,7 +76,7 @@ Studio context:
 - Prefer smallest working edits that compile in the browser preview.
 - Keep defineProperties keys stable unless the user asks to change the UI.
 - Do not invent CLI workflows, product-brief.md, or multi-file project scaffolding unless asked.
-
+${audioGuidance}
 ${skillsBlock}
 ${intentContract}
 
@@ -68,5 +87,5 @@ ${responseContract}
 Current module source:
 \`\`\`typescript
 ${ctx.source}
-\`\`\``;
+\`\`\`${compileErrorBlock}`;
 }

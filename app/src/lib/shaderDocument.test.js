@@ -551,3 +551,50 @@ test("reports whether live editor state still matches a captured snapshot", () =
   assert.equal(editorStateMatchesSnapshot(state, captured), false);
   assert.equal(editorStateMatchesSnapshot(state, null), false);
 });
+
+test("preserves supportsAudio and document inputs", () => {
+  const snapshot = buildShaderDocumentSnapshot({
+    source: effectSource,
+    kind: "effect",
+    features: { isAnimated: false, usesMouse: false, supportsAudio: true },
+    composition: {
+      effectFills: [],
+      inputs: [
+        {
+          type: "audio",
+          audio: { url: "blob:http://localhost/a", name: "beat.mp3" },
+        },
+      ],
+    },
+  });
+  assert.equal(snapshot.features.supportsAudio, true);
+  assert.equal(snapshot.composition.inputs.length, 1);
+  assert.equal(snapshot.composition.inputs[0].type, "audio");
+  assert.equal(snapshot.composition.inputs[0].audio.url, "");
+  assert.equal(snapshot.composition.inputs[0].audio.name, "beat.mp3");
+});
+
+test("fill snapshots keep durable audio asset paths", () => {
+  const snapshot = buildShaderDocumentSnapshot({
+    source: effectSource,
+    kind: "fill",
+    composition: {
+      inputs: [
+        {
+          type: "audio",
+          audio: {
+            url: "blob:http://localhost/a",
+            name: "beat.mp3",
+            assetPath: "owner/shader/assets/audio-beat.mp3",
+          },
+        },
+      ],
+    },
+  });
+  assert.equal(snapshot.kind, "fill");
+  assert.equal(
+    snapshot.composition.inputs[0].audio.assetPath,
+    "owner/shader/assets/audio-beat.mp3",
+  );
+  assert.equal(snapshot.composition.inputs[0].audio.url, "");
+});

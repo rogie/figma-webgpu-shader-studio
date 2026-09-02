@@ -29,7 +29,7 @@ const STATES = [
     id: "loading",
     title: "Loading",
     description: "A supported file was accepted and is being decoded.",
-    result: "Returns to idle and shows the global “Loading input…” toast.",
+    result: "Shows an in-preview spinner, then returns to idle.",
     loading: true,
   },
   {

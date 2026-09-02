@@ -8,6 +8,7 @@ import {
   readEffectFillsFromComposition,
   sessionInputPlan,
 } from "../lib/composition.js";
+import { readDocumentInputs } from "../lib/documentInputs.js";
 import {
   rememberEffectFills,
   resolveSessionEffectFills,
@@ -57,10 +58,13 @@ export function useShaderSession({
   activeDependencySnapshotsRef,
   setEffectFills,
   setEffectFill,
+  setSupportsAudio,
+  setDocumentInputs,
   inputApplyGenRef,
   sessionInputAppliedRef,
   navigationStartedAtRef,
   sessionRequestRef,
+  onSessionLoadStart,
 }) {
   return useCallback(
     async ({
@@ -76,6 +80,7 @@ export function useShaderSession({
       media = null,
       dirty: nextDirty = false,
       cloudShader = null,
+      features = null,
       dependencySnapshots,
       persistPrevious = true,
       requestId = null,
@@ -83,6 +88,7 @@ export function useShaderSession({
       const activationStartedAt = perfNow();
       if (!beginSessionRequest(sessionRequestRef, requestId)) return;
       const activeRequestId = sessionRequestRef?.current ?? requestId;
+      onSessionLoadStart?.(sessionId);
       if (navigationStartedAtRef && !navigationStartedAtRef.current) {
         navigationStartedAtRef.current = activationStartedAt;
       }
@@ -121,6 +127,12 @@ export function useShaderSession({
       setShaderDescription(nextDescription);
       setSource(nextSource);
       setSessionKind(nextKind);
+      setSupportsAudio?.(
+        Boolean(features?.supportsAudio || cloudShader?.features?.supportsAudio),
+      );
+      setDocumentInputs?.(
+        readDocumentInputs(nextComposition || cloudShader?.composition),
+      );
       const graph =
         nextKind === COMPOSITION_KIND
           ? normalizeComposition(nextComposition || emptyComposition())
@@ -251,6 +263,7 @@ export function useShaderSession({
       inputSourceRef,
       loadMediaForShader,
       navigationStartedAtRef,
+      onSessionLoadStart,
       pendingValuesRef,
       persistActiveDraft,
       playPreferenceRef,

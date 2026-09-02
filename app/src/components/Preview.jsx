@@ -40,10 +40,10 @@ export function FillDropOverlay({ dropTarget = "input" }) {
   );
 }
 
-export function FillDropLoading() {
+export function FillDropLoading({ label = "Loading fill" }) {
   return (
     <div className="drop-loading-overlay">
-      <fig-spinner aria-label="Loading fill" />
+      <fig-spinner aria-label={label} />
     </div>
   );
 }
@@ -66,6 +66,7 @@ function Preview({
   htmlInputRef,
   canvasTheme = "light",
   interactive = true,
+  loading = false,
 }) {
   const stageRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -327,10 +328,11 @@ function Preview({
       ref={stageRef}
       class={`canvas-stage canvas-stage--${canvasTheme}${
         dragging ? " is-dragging" : ""
-      }`}
+      }${loading ? " is-loading" : ""}`}
       full=""
       checkerboard=""
       aspect-ratio="auto"
+      aria-busy={loading ? "true" : undefined}
       onDrop={interactive ? onDrop : undefined}
       onDragEnter={
         interactive
@@ -394,7 +396,11 @@ function Preview({
           />
         ) : null}
       </div>
-      {dropLoading ? <FillDropLoading /> : null}
+      {loading ? (
+        <FillDropLoading label="Loading preview" />
+      ) : dropLoading ? (
+        <FillDropLoading />
+      ) : null}
       {overlayBox && (
         <div
           ref={attachPointerSurface}

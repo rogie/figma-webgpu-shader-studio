@@ -234,6 +234,8 @@ export async function renderVideoInWorker({
   composition = null,
   inputBitmap = null,
   inputVideo = null,
+  audio = null,
+  supportsAudio = false,
   width,
   height,
   duration,
@@ -341,6 +343,16 @@ export async function renderVideoInWorker({
 
     const transfer = [];
     if (workerInputBitmap) transfer.push(workerInputBitmap);
+    const audioChannels = Array.isArray(audio?.channels) ? audio.channels : [];
+    const audioMono = audio?.mono || null;
+    const transferred = new Set();
+    for (const channel of [...audioChannels, audioMono]) {
+      const buffer = channel?.buffer;
+      if (buffer && !transferred.has(buffer)) {
+        transferred.add(buffer);
+        transfer.push(buffer);
+      }
+    }
     worker.postMessage(
       {
         type: "init",
@@ -350,6 +362,10 @@ export async function renderVideoInWorker({
         composition,
         inputBitmap: workerInputBitmap,
         dynamicVideoInput: Boolean(videoFrameSource),
+        audioChannels,
+        audioMono,
+        audioSampleRate: audio?.sampleRate || 0,
+        supportsAudio: Boolean(supportsAudio && audioMono),
         width,
         height,
         duration,

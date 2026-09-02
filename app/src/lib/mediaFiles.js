@@ -51,7 +51,9 @@ export async function fileFromBlobUrl(url, fileName) {
         ? "input.svg"
         : type.startsWith("video/")
           ? "input.mp4"
-          : "input.png");
+          : type.startsWith("audio/")
+            ? "input.mp3"
+            : "input.png");
     return new File([blob], name, { type });
   } catch {
     return null;
@@ -59,7 +61,11 @@ export async function fileFromBlobUrl(url, fileName) {
 }
 
 export function mediaType(file) {
-  if (file.type?.startsWith("image/") || file.type?.startsWith("video/")) {
+  if (
+    file.type?.startsWith("image/") ||
+    file.type?.startsWith("video/") ||
+    file.type?.startsWith("audio/")
+  ) {
     return file.type;
   }
   const extension = file.name?.split(".").pop()?.toLowerCase();
@@ -75,5 +81,11 @@ export function mediaType(file) {
     mov: "video/quicktime",
     m4v: "video/x-m4v",
     webm: "video/webm",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    m4a: "audio/mp4",
+    aac: "audio/aac",
+    flac: "audio/flac",
   }[extension];
 }

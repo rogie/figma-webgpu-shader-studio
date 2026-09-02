@@ -360,6 +360,8 @@ const ChatPane = forwardRef(function ChatPane(
     planOwnerId,
     planShaderId,
     featuresRef,
+    experimentalAudioRef,
+    compileErrorRef,
     user,
     onApplySource,
     onAppliedCheckpoint,
@@ -972,7 +974,8 @@ const ChatPane = forwardRef(function ChatPane(
     let skills;
     try {
       skills = (await import("../lib/chatSkills.js")).getChatSkillContext(
-        requestMode
+        requestMode,
+        { experimentalAudio: Boolean(experimentalAudioRef?.current) }
       );
     } catch (skillError) {
       setError(skillError.message || "Unable to load shader authoring guidance.");
@@ -1191,6 +1194,8 @@ const ChatPane = forwardRef(function ChatPane(
           fileName,
           features,
           skills,
+          experimentalAudio: Boolean(experimentalAudioRef?.current),
+          compileError: String(compileErrorRef?.current || ""),
           cursorAgentId: cursorAgentIdForModel(model, {
             threadId: requestThreadId,
             source: brokenSource,
@@ -1271,9 +1276,11 @@ const ChatPane = forwardRef(function ChatPane(
         source: baselineSource,
         kind,
         fileName,
-        features,
-        skills,
-        mode: requestMode,
+          features,
+          skills,
+          mode: requestMode,
+          experimentalAudio: Boolean(experimentalAudioRef?.current),
+        compileError: String(compileErrorRef?.current || ""),
         cursorAgentId: cursorAgentIdForModel(model, {
           threadId: requestThreadId,
           source: baselineSource,

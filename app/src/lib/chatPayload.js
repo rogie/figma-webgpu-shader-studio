@@ -103,6 +103,8 @@ export function buildChatRequest({
   skills,
   mode = "agent",
   cursorAgentId,
+  experimentalAudio,
+  compileError,
 }) {
   const request = {
     provider,
@@ -114,10 +116,13 @@ export function buildChatRequest({
     features,
     skills,
     mode: mode === "plan" ? "plan" : "agent",
+    experimentalAudio: Boolean(experimentalAudio),
   };
   if (typeof cursorAgentId === "string" && cursorAgentId) {
     request.cursorAgentId = cursorAgentId;
   }
+  const diagnostic = typeof compileError === "string" ? compileError.trim() : "";
+  if (diagnostic) request.compileError = diagnostic;
   return request;
 }
 

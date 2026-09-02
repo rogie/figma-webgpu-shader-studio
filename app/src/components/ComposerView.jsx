@@ -13,16 +13,18 @@ export default function ComposerView({
       ref={viewerRef}
       className={["composer-viewer", className].filter(Boolean).join(" ")}
     >
-      <div className="composer-stage">
-        {header}
-        <section
-          ref={visualizerRef}
-          className="composer-preview shader-viewer-visualizer background--light"
-        >
-          {preview}
-        </section>
+      {header}
+      <div className="composer-body">
+        <div className="composer-stage">
+          <section
+            ref={visualizerRef}
+            className="composer-preview shader-viewer-visualizer background--light"
+          >
+            {preview}
+          </section>
+        </div>
+        {properties}
       </div>
-      {properties}
     </main>
   );
 }

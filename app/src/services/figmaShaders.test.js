@@ -49,6 +49,16 @@ export function render(device, frame) {
   });
 });
 
+test("buildFigmaShaderPackage keeps declared supportsAudio", () => {
+  const pkg = buildFigmaShaderPackage(
+    "export function render() { return 1; }",
+    "Pulse",
+    { supportsAudio: true }
+  );
+  assert.equal(pkg.features.supportsAudio, true);
+  assert.match(pkg.featuresJson, /"supportsAudio": true/);
+});
+
 test("createFigmaShader sends the staging MCP proxy contract", async () => {
   const calls = [];
   const result = await createFigmaShader(

@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
 } from "react";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
@@ -11,11 +12,38 @@ import { visibleLibrarySelection } from "../lib/shaderLibrary.js";
 import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
 
+const ADD_LABELS = {
+  composition: "Add composition",
+  effect: "Add shader effect",
+  fill: "Add shader fill",
+};
+
+function librarySections(cards) {
+  const sections = [];
+  for (const card of cards || []) {
+    if (card.separatorLabel) {
+      sections.push({
+        key: card.key,
+        label: card.separatorLabel,
+        kind: card.separatorKind || null,
+        cards: [],
+      });
+      continue;
+    }
+    if (!sections.length) {
+      sections.push({ key: "section", label: null, kind: null, cards: [] });
+    }
+    sections[sections.length - 1].cards.push(card);
+  }
+  return sections;
+}
+
 const ShaderList = forwardRef(function ShaderList(
   {
     cards,
     value,
     onChoice,
+    onAdd,
     className,
     layout = "list",
     showPreview = true,
@@ -26,7 +54,7 @@ const ShaderList = forwardRef(function ShaderList(
   ref
 ) {
   const innerRef = useRef(null);
-  const bindChooser = useCallback(
+  const bindRoot = useCallback(
     (node) => {
       innerRef.current = node;
       if (typeof ref === "function") ref(node);
@@ -34,106 +62,143 @@ const ShaderList = forwardRef(function ShaderList(
     },
     [ref]
   );
-  const chooserRef = useOverflowFade(bindChooser);
+  const rootRef = useOverflowFade(bindRoot);
+  const sections = useMemo(() => librarySections(cards), [cards]);
   const chooserValue = visibleLibrarySelection(cards, value);
   const chooserCardKeys = cards
     .filter((card) => card?.key && !card.separatorLabel)
     .map((card) => card.key)
     .join("\u0000");
   const previousCardKeysRef = useRef(chooserCardKeys);
+  const grid = layout === "grid";
 
   useLayoutEffect(() => {
-    const node = innerRef.current;
-    if (!node) return undefined;
+    const root = innerRef.current;
+    if (!root) return undefined;
     const visibleCardsChanged = previousCardKeysRef.current !== chooserCardKeys;
     previousCardKeysRef.current = chooserCardKeys;
 
-    const selectedChoice = node.choices?.find(
-      (item) => item.getAttribute("value") === chooserValue,
-    );
-    if (selectedChoice && node.selectedChoice !== selectedChoice) {
-      node.selectedChoice = selectedChoice;
-    } else if (!selectedChoice && node.value !== "") {
-      node.value = chooserValue;
+    let selectedChoice = null;
+    for (const chooser of root.querySelectorAll("fig-chooser")) {
+      const match = chooser.choices?.find(
+        (item) => item.getAttribute("value") === chooserValue,
+      );
+      if (match) {
+        selectedChoice = match;
+        if (chooser.selectedChoice !== match) chooser.selectedChoice = match;
+      } else if (chooser.value !== "") {
+        chooser.value = "";
+      }
     }
-    if (!visibleCardsChanged || !chooserValue) return undefined;
+    if (!visibleCardsChanged || !chooserValue || !selectedChoice) {
+      return undefined;
+    }
 
     const frame = requestAnimationFrame(() => {
-      node.scrollSelectionIntoView?.({
+      selectedChoice.scrollIntoView({
         behavior: "auto",
         block: "center",
-        inline: "center",
+        inline: "nearest",
       });
     });
     return () => cancelAnimationFrame(frame);
   }, [chooserCardKeys, chooserValue]);
 
   useEffect(() => {
-    const node = innerRef.current;
-    if (!node || !onChoice) return;
+    const root = innerRef.current;
+    if (!root || !onChoice) return;
     const handleChange = (event) => {
+      if (event.target?.localName !== "fig-chooser") return;
       if (typeof event.detail !== "string") return;
       onChoice(event.detail);
-      node.scrollSelectionIntoView?.({
+      event.target.scrollSelectionIntoView?.({
         behavior: "auto",
         block: "nearest",
         inline: "nearest",
       });
     };
-    node.addEventListener("change", handleChange);
-    return () => node.removeEventListener("change", handleChange);
+    root.addEventListener("change", handleChange);
+    return () => root.removeEventListener("change", handleChange);
   }, [onChoice]);
 
   return (
-    <fig-chooser
-      ref={chooserRef}
-      class={className ? `shader-list ${className}` : "shader-list"}
-      value={chooserValue}
-      layout={layout === "grid" ? "grid" : "vertical"}
-      columns={layout === "grid" ? "2" : undefined}
-      overflow="scrollbar"
-      drag={drag ? "true" : undefined}
-      loop=""
-      auto-scroll="false"
-      scroll-behavior="auto"
+    <div
+      ref={rootRef}
+      className={className ? `shader-list ${className}` : "shader-list"}
+      data-layout={grid ? "grid" : "list"}
     >
-      {cards.map((card) => {
-        if (card.separatorLabel) {
-          return (
-            <fig-separator
-              key={card.key}
-              label={card.separatorLabel}
-              sticky=""
-            />
-          );
-        }
-
-        const item = (
-          <ShaderListItem
-            src={card.thumbnailUrl}
-            label={card.name}
-            layout={layout}
-            showPreview={showPreview}
-            selected={card.key === value}
-            published={card.origin === "public"}
-            figmaLinked={Boolean(card.figmaLinked)}
-            actions={renderActions?.(card)}
-          />
-        );
-
+      {sections.map((section) => {
+        const sectionValue = visibleLibrarySelection(section.cards, value);
+        const addLabel = section.kind ? ADD_LABELS[section.kind] : null;
         return (
-          <fig-choice
-            key={card.key}
-            value={card.key}
-            selected={card.key === value ? "" : undefined}
-            aria-label={card.name}
-            onContextMenu={(event) => onContextMenu?.(card, event)}
-          >
-            {item}
-          </fig-choice>
+          <section key={section.key} className="shader-list-section">
+            {section.label ? (
+              <fig-header class="shader-list-header" borderless="">
+                <h3>{section.label}</h3>
+                {onAdd && addLabel ? (
+                  <fig-tooltip text={addLabel}>
+                    <fig-button
+                      class="shader-list-header-add"
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label={addLabel}
+                      onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        onAdd(section.kind);
+                      }}
+                    >
+                      <fig-icon name="add" />
+                    </fig-button>
+                  </fig-tooltip>
+                ) : null}
+              </fig-header>
+            ) : null}
+            {section.cards.length ? (
+              <fig-chooser
+                class="shader-list-chooser"
+                value={sectionValue}
+                layout={grid ? "grid" : "vertical"}
+                columns={grid ? "2" : undefined}
+                overflow="scrollbar"
+                drag={drag ? "true" : "false"}
+                loop=""
+                auto-scroll="false"
+                scroll-behavior="auto"
+              >
+                {section.cards.map((card) => {
+                  const item = (
+                    <ShaderListItem
+                      src={card.thumbnailUrl}
+                      label={card.name}
+                      layout={layout}
+                      showPreview={showPreview}
+                      selected={card.key === value}
+                      published={card.origin === "public"}
+                      figmaLinked={Boolean(card.figmaLinked)}
+                      actions={renderActions?.(card)}
+                    />
+                  );
+
+                  return (
+                    <fig-choice
+                      key={card.key}
+                      value={card.key}
+                      selected={card.key === value ? "" : undefined}
+                      aria-label={card.name}
+                      onContextMenu={(event) => onContextMenu?.(card, event)}
+                    >
+                      {item}
+                    </fig-choice>
+                  );
+                })}
+              </fig-chooser>
+            ) : null}
+          </section>
         );
       })}
-    </fig-chooser>
+    </div>
   );
 });
 

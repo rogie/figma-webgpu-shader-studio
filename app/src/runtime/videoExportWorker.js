@@ -1,17 +1,21 @@
 import {
+  AudioBufferSource,
   BufferTarget,
   CanvasSource,
   Mp4OutputFormat,
   Output,
   Quality,
   WebMOutputFormat,
+  getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
 } from "mediabunny";
 import { mergeLayerValues } from "../lib/composition.js";
+import { analyzePcmWindow } from "./audioInput.js";
 import {
   VIDEO_EXPORT_MAX_DIM,
   canConstructVideoFrameFromCanvas,
   copyImageDataToCanvas,
+  preferredExportAudioCodecs,
   preferredExportVideoCodecs,
   resolveVideoExportFormat,
 } from "./videoExportEncode.js";
@@ -79,13 +83,17 @@ async function initialize(message) {
     });
     ok = await host.setComposition(layers, {
       isFill: message.composition.isFill,
+      supportsAudio: Boolean(message.supportsAudio),
     });
   } else {
     const loaded = loadModule(message.source);
     host.setParams(message.values || {});
     ok = await host.setModule(
       { setup: loaded.setup, render: loaded.render },
-      { isFill: message.isFill }
+      {
+        isFill: message.isFill,
+        supportsAudio: Boolean(message.supportsAudio),
+      }
     );
   }
   if (!ok) throw runtimeError || new Error("Shader validation failed.");
@@ -113,10 +121,42 @@ async function initialize(message) {
     dynamicVideoInput: Boolean(message.dynamicVideoInput),
     useGpuCanvasFrame,
     format: resolveVideoExportFormat(message.format),
+    audio:
+      Array.isArray(message.audioChannels) &&
+      message.audioChannels.length &&
+      message.audioSampleRate
+        ? {
+            channels: message.audioChannels,
+            mono: message.audioMono,
+            sampleRate: message.audioSampleRate,
+          }
+        : null,
   };
   self.postMessage({ type: "ready" });
 }
 
+function audioBufferFromChannels(channels, sampleRate, durationSec) {
+  if (typeof AudioBuffer !== "function" || !channels?.length) return null;
+  const sourceLength = channels[0]?.length || 0;
+  if (!sourceLength) return null;
+  const length = Math.min(
+    sourceLength,
+    Math.max(1, Math.floor(sampleRate * durationSec)),
+  );
+  try {
+    const buffer = new AudioBuffer({
+      length,
+      numberOfChannels: channels.length,
+      sampleRate,
+    });
+    for (let i = 0; i < channels.length; i += 1) {
+      buffer.copyToChannel(channels[i].subarray(0, length), i);
+    }
+    return buffer;
+  } catch {
+    return null;
+  }
+}
 function requestInputFrame(time) {
   const requestId = ++nextInputRequestId;
   return new Promise((resolve, reject) => {
@@ -170,7 +210,40 @@ async function record() {
     }),
   });
   output.addVideoTrack(videoSource, { frameRate: exportConfig.frameRate });
+  let audioSource = null;
+  let muxAudioBuffer = null;
+  const exportAudio = exportConfig.audio;
+  if (exportAudio) {
+    const supportedAudio =
+      typeof format.getSupportedAudioCodecs === "function"
+        ? format.getSupportedAudioCodecs()
+        : [];
+    const audioCodec = await getFirstEncodableAudioCodec(
+      preferredExportAudioCodecs(exportConfig.format, supportedAudio),
+      {
+        numberOfChannels: exportAudio.channels.length,
+        sampleRate: exportAudio.sampleRate,
+      },
+    );
+    muxAudioBuffer = audioCodec
+      ? audioBufferFromChannels(
+          exportAudio.channels,
+          exportAudio.sampleRate,
+          exportConfig.duration,
+        )
+      : null;
+    if (audioCodec && muxAudioBuffer) {
+      audioSource = new AudioBufferSource({
+        codec: audioCodec,
+        quality: new Quality({ bitrate: 128_000 }),
+      });
+      output.addAudioTrack(audioSource);
+    }
+  }
   await output.start();
+  if (audioSource && muxAudioBuffer) {
+    await audioSource.add(muxAudioBuffer);
+  }
 
   const frames = videoExportFramePlan(
     exportConfig.duration,
@@ -195,6 +268,17 @@ async function record() {
         } finally {
           bitmap.close?.();
         }
+      }
+
+      if (exportAudio?.mono) {
+        host.writeExportAudio(
+          analyzePcmWindow(
+            exportAudio.mono,
+            exportAudio.sampleRate,
+            timeMs,
+          ),
+          { time: timeMs, playing: true },
+        );
       }
 
       const texture = host.renderFrame(timeMs, deltaMs, frame);

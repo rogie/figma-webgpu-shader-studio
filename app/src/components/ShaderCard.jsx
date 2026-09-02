@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import AnimatedIcon from "./AnimatedIcon.jsx";
+import AudioIcon from "./AudioIcon.jsx";
 import InteractiveIcon from "./InteractiveIcon.jsx";
 import UserAvatar from "./UserAvatar.jsx";
 
@@ -21,6 +22,7 @@ export default function ShaderCard({
   previewRevision,
   animated = false,
   interactive = false,
+  audio = false,
 }) {
   const [previewActive, setPreviewActive] = useState(false);
   const [previewLoaded, setPreviewLoaded] = useState(false);
@@ -102,6 +104,7 @@ export default function ShaderCard({
     previewLoading ? `Loading ${label} preview` : null,
     animated ? "Animated" : null,
     interactive ? "Interactive" : null,
+    audio ? "Audio" : null,
     published && showPublishedIcon ? "Published" : null,
   ].filter(Boolean);
   const showStatus =
@@ -173,6 +176,11 @@ export default function ShaderCard({
             {interactive && (
               <fig-tooltip text="Interactive">
                 <InteractiveIcon />
+              </fig-tooltip>
+            )}
+            {audio && (
+              <fig-tooltip text="Audio">
+                <AudioIcon />
               </fig-tooltip>
             )}
             {published && showPublishedIcon && (

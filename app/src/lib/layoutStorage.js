@@ -26,8 +26,14 @@ export const CANVAS_CONTROLS_STORAGE_KEY =
   "figma-shader-studio:show-canvas-handles";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
+export const APP_NAV_COLLAPSED_STORAGE_KEY =
+  "figma-shader-studio:app-nav-collapsed";
 export const EDITOR_FILTERS_STORAGE_KEY =
   "figma-shader-studio:editor-filters";
+export const EXPERIMENTAL_AUDIO_STORAGE_KEY =
+  "figma-shader-studio:experimental-audio";
+
+const experimentalAudioListeners = new Set();
 
 export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
   return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
@@ -114,6 +120,37 @@ export function readLibraryView(storage = globalThis.localStorage) {
   return storage?.getItem(LIBRARY_VIEW_STORAGE_KEY) === "grid"
     ? "grid"
     : "list";
+}
+
+export function readAppNavCollapsed(storage = globalThis.localStorage) {
+  return storage?.getItem(APP_NAV_COLLAPSED_STORAGE_KEY) === "true";
+}
+
+export function readExperimentalAudio(storage = globalThis.localStorage) {
+  try {
+    return storage?.getItem(EXPERIMENTAL_AUDIO_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function writeExperimentalAudio(
+  enabled,
+  storage = globalThis.localStorage,
+) {
+  const next = Boolean(enabled);
+  try {
+    storage?.setItem(EXPERIMENTAL_AUDIO_STORAGE_KEY, next ? "true" : "false");
+  } catch {
+    // Preview should continue when storage is unavailable.
+  }
+  experimentalAudioListeners.forEach((listener) => listener(next));
+  return next;
+}
+
+export function subscribeExperimentalAudio(listener) {
+  experimentalAudioListeners.add(listener);
+  return () => experimentalAudioListeners.delete(listener);
 }
 
 export function readEditorFilters(storage = globalThis.localStorage) {

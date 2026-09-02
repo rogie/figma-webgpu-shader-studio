@@ -65,6 +65,30 @@ test("fill metadata activates before media hydration resolves", async () => {
   });
 });
 
+test("media hydration starts while session activation is still pending", async () => {
+  const calls = [];
+  let releaseActivation;
+  const activation = new Promise((resolve) => {
+    releaseActivation = resolve;
+  });
+  const pending = activateBeforeHydration({
+    session: { composition: { inputs: [{ type: "audio" }] } },
+    activate: async () => {
+      calls.push("activate");
+      await activation;
+    },
+    hydrate: async (composition) => {
+      calls.push("hydrate");
+      return composition;
+    },
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(calls, ["activate", "hydrate"]);
+  releaseActivation();
+  assert.deepEqual(await pending, { inputs: [{ type: "audio" }] });
+});
+
 test("stale hydrated media cannot update the active session", async () => {
   let current = true;
   const result = activateBeforeHydration({

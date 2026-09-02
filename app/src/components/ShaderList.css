@@ -1,69 +1,74 @@
-fig-chooser.shader-list {
+.shader-list {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
-  --fig-chooser-inline-padding: var(--spacer-1);
-  --fig-chooser-inline-margin: 0;
   width: 100%;
-  padding-bottom: var(--spacer-2);
   overflow-x: hidden;
-  gap: 1px;
+  overflow-y: auto;
+  padding-bottom: var(--spacer-2);
 
-  > fig-separator:first-of-type {
-    margin-block: var(--spacer-1);
+  .shader-list-section {
+    padding: 0;
+  }
 
-    &::before {
-      display: none;
+  fig-header.shader-list-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--figma-color-bg-secondary);
+
+    h3{
+      color: var(--figma-color-text-secondary);
+    }
+
+    .shader-list-header-add {
+      visibility: hidden;
+    }
+
+    &:hover .shader-list-header-add,
+    &:focus-within .shader-list-header-add {
+      visibility: visible;
     }
   }
 
-  fig-choice {
-    height: max-content;
-    align-self: start;
-    align-items: stretch;
-    --fig-choice-border-radius: var(--radius-large);
-    --fig-choice-selection-ring-width: 0;
-    margin: 0 var(--spacer-2);
-    width: calc(100% - var(--spacer-2) * 2);
+  fig-chooser.shader-list-chooser {
+    flex: 0 0 auto;
+    height: auto;
+    max-height: none;
+    min-height: 0;
+    --fig-chooser-inline-padding: var(--spacer-1);
+    --fig-chooser-inline-margin: 0;
+    width: 100%;
+    overflow: visible;
+    gap: 1px;
 
-    &[selected]{
-      background-color: var(--figma-color-bg-selected);
+    fig-choice {
+      height: max-content;
+      align-self: start;
+      align-items: stretch;
+      --fig-choice-border-radius: var(--radius-medium);
+      --fig-choice-selection-ring-width: 0;
+      margin: 0 var(--spacer-2);
+      width: calc(100% - var(--spacer-2) * 2);
+
+      &[selected] {
+        background-color: var(--figma-color-bg-tertiary);
+      }
+      &:hover:not([selected]:not([selected=false])):not([disabled]:not([disabled=false])):not([aria-disabled=true]) {
+        background-color: var(--figma-color-bg-tertiary);
+      }
     }
   }
 
-  &[layout="grid"] {
+  &[data-layout="grid"] fig-chooser.shader-list-chooser {
     --fig-chooser-inline-margin: var(--spacer-2-5);
     align-content: start;
     gap: var(--spacer-1);
     grid-auto-rows: max-content;
     margin-inline: 0;
     padding-inline: var(--fig-chooser-inline-margin);
-    overflow-x: clip;
-    overflow-y: auto;
-
-    > fig-separator:not(.fig-overflow) {
-      --fig-separator-padding: 0;
-      grid-column: 1 / -1;
-      width: auto;
-      max-width: none;
-      margin: var(--spacer-2) 0 0;
-      margin-inline: calc(-1 * var(--fig-chooser-inline-margin));
-
-      &[label]:not([label=""]) {
-        &::before {
-          margin-inline: 0;
-        }
-
-        &::after {
-          padding-inline: calc(
-            var(--fig-chooser-inline-margin) + var(--spacer-1)
-          );
-        }
-
-        &[sticky]:not([sticky="false"])[stuck] {
-          --fig-separator-padding: var(--spacer-2) 0;
-        }
-      }
-    }
+    overflow: visible;
 
     fig-choice {
       margin: 0;
@@ -79,5 +84,11 @@ fig-chooser.shader-list {
         outline: none;
       }
     }
+  }
+}
+
+@media (hover: none) {
+  .shader-list fig-header.shader-list-header .shader-list-header-add {
+    visibility: visible;
   }
 }

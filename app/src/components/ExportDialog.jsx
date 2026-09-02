@@ -46,6 +46,8 @@ export default function ExportDialog({
   onCopyEmbed,
   onDurationInput,
   onImageQualityInput,
+  onIncludeAudioInput,
+  audioAvailable = false,
 }) {
   const showAspect = settings.resolution !== "current";
   const showImageQuality = imageExportHasQuality(settings.imageFormat);
@@ -213,6 +215,18 @@ export default function ExportDialog({
               dangerouslySetInnerHTML={opaqueContent}
             />
           </fig-field>
+          {audioAvailable ? (
+            <fig-field label="Include audio" direction="horizontal">
+              <fig-switch
+                checked={settings.includeAudio !== false}
+                label="File or video soundtrack only. Live mic and webcam are never included."
+                onInput={(event) =>
+                  onIncludeAudioInput?.(Boolean(event.target.checked))
+                }
+                dangerouslySetInnerHTML={opaqueContent}
+              />
+            </fig-field>
+          ) : null}
         </fig-tab-content>
         <fig-tab-content id="export-tab-embed">
           <fig-field direction="horizontal" columns="thirds">

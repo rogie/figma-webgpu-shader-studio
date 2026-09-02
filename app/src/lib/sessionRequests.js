@@ -22,8 +22,17 @@ export async function activateBeforeHydration({
   hydrate,
   isCurrent = () => true,
 }) {
-  await activate(session);
-  if (!isCurrent()) return null;
-  const hydrated = await hydrate(session.composition);
+  const hydration = Promise.resolve().then(() => hydrate(session.composition));
+  try {
+    await activate(session);
+  } catch (error) {
+    hydration.catch(() => {});
+    throw error;
+  }
+  if (!isCurrent()) {
+    hydration.catch(() => {});
+    return null;
+  }
+  const hydrated = await hydration;
   return isCurrent() ? hydrated : null;
 }

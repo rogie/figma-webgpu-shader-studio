@@ -15,6 +15,8 @@ export default function ShaderChatSection({
   planOwnerId,
   planShaderId,
   featuresRef,
+  experimentalAudioRef,
+  compileErrorRef,
   user,
   onApplySource,
   onAppliedCheckpoint,
@@ -75,6 +77,8 @@ export default function ShaderChatSection({
           planOwnerId={planOwnerId}
           planShaderId={planShaderId}
           featuresRef={featuresRef}
+          experimentalAudioRef={experimentalAudioRef}
+          compileErrorRef={compileErrorRef}
           user={user}
           onApplySource={onApplySource}
           onAppliedCheckpoint={onAppliedCheckpoint}

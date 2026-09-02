@@ -438,6 +438,17 @@ function assetExtension(fileName, contentType) {
     "image/webp": "webp",
     "video/mp4": "mp4",
     "video/webm": "webm",
+    "audio/mpeg": "mp3",
+    "audio/mp3": "mp3",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "audio/ogg": "ogg",
+    "audio/mp4": "m4a",
+    "audio/aac": "aac",
+    "audio/flac": "flac",
+    "audio/x-m4a": "m4a",
+    "audio/m4a": "m4a",
   };
   return (
     mimeExtensions[contentType] ||

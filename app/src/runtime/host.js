@@ -8,6 +8,10 @@ import {
   readPreviewPixelRatioMode,
 } from "./dpi.js";
 import { measurePerf, perfNow, recordPerf } from "./perf.js";
+import {
+  createSilentAudioFrame,
+  zeroAudioFrame,
+} from "./audioInput.js";
 
 const MAX_DIM = 2048;
 const DEFAULT_FILL_CSS = 512;
@@ -123,7 +127,10 @@ export class ShaderHost {
       frame: 0,
       renderScale: 1,
       mousePosition: { x: 0, y: 0 },
+      audio: createSilentAudioFrame(),
     };
+    this._audioBus = null;
+    this.supportsAudio = false;
     // Actual GPU presents. Independent of frame.frame, which is the shader
     // clock and resets on compile. Compositions often present from video, HTML,
     // or redraws without advancing that clock.
@@ -949,8 +956,100 @@ export class ShaderHost {
     }
   }
 
+  compositionExportVideo() {
+    const layer = (this.compositionLayers || []).find(
+      (item) =>
+        item.role === "fill" &&
+        item.enabled !== false &&
+        item.sourceType === "video" &&
+        item.source &&
+        (item.source.currentSrc || item.source.src)
+    );
+    if (layer?.source) return layer.source;
+    const legacy = this.video;
+    if (legacy && (legacy.currentSrc || legacy.src) && !legacy.srcObject) {
+      return legacy;
+    }
+    return null;
+  }
+
+  _compositionSourceFillLayer() {
+    return (this.compositionLayers || []).find(
+      (layer) => layer.enabled !== false && this._isSourceFill(layer)
+    ) || null;
+  }
+
+  async _bitmapFromImageData(imageData, width, height) {
+    if (!imageData) return null;
+    const srcW = imageData.width;
+    const srcH = imageData.height;
+    const targetW = Math.max(1, Math.round(width || srcW));
+    const targetH = Math.max(1, Math.round(height || srcH));
+    const scale = Math.max(targetW / srcW, targetH / srcH);
+    const cropW = Math.max(1, targetW / scale);
+    const cropH = Math.max(1, targetH / scale);
+    return createImageBitmap(
+      imageData,
+      Math.max(0, (srcW - cropW) / 2),
+      Math.max(0, (srcH - cropH) / 2),
+      cropW,
+      cropH,
+      {
+        resizeWidth: targetW,
+        resizeHeight: targetH,
+        resizeQuality: "high",
+      }
+    );
+  }
+
+  async _bitmapFromExternalSource(source, width, height) {
+    if (!source || typeof createImageBitmap !== "function") return null;
+    try {
+      const srcW = Number(
+        source.videoWidth ||
+          source.naturalWidth ||
+          source.displayWidth ||
+          source.width ||
+          0
+      );
+      const srcH = Number(
+        source.videoHeight ||
+          source.naturalHeight ||
+          source.displayHeight ||
+          source.height ||
+          0
+      );
+      const targetW = Math.max(1, Math.round(width || srcW || 1));
+      const targetH = Math.max(1, Math.round(height || srcH || 1));
+      if (srcW > 0 && srcH > 0) {
+        const scale = Math.max(targetW / srcW, targetH / srcH);
+        const cropW = Math.max(1, targetW / scale);
+        const cropH = Math.max(1, targetH / scale);
+        return await createImageBitmap(
+          source,
+          Math.max(0, (srcW - cropW) / 2),
+          Math.max(0, (srcH - cropH) / 2),
+          cropW,
+          cropH,
+          {
+            resizeWidth: targetW,
+            resizeHeight: targetH,
+            resizeQuality: "high",
+          }
+        );
+      }
+      return await createImageBitmap(source, {
+        resizeWidth: targetW,
+        resizeHeight: targetH,
+        resizeQuality: "high",
+      });
+    } catch {
+      return null;
+    }
+  }
+
   async captureInputBitmap({ width, height } = {}) {
-    if (!this.ready || !this.inputTexture) return null;
+    if (!this.ready) return null;
     if (this.video) {
       this._videoFrameDirty = true;
       this._uploadVideoFrame();
@@ -960,53 +1059,42 @@ export class ShaderHost {
       this._uploadHtmlFrame();
     }
 
-    const texture = this.inputTexture;
-    const srcW = texture.width;
-    const srcH = texture.height;
-    const bytesPerRow = Math.ceil((srcW * 4) / 256) * 256;
-    const readbackBuffer = this.device.createBuffer({
-      size: bytesPerRow * srcH,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-
-    try {
-      const encoder = this.device.createCommandEncoder();
-      encoder.copyTextureToBuffer(
-        { texture },
-        { buffer: readbackBuffer, bytesPerRow },
-        { width: srcW, height: srcH }
+    const targetW = Math.max(1, Math.round(Number(width) || 0));
+    const targetH = Math.max(1, Math.round(Number(height) || 0));
+    const sourceLayer = this._compositionSourceFillLayer();
+    if (sourceLayer?.source && sourceLayer.sourceType !== "video") {
+      const cloned = await this._bitmapFromExternalSource(
+        sourceLayer.source,
+        targetW || sourceLayer.source.width,
+        targetH || sourceLayer.source.height
       );
-      this.device.queue.submit([encoder.finish()]);
-      await readbackBuffer.mapAsync(GPUMapMode.READ);
-      const packed = this._packTextureReadback(
-        new Uint8Array(readbackBuffer.getMappedRange()),
-        srcW,
-        srcH,
-        bytesPerRow,
-        "rgba8unorm"
-      );
-      readbackBuffer.unmap();
-
-      const targetW = Math.max(1, Math.round(width || srcW));
-      const targetH = Math.max(1, Math.round(height || srcH));
-      const scale = Math.max(targetW / srcW, targetH / srcH);
-      const cropW = Math.max(1, targetW / scale);
-      const cropH = Math.max(1, targetH / scale);
-      return await createImageBitmap(
-        new ImageData(packed, srcW, srcH),
-        Math.max(0, (srcW - cropW) / 2),
-        Math.max(0, (srcH - cropH) / 2),
-        cropW,
-        cropH,
-        {
-          resizeWidth: targetW,
-          resizeHeight: targetH,
-          resizeQuality: "high",
+      if (cloned) return cloned;
+      if (this.renderFn) {
+        try {
+          this._present();
+        } catch {
+          /* keep looking at whatever fill texture already exists */
         }
-      );
-    } finally {
-      readbackBuffer.destroy();
+      }
+      const texture = sourceLayer.fillTexture || sourceLayer.sourceTexture;
+      if (texture) {
+        const imageData = await this.readbackTextureImageData(texture);
+        const bitmap = await this._bitmapFromImageData(
+          imageData,
+          targetW || texture.width,
+          targetH || texture.height
+        );
+        if (bitmap) return bitmap;
+      }
     }
+
+    if (!this.inputTexture) return null;
+    const imageData = await this.readbackTextureImageData(this.inputTexture);
+    return this._bitmapFromImageData(
+      imageData,
+      targetW || this.inputTexture.width,
+      targetH || this.inputTexture.height
+    );
   }
 
   /**
@@ -1850,6 +1938,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       frame: this.frame.frame,
       renderScale: this.frame.renderScale,
       mousePosition: this.frame.mousePosition,
+      audio: this.frame.audio,
     };
   }
 
@@ -2022,7 +2111,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   async setComposition(
     layers,
-    { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
+    { isFill, isAnimated, usesMouse, supportsRenderScale, supportsAudio } = {}
   ) {
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
@@ -2068,6 +2157,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
     this.supportsRenderScale = Boolean(supportsRenderScale);
+    this.supportsAudio = Boolean(supportsAudio);
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
@@ -2110,7 +2200,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   async setModule(
     { setup, render },
-    { isFill, isAnimated, usesMouse, supportsRenderScale } = {}
+    { isFill, isAnimated, usesMouse, supportsRenderScale, supportsAudio } = {}
   ) {
     this._playbackGeneration += 1;
     this._shaderCompilationErrorMessage = null;
@@ -2123,6 +2213,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
     this.supportsRenderScale = Boolean(supportsRenderScale);
+    this.supportsAudio = Boolean(supportsAudio);
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
@@ -2207,6 +2298,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.frame.frame = 0;
     this.startTime = performance.now();
     this.lastTime = this.startTime;
+    zeroAudioFrame(this.frame.audio);
     this.frame.output = this.context.getCurrentTexture();
     if (this.setupFn) this.setupFn(this.device, this.frame);
     if (present) this._present();
@@ -2228,6 +2320,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
       Promise.resolve(this.video.play?.()).catch(() => {});
     }
     this._syncCompositionSourcePlayback();
+    this._audioBus?.resume?.();
     const now = performance.now();
     // Resume from the current frame clock so pause/resume and temporary
     // stop()/start() pairs (thumbnail capture) continue from the same time.
@@ -2285,6 +2378,38 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._seekPresentRaf = 0;
   }
 
+  setAudioBus(bus) {
+    this._audioBus = bus || null;
+    this._tickAudio({ running: this.running });
+  }
+
+  clearAudio() {
+    this._audioBus?.clear?.();
+    zeroAudioFrame(this.frame.audio);
+  }
+
+  writeExportAudio(analysis, { time = 0, playing = true } = {}) {
+    if (!this.supportsAudio || !analysis) {
+      zeroAudioFrame(this.frame.audio);
+      return this.frame.audio;
+    }
+    const target = this.frame.audio;
+    target.volume = analysis.volume;
+    target.bands = analysis.bands;
+    if (analysis.frequency) target.frequency.set(analysis.frequency);
+    target.time = Math.max(0, Number(time) || 0);
+    target.playing = Boolean(playing);
+    return target;
+  }
+
+  _tickAudio({ running = false } = {}) {
+    if (!this.supportsAudio || !this._audioBus) {
+      zeroAudioFrame(this.frame.audio);
+      return;
+    }
+    this._audioBus.tick(this.frame.audio, { running });
+  }
+
   renderFrame(time, deltaTime, frameNumber) {
     if (!this.ready || !this.renderFn) return null;
     this.frame.time = time;
@@ -2316,10 +2441,13 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this._cancelVideoFrameCallback();
     this.video?.pause?.();
     this._syncCompositionSourcePlayback();
+    this._tickAudio({ running: false });
+    this._audioBus?.suspend?.();
     if (!resetTime) return;
     this.frame.time = 0;
     this.frame.deltaTime = 0;
     this.frame.frame = 0;
+    zeroAudioFrame(this.frame.audio);
     this.startTime = performance.now();
     this.lastTime = this.startTime;
     const sizeChanged =
@@ -2381,6 +2509,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.frame.deltaTime = now - this.lastTime;
     this.lastTime = now;
     this.frame.frame += 1;
+    this._tickAudio({ running: true });
 
     try {
       this._present();

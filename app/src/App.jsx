@@ -3,26 +3,28 @@ import {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import CompositionEditor, {
+  DocumentInputsPane,
   ExportPropertiesPane,
   FigmaPropertiesPane,
 } from "./components/CompositionEditor.jsx";
+import AccountMenu from "./components/AccountMenu.jsx";
 import AppNav from "./components/AppNav.jsx";
 import AppToasts from "./components/AppToasts.jsx";
 import DeleteShaderDialog from "./components/DeleteShaderDialog.jsx";
 import ExportDialog from "./components/ExportDialog.jsx";
 import FigmaPlanDialog from "./components/FigmaPlanDialog.jsx";
-import GridViewIcon from "./components/GridViewIcon.jsx";
 import HomeView from "./components/HomeView.jsx";
 import ProfileView from "./components/ProfileView.jsx";
 import "./components/HomeNav.css";
 import ComposerView from "./components/ComposerView.jsx";
 import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
-import ListViewIcon from "./components/ListViewIcon.jsx";
+import ToggleSidebarIcon from "./components/ToggleSidebarIcon.jsx";
 import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
 import PreviewToolbar from "./components/PreviewToolbar.jsx";
@@ -33,7 +35,7 @@ import ShaderVersionSelect from "./components/ShaderVersionSelect.jsx";
 import UserAvatar from "./components/UserAvatar.jsx";
 import ViewPropertiesDialog from "./components/ViewPropertiesDialog.jsx";
 import { useAuth } from "./contexts/AuthContext.jsx";
-import { getPreset, PRESETS, shaderModuleFileName } from "./presets.js";
+import { getPreset, shaderModuleFileName } from "./presets.js";
 import { exportFigmaFiles } from "./runtime/exportFigma.js";
 import {
   evenExportSize,
@@ -49,6 +51,11 @@ import {
   videoExportFileExtension,
   videoResolutionOptions,
 } from "./runtime/exportVideo.js";
+import {
+  applyAudioPlayback,
+  decodeExportPcm,
+  resolveExportSoundtrack,
+} from "./runtime/exportAudio.js";
 import { ShaderHost } from "./runtime/host.js";
 import { loadModule } from "./runtime/loader.js";
 import { measurePerf, perfNow, recordPerf } from "./runtime/perf.js";
@@ -56,6 +63,7 @@ import {
   buildDefaults,
   detectKind,
   inferFeatures,
+  mergeShaderFeatures,
   supportsRenderScale,
 } from "./runtime/params.js";
 import {
@@ -125,6 +133,14 @@ import {
   nextLibraryCardKey,
 } from "./lib/shaderLibrary.js";
 import {
+  LIBRARY_THUMBNAIL_URL_TTL_MS,
+  libraryCacheScope,
+  libraryRefreshIsCurrent,
+  readLibrarySessionCache,
+  reconcileLibraryShaders,
+  writeLibrarySessionCache,
+} from "./lib/librarySessionCache.js";
+import {
   formatSupabaseError,
   isTransientCloudWriteError,
 } from "./lib/supabaseFetch.js";
@@ -182,6 +198,7 @@ import {
   defaultCodeWidth,
   EDITOR_FILTERS_STORAGE_KEY,
   LIBRARY_VIEW_STORAGE_KEY,
+  APP_NAV_COLLAPSED_STORAGE_KEY,
   MAX_APP_NAV_WIDTH,
   MIN_APP_NAV_WIDTH,
   MIN_CHAT_HEIGHT,
@@ -195,9 +212,12 @@ import {
   readCanvasTheme as savedCanvasTheme,
   readEditorFilters as savedEditorFilters,
   readLibraryView as savedLibraryView,
+  readAppNavCollapsed as savedAppNavCollapsed,
   readPlayState as savedPlayState,
   readSidebarSections as savedSidebarSections,
   readTheme as savedTheme,
+  readExperimentalAudio as savedExperimentalAudio,
+  subscribeExperimentalAudio,
   SIDEBAR_SECTIONS_STORAGE_KEY,
   THEME_STORAGE_KEY,
 } from "./lib/layoutStorage.js";
@@ -209,12 +229,15 @@ import {
   COMPOSITION_FILL_ID,
   COMPOSITION_KIND,
   emptyComposition,
+  enabledVideoFillSoundtrack,
   fillFromInputSource,
   paintForInputSource,
   resolvedLibraryKind,
   fillTypeForDroppedMedia,
   isCompositionPlayable,
   isDocumentPlayable,
+  isLiveWebcamFill,
+  liveWebcamFillCount,
   mediaFillType,
   normalizeComposition,
   parseCompositionShaderId,
@@ -246,6 +269,24 @@ import {
   resolvePaintFill,
   sampleFallbackPaint,
 } from "./lib/paintFill.js";
+import {
+  audioPlaybackSettings,
+  enabledAudioFileInput,
+  enabledMicrophoneInput,
+  hasAudioInput,
+  normalizeDocumentInputs,
+  readDocumentInputs,
+  removedDocumentInputs,
+} from "./lib/documentInputs.js";
+import {
+  documentAudioAssetPaths,
+  hasDraftAudioMedia,
+  hydrateAudioInputsWithUrls,
+  hydrateDraftAudioInputs,
+  persistDraftAudioInputs,
+  uploadDocumentInputAudio,
+} from "./lib/documentInputMedia.js";
+import { AudioInputBus } from "./runtime/audioInput.js";
 import {
   cloudChoiceId,
   cloudIdForDraft,
@@ -321,9 +362,6 @@ const ShaderChatSection = lazy(
 // wiping those nodes when the parent re-renders.
 const opaqueContent = { __html: "" };
 
-const INITIAL = getPreset("dither");
-const INITIAL_MODULE = loadModule(INITIAL.source);
-const INITIAL_VALUES = buildDefaults(INITIAL_MODULE.props);
 const THUMBNAIL_SIZE = 512;
 const THUMBNAIL_IDLE_MS = 4000;
 const BACKGROUND_AUTOSAVE_MS = 4000;
@@ -331,7 +369,48 @@ const CLOUD_WRITE_BACKOFF_MS = 20_000;
 const FILL_ASSET_URL_CACHE_MS = 5 * 60_000;
 const fillAssetUrlCache = new Map();
 const fillAssetBatchPromises = new Map();
+const audioPrefetchPromises = new Map();
 const draftMediaStore = createDraftMediaStore();
+
+function initialEditorDocument() {
+  const route = getAppRoute();
+  const requestedPreset = route.id ? getPreset(route.id) : null;
+  if (route.id && requestedPreset?.id === route.id) {
+    const loaded = loadModule(requestedPreset.source);
+    const stored = readEffectFills(requestedPreset.id);
+    const fallbackFill =
+      readEffectFill(requestedPreset.id) || fillFromInputSource("image");
+    return {
+      id: requestedPreset.id,
+      name: requestedPreset.name,
+      description:
+        typeof requestedPreset.description === "string"
+          ? requestedPreset.description
+          : "",
+      source: requestedPreset.source,
+      kind: requestedPreset.kind,
+      effectFill: stored[0] || fallbackFill,
+      effectFills: stored.length
+        ? stored
+        : normalizeComposition({ fill: fallbackFill }).fills,
+      props: loaded.props,
+      values: buildDefaults(loaded.props),
+      loading: false,
+    };
+  }
+  return {
+    id: route.id ? `loading:${route.id}` : "idle",
+    name: "",
+    description: "",
+    source: "",
+    kind: route.kind === COMPOSITION_KIND ? COMPOSITION_KIND : "effect",
+    effectFill: null,
+    effectFills: [],
+    props: {},
+    values: {},
+    loading: Boolean(route.id),
+  };
+}
 
 function promotePendingAgentCheckpoint(
   pendingRef,
@@ -453,6 +532,36 @@ function usesCompositionHost(sessionKind, fills) {
   return sessionKind === "effect" && Boolean(effectFillPreviewKey(fills));
 }
 
+function serializeVideoExportComposition({
+  kind,
+  composition,
+  effectFills,
+  presetId,
+  source,
+  values,
+  resolvedByKey,
+}) {
+  if (kind === COMPOSITION_KIND) {
+    return serializeCompositionExport(composition, resolvedByKey, null);
+  }
+  if (!usesCompositionHost(kind, effectFills)) return null;
+  return serializeCompositionExport(
+    {
+      fills: effectFills,
+      effects: [
+        {
+          id: EFFECT_PREVIEW_LAYER_ID,
+          shaderId: presetId,
+          values,
+          enabled: true,
+        },
+      ],
+    },
+    resolvedByKey,
+    new Map([[presetId, { source, broken: false, kind: "effect" }]]),
+  );
+}
+
 function fillMediaUrl(fill) {
   return fill?.paint?.image?.url || fill?.paint?.video?.url || "";
 }
@@ -508,7 +617,12 @@ function annotateLocalDraftMediaKeys(draftId, fills = []) {
   });
 }
 
-async function persistLocalDraftMedia(draftId, fills, pendingMedia = null) {
+async function persistLocalDraftMedia(
+  draftId,
+  fills,
+  pendingMedia = null,
+  inputs = [],
+) {
   const annotatedById = new Map();
   for (const fill of fills) {
     const slot = fillMediaSlot(fill);
@@ -565,6 +679,16 @@ async function persistLocalDraftMedia(draftId, fills, pendingMedia = null) {
       );
     }
   }
+  if (inputs.length) {
+    await persistDraftAudioInputs(draftId, inputs, draftMediaStore, {
+      downloadAsset,
+    });
+    if (hasDraftAudioMedia(inputs) && !draftMediaStore.isDurable()) {
+      throw new Error(
+        "Local media storage is unavailable. Keep this tab open and try choosing the media again.",
+      );
+    }
+  }
   return fills.map((fill) => annotatedById.get(fill.id) || fill);
 }
 
@@ -584,10 +708,20 @@ async function hydrateLocalDraftMedia(draft) {
           draftMediaStore,
           { draftId: draft.id },
         ),
+        inputs: await hydrateDraftAudioInputs(
+          draft.id,
+          graph.inputs,
+          draftMediaStore,
+        ),
       }),
       pendingMedia: null,
     };
   }
+  const hydratedInputs = await hydrateDraftAudioInputs(
+    draft.id,
+    storedComposition.inputs,
+    draftMediaStore,
+  );
   if (draft?.kind === "effect") {
     const fills = readEffectFillsFromComposition(storedComposition);
     const hydratedFills = await hydratePersistedFillMediaStack(
@@ -601,13 +735,20 @@ async function hydrateLocalDraftMedia(draft) {
       composition: {
         effectFills: hydratedFills,
         effectFill: hydratedFills[0] || null,
+        inputs: hydratedInputs,
       },
       effectFills: hydratedFills,
       effectFill: hydratedFills[0] || null,
       pendingMedia: draftMediaRecordToFile(inputRecord),
     };
   }
-  return draft;
+  return {
+    ...draft,
+    composition: {
+      ...storedComposition,
+      inputs: hydratedInputs,
+    },
+  };
 }
 
 async function removeLocalDraftMedia(draftId) {
@@ -702,6 +843,26 @@ async function uploadFillAssetsForTarget({
   return { durableFills, firstInput };
 }
 
+function liveSessionInputs(kind, composition, documentInputs) {
+  return kind === COMPOSITION_KIND
+    ? normalizeDocumentInputs(composition?.inputs)
+    : normalizeDocumentInputs(documentInputs);
+}
+
+function compositionWithDocumentInputs(kind, composition, fills, inputs) {
+  if (kind === COMPOSITION_KIND) {
+    return normalizeComposition({ ...composition, fills, inputs });
+  }
+  if (kind === "effect") {
+    return {
+      effectFills: fills,
+      effectFill: fills[0] || null,
+      inputs,
+    };
+  }
+  return { inputs };
+}
+
 function withFillAssetUrl(fill, urlsByPath) {
   const paint = fill?.paint;
   const assetPath = fillMediaAssetPath(fill);
@@ -728,6 +889,42 @@ function withFillAssetUrl(fill, urlsByPath) {
   return fill;
 }
 
+function prefetchAudioUrl(url) {
+  if (!url || typeof Audio === "undefined") return Promise.resolve();
+  const cached = audioPrefetchPromises.get(url);
+  if (cached) return cached;
+  const promise = new Promise((resolve) => {
+    const audio = new Audio();
+    let timer = 0;
+    const finish = () => {
+      window.clearTimeout(timer);
+      audio.removeEventListener("canplay", finish);
+      audio.removeEventListener("error", finish);
+      audio.pause();
+      audio.removeAttribute("src");
+      audio.load();
+      resolve();
+    };
+    audio.preload = "auto";
+    audio.crossOrigin = "anonymous";
+    audio.addEventListener("canplay", finish, { once: true });
+    audio.addEventListener("error", finish, { once: true });
+    timer = window.setTimeout(finish, 5000);
+    audio.src = url;
+    audio.load();
+  });
+  audioPrefetchPromises.set(url, promise);
+  return promise;
+}
+
+async function prefetchDocumentAudio(inputs) {
+  const urls = normalizeDocumentInputs(inputs)
+    .filter((input) => input.enabled && input.type === "audio")
+    .map((input) => input.audio?.url)
+    .filter(Boolean);
+  await Promise.all(urls.map(prefetchAudioUrl));
+}
+
 async function hydrateCompositionMediaUrls(composition) {
   if (!composition || typeof composition !== "object") return composition;
   const groups = [
@@ -738,13 +935,16 @@ async function hydrateCompositionMediaUrls(composition) {
   ].filter(Array.isArray);
   const paths = [
     ...new Set(
-      groups
-        .flat()
-        .map(fillMediaAssetPath)
-        .filter(Boolean)
+      [
+        ...groups.flat().map(fillMediaAssetPath),
+        ...documentAudioAssetPaths(composition.inputs),
+      ].filter(Boolean)
     ),
   ];
-  if (!paths.length) return composition;
+  if (!paths.length) {
+    await prefetchDocumentAudio(composition.inputs);
+    return composition;
+  }
   const now = Date.now();
   const urlsByPath = {};
   const missingPaths = [];
@@ -780,10 +980,13 @@ async function hydrateCompositionMediaUrls(composition) {
       }
     }
   } catch {
-    if (!Object.keys(urlsByPath).length) return composition;
+    if (!Object.keys(urlsByPath).length) {
+      await prefetchDocumentAudio(composition.inputs);
+      return composition;
+    }
   }
   const hydrate = (fill) => withFillAssetUrl(fill, urlsByPath);
-  return {
+  const hydrated = {
     ...composition,
     ...(Array.isArray(composition.fills)
       ? { fills: composition.fills.map(hydrate) }
@@ -795,7 +998,12 @@ async function hydrateCompositionMediaUrls(composition) {
     ...(composition.effectFill
       ? { effectFill: hydrate(composition.effectFill) }
       : {}),
+    ...(Array.isArray(composition.inputs)
+      ? { inputs: hydrateAudioInputsWithUrls(composition.inputs, urlsByPath) }
+      : {}),
   };
+  await prefetchDocumentAudio(hydrated.inputs);
+  return hydrated;
 }
 
 function createHiddenVideoElement() {
@@ -883,42 +1091,35 @@ function groupByKind(
   fillLabel,
   compositionLabel,
   keyPrefix,
+  { includeEmptyKinds = [] } = {},
 ) {
-  const effects = cards.filter((card) => card.kind === "effect");
-  const fills = cards.filter((card) => card.kind === "fill");
-  const compositions = cards.filter((card) => card.kind === COMPOSITION_KIND);
-  return [
-    ...(compositions.length
-      ? [
-          {
-            key: `separator:${keyPrefix}:composition`,
-            separatorLabel: compositionLabel,
-          },
-          ...compositions,
-        ]
-      : []),
-    ...(effects.length
-      ? [
-          { key: `separator:${keyPrefix}:effect`, separatorLabel: effectLabel },
-          ...effects,
-        ]
-      : []),
-    ...(fills.length
-      ? [
-          { key: `separator:${keyPrefix}:fill`, separatorLabel: fillLabel },
-          ...fills,
-        ]
-      : []),
+  const groups = [
+    [COMPOSITION_KIND, compositionLabel],
+    ["effect", effectLabel],
+    ["fill", fillLabel],
   ];
+  return groups.flatMap(([kind, label]) => {
+    const matches = cards.filter((card) => card.kind === kind);
+    if (!matches.length && !includeEmptyKinds.includes(kind)) return [];
+    return [
+      {
+        key: `separator:${keyPrefix}:${kind}`,
+        separatorLabel: label,
+        separatorKind: kind,
+      },
+      ...matches,
+    ];
+  });
 }
 
-function groupLibraryCards(cards) {
+function groupLibraryCards(cards, options) {
   return groupByKind(
     cards,
     "Shader effects",
     "Shader fills",
     "Compositions",
     "studio",
+    options,
   );
 }
 
@@ -1041,40 +1242,52 @@ export default function App() {
     loading: authLoading,
     configured: authConfigured,
   } = useAuth();
-  const [presetId, setPresetId] = useState(INITIAL.id);
-  const [shaderName, setShaderName] = useState(INITIAL.name);
+  const [initialDocument] = useState(initialEditorDocument);
+  const [presetId, setPresetId] = useState(initialDocument.id);
+  const [shaderName, setShaderName] = useState(initialDocument.name);
   const [shaderDescription, setShaderDescription] = useState(
-    typeof INITIAL.description === "string" ? INITIAL.description : ""
+    initialDocument.description,
   );
-  const [source, setSource] = useState(INITIAL.source);
-  const [sessionKind, setSessionKind] = useState(
-    () => getAppRoute().kind || INITIAL.kind,
-  );
+  const [source, setSource] = useState(initialDocument.source);
+  const [sessionKind, setSessionKind] = useState(initialDocument.kind);
   const [composition, setComposition] = useState(null);
-  const [effectFill, setEffectFill] = useState(
-    () => readEffectFill(INITIAL.id) || fillFromInputSource("image")
+  const [effectFill, setEffectFill] = useState(initialDocument.effectFill);
+  const [effectFills, setEffectFills] = useState(initialDocument.effectFills);
+  const [documentInputs, setDocumentInputs] = useState([]);
+  const [supportsAudio, setSupportsAudio] = useState(false);
+  const [experimentalAudio, setExperimentalAudio] = useState(
+    savedExperimentalAudio,
   );
-  const [effectFills, setEffectFills] = useState(() => {
-    const stored = readEffectFills(INITIAL.id);
-    return stored.length
-      ? stored
-      : normalizeComposition({
-          fill: readEffectFill(INITIAL.id) || fillFromInputSource("image"),
-        }).fills;
-  });
   const [inputImageUrl, setInputImageUrl] = useState(defaultInputUrl);
   const [selectedLayerId, setSelectedLayerId] = useState(COMPOSITION_FILL_ID);
   const [compositionPropsLayerId, setCompositionPropsLayerId] = useState(null);
   const [layerControlsEpoch, setLayerControlsEpoch] = useState(0);
   const [resolvedShaders, setResolvedShaders] = useState({});
-  const [props, setProps] = useState(INITIAL_MODULE.props);
-  const [values, setValues] = useState(INITIAL_VALUES);
+  const [props, setProps] = useState(initialDocument.props);
+  const [values, setValues] = useState(initialDocument.values);
   const [error, setError] = useState(null);
+  const compileErrorRef = useRef(null);
   const [fatal, setFatal] = useState(null);
+  const [notice, setNotice] = useState(null);
+  const showNotice = useCallback((message, options = {}) => {
+    setNotice({
+      message,
+      error: options.error === true,
+      danger: options.danger === true,
+      brand: options.brand === true,
+    });
+  }, []);
+  const reportAppError = useCallback((value) => {
+    const message =
+      typeof value === "string" ? value : value?.message || String(value || "");
+    if (message) showNotice(message, { error: true });
+  }, [showNotice]);
   const onPersistenceError = useCallback(
     (persistenceError) =>
-      setError(persistenceError.message || String(persistenceError)),
-    [],
+      showNotice(persistenceError.message || String(persistenceError), {
+        error: true,
+      }),
+    [showNotice],
   );
   const [running, setRunning] = useState(savedPlayState);
   const {
@@ -1104,9 +1317,18 @@ export default function App() {
   } = useShaderRuntime();
   const [fillsLoading, setFillsLoading] = useState(false);
   const inputBusy = uploading || fillsLoading;
+  const [sessionResourcesLoading, setSessionResourcesLoading] = useState(
+    initialDocument.loading,
+  );
+  const [versionPreviewLoading, setVersionPreviewLoading] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [previewRevision, setPreviewRevision] = useState(0);
-  const [cloudShaders, setCloudShaders] = useState([]);
+  const [cloudShaders, setCloudShadersState] = useState([]);
+  const libraryMutationEpochRef = useRef(0);
+  const setCloudShaders = useCallback((update) => {
+    libraryMutationEpochRef.current += 1;
+    setCloudShadersState(update);
+  }, []);
   const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
@@ -1127,11 +1349,11 @@ export default function App() {
     duration: 5,
     frameRate: 30,
     bitrate: 8,
+    includeAudio: true,
   });
   const [videoExportProgress, setVideoExportProgress] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
-  const [notice, setNotice] = useState(null);
   const {
     currentShader,
     setCurrentShader,
@@ -1232,6 +1454,14 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(
     () => savedSidebarSections().chatCollapsed
   );
+  const [libraryNavMotion, setLibraryNavMotion] = useState(() =>
+    savedAppNavCollapsed() ? "closed" : "open"
+  );
+  const appNavCollapsed =
+    libraryNavMotion === "closed" || libraryNavMotion === "closing";
+  const libraryNavMounted = libraryNavMotion !== "closed";
+  const appNavRef = useRef(null);
+  const [appNavShift, setAppNavShift] = useState(appNavWidth);
   const viewMode = routeEmbed && routeId
     ? "embed"
     : routeView && routeId
@@ -1317,7 +1547,6 @@ export default function App() {
   const exportTabsRef = useRef(null);
   const videoExportToastRef = useRef(null);
   const videoExportedToastRef = useRef(null);
-  const inputLoadingToastRef = useRef(null);
   const imageFormatRef = useRef(null);
   const imageResolutionRef = useRef(null);
   const imageAspectRef = useRef(null);
@@ -1339,9 +1568,9 @@ export default function App() {
   const propertiesPanelContentFadeRef = useOverflowFade();
   const visualizerRef = useRef(null);
   const lastSuccessfulCompileRef = useRef({
-    presetId: INITIAL.id,
-    source: INITIAL.source,
-    values: INITIAL_VALUES,
+    presetId: initialDocument.id,
+    source: initialDocument.source,
+    values: initialDocument.values,
   });
   const agentCheckpointRetryTimerRef = useRef(0);
   const initedRef = useRef(false);
@@ -1349,6 +1578,15 @@ export default function App() {
   const compositionRef = useRef(composition);
   const effectFillRef = useRef(effectFill);
   const effectFillsRef = useRef(effectFills);
+  const documentInputsRef = useRef(documentInputs);
+  const supportsAudioRef = useRef(supportsAudio);
+  const experimentalAudioRef = useRef(experimentalAudio);
+  const audioBusRef = useRef(null);
+  const ownedAudioElementRef = useRef(null);
+  const audioSourceKeyRef = useRef("");
+  const audioInputsSnapshotRef = useRef([]);
+  const audioInputsPresetRef = useRef(null);
+  const dedicatedMicStreamRef = useRef(null);
   const effectFillByPresetRef = useRef(new Map());
   const sessionInputAppliedRef = useRef("");
   const inputImageUrlRef = useRef(defaultInputUrl);
@@ -1363,6 +1601,10 @@ export default function App() {
   const compileRef = useRef(null);
   const navigationStartedAtRef = useRef(0);
   const sessionRequestRef = useRef(0);
+  const loadingSessionIdRef = useRef(
+    initialDocument.loading ? initialDocument.id : null,
+  );
+  const loadingRevealFrameRef = useRef(0);
   const versionPreviewCacheRef = useRef(new Map());
   const versionPreviewStateRef = useRef(null);
   const versionPreviewAppliedRef = useRef(false);
@@ -1381,10 +1623,39 @@ export default function App() {
   const liveShaderSourceRef = useRef(new Map());
   const draftsRef = useRef(drafts);
   const cloudShadersRef = useRef(cloudShaders);
+  const cloudThumbnailsRef = useRef(cloudThumbnails);
   const resolvedShadersRef = useRef(resolvedShaders);
   draftsRef.current = drafts;
   cloudShadersRef.current = cloudShaders;
+  cloudThumbnailsRef.current = cloudThumbnails;
   resolvedShadersRef.current = resolvedShaders;
+  const beginSessionResourceLoad = useCallback((sessionId) => {
+    cancelAnimationFrame(loadingRevealFrameRef.current);
+    loadingRevealFrameRef.current = 0;
+    loadingSessionIdRef.current = sessionId || null;
+    setSessionResourcesLoading(true);
+  }, []);
+  const finishSessionResourceLoad = useCallback((sessionId) => {
+    if (
+      sessionId &&
+      loadingSessionIdRef.current &&
+      sessionId !== loadingSessionIdRef.current
+    ) {
+      return;
+    }
+    const activeId = loadingSessionIdRef.current;
+    cancelAnimationFrame(loadingRevealFrameRef.current);
+    loadingRevealFrameRef.current = requestAnimationFrame(() => {
+      if (loadingSessionIdRef.current !== activeId) return;
+      loadingSessionIdRef.current = null;
+      loadingRevealFrameRef.current = 0;
+      setSessionResourcesLoading(false);
+    });
+  }, []);
+  useEffect(
+    () => () => cancelAnimationFrame(loadingRevealFrameRef.current),
+    [],
+  );
   const [liveShaderRevision, setLiveShaderRevision] = useState(0);
   const previewParamsRafRef = useRef(0);
   const paintFillRafRef = useRef(0);
@@ -1495,6 +1766,10 @@ export default function App() {
   compositionRef.current = composition;
   effectFillRef.current = effectFill;
   effectFillsRef.current = effectFills;
+  documentInputsRef.current = documentInputs;
+  supportsAudioRef.current = supportsAudio;
+  experimentalAudioRef.current = experimentalAudio;
+  compileErrorRef.current = error;
   sessionKindRef.current = sessionKind;
   propsRef.current = props;
   valuesRef.current = values;
@@ -1666,18 +1941,40 @@ export default function App() {
         composition,
         effectFills,
         resolvedByKey: pinAwareResolvedByKey,
+        features: { supportsAudio },
+        inputs:
+          sessionKind === COMPOSITION_KIND
+            ? composition?.inputs
+            : documentInputs,
       }),
-    [composition, effectFills, pinAwareResolvedByKey, sessionKind, source],
+    [
+      composition,
+      documentInputs,
+      effectFills,
+      pinAwareResolvedByKey,
+      sessionKind,
+      source,
+      supportsAudio,
+    ],
   );
   const shaderFeatures = useMemo(
     () =>
-      kind === COMPOSITION_KIND
-        ? collectCompositionFeatures(composition, pinAwareResolvedByKey)
-        : inferFeatures(source),
-    [composition, kind, pinAwareResolvedByKey, source]
+      mergeShaderFeatures(
+        kind === COMPOSITION_KIND
+          ? collectCompositionFeatures(composition, pinAwareResolvedByKey)
+          : inferFeatures(source),
+        { supportsAudio },
+      ),
+    [composition, kind, pinAwareResolvedByKey, source, supportsAudio]
   );
   const shaderFeaturesRef = useRef(shaderFeatures);
   shaderFeaturesRef.current = shaderFeatures;
+  const figmaPushBlocked =
+    Boolean(supportsAudio) ||
+    Boolean(shaderFeatures.supportsAudio) ||
+    hasAudioInput(
+      sessionKind === COMPOSITION_KIND ? composition?.inputs : documentInputs,
+    );
   useEffect(() => {
     if (currentShader) {
       rememberStateRevision(
@@ -1730,20 +2027,28 @@ export default function App() {
       const dependencySnapshots =
         overrides.dependencySnapshots ??
         activeDependencySnapshotsRef.current;
-      const features =
+      const nextInputs = normalizeDocumentInputs(
+        overrides.inputs ||
+          (nextKind === COMPOSITION_KIND
+            ? nextComposition?.inputs
+            : documentInputsRef.current),
+      );
+      const features = mergeShaderFeatures(
         overrides.features ||
-        (nextKind === COMPOSITION_KIND
-          ? collectCompositionFeatures(
-              nextComposition,
-              resolvedByKeyWithDependencySnapshots(
-                new Map([
-                  ...Object.entries(resolvedShaders),
-                  ...liveShaderSourceRef.current,
-                ]),
-                dependencySnapshots,
-              ),
-            )
-          : inferFeatures(nextSource));
+          (nextKind === COMPOSITION_KIND
+            ? collectCompositionFeatures(
+                nextComposition,
+                resolvedByKeyWithDependencySnapshots(
+                  new Map([
+                    ...Object.entries(resolvedShaders),
+                    ...liveShaderSourceRef.current,
+                  ]),
+                  dependencySnapshots,
+                ),
+              )
+            : inferFeatures(nextSource)),
+        { supportsAudio: supportsAudioRef.current },
+      );
       const input =
         overrides.input ||
         {
@@ -1756,7 +2061,19 @@ export default function App() {
         kind: nextKind,
         parameterValues: nextValues,
         features,
-        composition: nextComposition,
+        composition:
+          nextKind === COMPOSITION_KIND
+            ? { ...nextComposition, inputs: nextInputs }
+            : nextKind === "effect"
+              ? {
+                  ...(nextComposition && typeof nextComposition === "object"
+                    ? nextComposition
+                    : {}),
+                  effectFills: nextEffectFills,
+                  effectFill: nextEffectFills[0] || null,
+                  inputs: nextInputs,
+                }
+              : { inputs: nextInputs },
         effectFills: nextEffectFills,
         input,
         dependencySnapshots,
@@ -1938,6 +2255,89 @@ export default function App() {
   }, [chatCollapsed, codeCollapsed, routeEmbed]);
 
   useEffect(() => {
+    if (routeEmbed) return;
+    localStorage.setItem(
+      APP_NAV_COLLAPSED_STORAGE_KEY,
+      appNavCollapsed ? "true" : "false",
+    );
+  }, [appNavCollapsed, routeEmbed]);
+
+  useEffect(() => {
+    if (libraryNavMotion !== "open") return;
+    const width = appNavRef.current?.getBoundingClientRect().width;
+    if (width) setAppNavShift(Math.round(width));
+  }, [appNavWidth, libraryNavMotion]);
+
+  const prefersReducedLibraryMotion = () =>
+    Boolean(
+      globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
+    );
+
+  const hideLibraryNav = useCallback(() => {
+    const nav = appNavRef.current;
+    const width = nav?.getBoundingClientRect().width;
+    if (width) setAppNavShift(Math.round(width));
+    if (prefersReducedLibraryMotion()) {
+      setLibraryNavMotion("closed");
+      return;
+    }
+    setLibraryNavMotion("closing");
+  }, []);
+
+  const showLibraryNav = useCallback(() => {
+    if (prefersReducedLibraryMotion()) {
+      setLibraryNavMotion("open");
+      return;
+    }
+    setLibraryNavMotion("opening");
+  }, []);
+
+  useLayoutEffect(() => {
+    if (libraryNavMotion !== "opening") return undefined;
+    const nav = appNavRef.current;
+    const width = nav?.getBoundingClientRect().width;
+    if (width) setAppNavShift(Math.round(width));
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() =>
+        setLibraryNavMotion("open")
+      );
+    });
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [libraryNavMotion]);
+
+  useEffect(() => {
+    if (libraryNavMotion !== "closing") return undefined;
+    const nav = appNavRef.current;
+    if (!nav) {
+      setLibraryNavMotion("closed");
+      return undefined;
+    }
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      setLibraryNavMotion("closed");
+    };
+    const onEnd = (event) => {
+      if (event.target !== nav) return;
+      if (event.propertyName && event.propertyName !== "--library-slide") {
+        return;
+      }
+      finish();
+    };
+    nav.addEventListener("transitionend", onEnd);
+    const timeout = window.setTimeout(finish, 280);
+    return () => {
+      nav.removeEventListener("transitionend", onEnd);
+      window.clearTimeout(timeout);
+    };
+  }, [libraryNavMotion]);
+
+  useEffect(() => {
     if (routeEmbed || user) return;
     const timer = window.setTimeout(() => {
       writeDrafts(drafts, thumbnailDataUrlsRef.current);
@@ -1954,7 +2354,16 @@ export default function App() {
         : sessionKind === "effect"
           ? effectFills
           : [];
-    if (!fillMediaEntries(currentFills).length && !pendingMedia) {
+    const currentInputs = liveSessionInputs(
+      sessionKind,
+      composition,
+      documentInputs,
+    );
+    if (
+      !fillMediaEntries(currentFills).length &&
+      !pendingMedia &&
+      !hasDraftAudioMedia(currentInputs)
+    ) {
       draftMediaPersistenceErrorRef.current = null;
       return;
     }
@@ -1984,6 +2393,7 @@ export default function App() {
           composition: normalizeComposition({
             ...compositionRef.current,
             fills: keyedFills,
+            inputs: currentInputs,
           }),
         };
       }
@@ -1993,12 +2403,21 @@ export default function App() {
           composition: {
             effectFills: keyedFills,
             effectFill: keyedFills[0] || null,
+            inputs: currentInputs,
           },
           effectFills: keyedFills,
           effectFill: keyedFills[0] || null,
         };
       }
-      return draft;
+      return {
+        ...draft,
+        composition: {
+          ...(draft.composition && typeof draft.composition === "object"
+            ? draft.composition
+            : {}),
+          inputs: currentInputs,
+        },
+      };
     });
     writeDrafts(immediatelyDurableDrafts, thumbnailDataUrlsRef.current);
 
@@ -2008,6 +2427,7 @@ export default function App() {
       draftId,
       keyedFills,
       pendingMedia,
+      currentInputs,
     );
     draftMediaPersistenceRef.current = persistence;
     persistence
@@ -2042,7 +2462,7 @@ export default function App() {
         const message =
           mediaError.message ||
           "Local media could not be saved for browser reload.";
-        setError(message);
+        showNotice(message, { error: true });
       })
       .finally(() => {
         if (draftMediaPersistenceRef.current === persistence) {
@@ -2054,11 +2474,13 @@ export default function App() {
     };
   }, [
     composition,
+    documentInputs,
     effectFills,
     pendingMedia,
     presetId,
     routeEmbed,
     sessionKind,
+    showNotice,
     user,
   ]);
 
@@ -2091,7 +2513,9 @@ export default function App() {
                 : []
             ) &&
           JSON.stringify(existing.dependencySnapshots || {}) ===
-            JSON.stringify(documentSnapshot.dependencySnapshots)
+            JSON.stringify(documentSnapshot.dependencySnapshots) &&
+          JSON.stringify(existing.features || {}) ===
+            JSON.stringify(documentSnapshot.features || {})
         ) {
           return current;
         }
@@ -2114,6 +2538,7 @@ export default function App() {
                     ? documentSnapshot.composition.effectFill
                     : null,
                 dependencySnapshots: documentSnapshot.dependencySnapshots,
+                features: documentSnapshot.features,
                 isPublic,
                 pendingMedia,
               }
@@ -2125,6 +2550,7 @@ export default function App() {
   }, [
     captureDocumentSnapshot,
     composition,
+    documentInputs,
     effectFill,
     effectFills,
     isPublic,
@@ -2144,14 +2570,7 @@ export default function App() {
       if (routeEmbedRef.current) return;
       const session = draftSessionRef.current;
       if (!isDraftId(session.presetId)) return;
-      const documentSnapshot = buildShaderDocumentSnapshot({
-        source: session.source,
-        kind: session.kind,
-        parameterValues: session.values,
-        composition: session.composition,
-        effectFills: session.effectFills,
-        dependencySnapshots: activeDependencySnapshotsRef.current,
-      });
+      const documentSnapshot = captureDocumentSnapshot();
       const current = savedDrafts();
       const next = current.some((draft) => draft.id === session.presetId)
         ? current.map((draft) =>
@@ -2169,6 +2588,7 @@ export default function App() {
                       ? documentSnapshot.composition.effectFills
                       : [],
                   dependencySnapshots: documentSnapshot.dependencySnapshots,
+                  features: documentSnapshot.features,
                   isPublic: session.isPublic,
                   pendingMedia: null,
                 }
@@ -2188,6 +2608,7 @@ export default function App() {
                   ? documentSnapshot.composition.effectFills
                   : [],
               dependencySnapshots: documentSnapshot.dependencySnapshots,
+              features: documentSnapshot.features,
               isPublic: session.isPublic,
               pendingMedia: null,
               thumbnail: null,
@@ -2251,13 +2672,6 @@ export default function App() {
       toast.hideToast?.();
     }
   }, [videoExportProgress]);
-
-  useEffect(() => {
-    const toast = inputLoadingToastRef.current;
-    if (!toast) return;
-    if (inputBusy) toast.showToast?.();
-    else toast.hideToast?.();
-  }, [inputBusy]);
 
   useEffect(() => {
     const imageFormatSelect = imageFormatRef.current;
@@ -2394,15 +2808,6 @@ export default function App() {
     if (notice) noticeToastRef.current?.showToast?.();
   }, [notice]);
 
-  const showNotice = useCallback((message, options = {}) => {
-    setNotice({
-      message,
-      error: options.error === true,
-      danger: options.danger === true,
-      brand: options.brand === true,
-    });
-  }, []);
-
   useEffect(() => {
     const authError = consumeAuthCallbackError();
     if (authError) showNotice(authError, { error: true });
@@ -2473,7 +2878,11 @@ export default function App() {
       ? liveShaderSourceRef.current.get(entry.key)
       : null;
     for (const key of keys) liveShaderSourceRef.current.set(key, entry);
-    if (previous?.source !== entry.source) {
+    if (
+      previous?.source !== entry.source ||
+      Boolean(previous?.features?.supportsAudio) !==
+        Boolean(entry.features?.supportsAudio)
+    ) {
       setLiveShaderRevision((revision) => revision + 1);
     }
   }, []);
@@ -2502,7 +2911,10 @@ export default function App() {
         kind: live.kind || "effect",
         source: live.source,
         is_public: isPublic,
-        features: inferFeatures(live.source || ""),
+        features: mergeShaderFeatures(
+          inferFeatures(live.source || ""),
+          live.features,
+        ),
         broken: live.kind === COMPOSITION_KIND || !live.source,
       });
 
@@ -2579,7 +2991,10 @@ export default function App() {
                     kind: row.kind,
                     source,
                     is_public: row.is_public,
-                    features: inferFeatures(source),
+                    features: mergeShaderFeatures(
+                      inferFeatures(source),
+                      live?.features || row.features,
+                    ),
                     broken: false,
                   };
             store(next, draftAliases.get(key));
@@ -2616,17 +3031,19 @@ export default function App() {
       let graph = normalizeComposition(
         graphOverride || compositionRef.current || emptyComposition()
       );
+      const compileSessionId = draftSessionRef.current.presetId;
       const compileStartedAt = perfNow();
       const compileGeneration = ++compileGenerationRef.current;
       host.pause();
       setFillsLoading(
-        graph.fills.some(
-          (fill) =>
-            fill.enabled &&
-            (fill.paint?.type === "image" ||
-              fill.paint?.type === "video" ||
-              fill.paint?.type === "webcam"),
-        ),
+        hasAudioInput(graph.inputs) ||
+          graph.fills.some(
+            (fill) =>
+              fill.enabled &&
+              (fill.paint?.type === "image" ||
+                fill.paint?.type === "video" ||
+                fill.paint?.type === "webcam"),
+          ),
       );
       const hydrationStartedAt = perfNow();
       let hydratedGraph;
@@ -2639,7 +3056,8 @@ export default function App() {
       } catch (hydrateError) {
         if (compileGeneration === compileGenerationRef.current) {
           setFillsLoading(false);
-          setError(hydrateError.message || String(hydrateError));
+          finishSessionResourceLoad(compileSessionId);
+          reportAppError(hydrateError.message || String(hydrateError));
         }
         return false;
       }
@@ -2684,7 +3102,10 @@ export default function App() {
               key: shaderId,
               source,
               kind: role,
-              features: inferFeatures(source),
+              features: mergeShaderFeatures(
+                inferFeatures(source),
+                map.get(shaderId)?.features,
+              ),
               broken: false,
             });
           }
@@ -2709,6 +3130,53 @@ export default function App() {
           ]);
           return false;
         }
+      };
+      const retainLiveWebcamStream = async (fillId, fillPaint) => {
+        activeWebcamFillIds.add(fillId);
+        const wantedDevice = fillPaint?.webcam?.deviceId || "";
+        let cached = compositionWebcamStreamsRef.current.get(fillId);
+        const cachedDevice = webcamDeviceId(cached?.stream);
+        if (
+          !isLiveMediaStream(cached?.stream) ||
+          (wantedDevice && cachedDevice && wantedDevice !== cachedDevice)
+        ) {
+          if (cached?.owned) {
+            cached.stream?.getTracks?.().forEach((track) => track.stop());
+          }
+          compositionWebcamStreamsRef.current.delete(fillId);
+          cached = null;
+        }
+        let stream = cached?.stream || null;
+        if (!stream) {
+          const pickerStream = readFillWebcamStream();
+          const pickerDevice = webcamDeviceId(pickerStream);
+          if (
+            pickerStream &&
+            (!wantedDevice || !pickerDevice || pickerDevice === wantedDevice)
+          ) {
+            stream =
+              typeof pickerStream.clone === "function"
+                ? pickerStream.clone()
+                : pickerStream;
+            cached = {
+              stream,
+              owned: stream !== pickerStream,
+            };
+          } else if (navigator.mediaDevices?.getUserMedia) {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: wantedDevice
+                ? { deviceId: { exact: wantedDevice } }
+                : true,
+              audio:
+                experimentalAudioRef.current && supportsAudioRef.current,
+            });
+            cached = { stream, owned: true };
+          }
+          if (stream) {
+            compositionWebcamStreamsRef.current.set(fillId, cached);
+          }
+        }
+        return stream;
       };
       const addFallbackFill = async (fill, fillError) => {
         fillWarnings.push(fillLoadErrorMessage(fill, fillError));
@@ -2739,7 +3207,15 @@ export default function App() {
         }
       };
       for (const fill of graph.fills.slice().reverse()) {
-        if (!fill.enabled) continue;
+        if (!fill.enabled) {
+          if (isLiveWebcamFill(fill)) {
+            await retainLiveWebcamStream(fill.id, fill.paint);
+            if (compileGeneration !== compileGenerationRef.current) {
+              return false;
+            }
+          }
+          continue;
+        }
         if (fill.type === "html") {
           const element = htmlInputRef.current;
           if (!element) {
@@ -2817,52 +3293,9 @@ export default function App() {
             continue;
           }
           if (fillPaint.type === "webcam" && fillPaint.webcam?.live !== false) {
-            activeWebcamFillIds.add(fill.id);
-            const wantedDevice = fillPaint.webcam?.deviceId || "";
-            let cached = compositionWebcamStreamsRef.current.get(fill.id);
-            const cachedDevice = webcamDeviceId(cached?.stream);
-            if (
-              !isLiveMediaStream(cached?.stream) ||
-              (wantedDevice && cachedDevice && wantedDevice !== cachedDevice)
-            ) {
-              if (cached?.owned) {
-                cached.stream
-                  ?.getTracks?.()
-                  .forEach((track) => track.stop());
-              }
-              compositionWebcamStreamsRef.current.delete(fill.id);
-              cached = null;
-            }
-            let stream = cached?.stream || null;
-            if (!stream) {
-              const pickerStream = readFillWebcamStream();
-              const pickerDevice = webcamDeviceId(pickerStream);
-              if (
-                pickerStream &&
-                (!wantedDevice ||
-                  !pickerDevice ||
-                  pickerDevice === wantedDevice)
-              ) {
-                stream =
-                  typeof pickerStream.clone === "function"
-                    ? pickerStream.clone()
-                    : pickerStream;
-                cached = {
-                  stream,
-                  owned: stream !== pickerStream,
-                };
-              } else if (navigator.mediaDevices?.getUserMedia) {
-                stream = await navigator.mediaDevices.getUserMedia({
-                  video: wantedDevice
-                    ? { deviceId: { exact: wantedDevice } }
-                    : true,
-                  audio: false,
-                });
-                cached = { stream, owned: true };
-              }
-              if (stream) {
-                compositionWebcamStreamsRef.current.set(fill.id, cached);
-              }
+            const stream = await retainLiveWebcamStream(fill.id, fillPaint);
+            if (compileGeneration !== compileGenerationRef.current) {
+              return false;
             }
             if (stream) {
               const webcamSettings = paintImageSource(fillPaint);
@@ -2945,21 +3378,27 @@ export default function App() {
       );
       if (missingEffect) {
         setFillsLoading(false);
-        setError(`Effect ${missingEffect.id} could not be loaded.`);
+        finishSessionResourceLoad(compileSessionId);
+        reportAppError(`Effect ${missingEffect.id} could not be loaded.`);
         return false;
       }
       const features = collectCompositionFeatures(graph, map);
+      const audioGated =
+        experimentalAudioRef.current &&
+        (Boolean(features.supportsAudio) || supportsAudioRef.current);
       let ok;
       try {
         ok = await host.setComposition(layers, {
           isFill: layers.some((layer) => layer.role === "fill"),
-          isAnimated: features.isAnimated || hasHtmlFill,
+          isAnimated: features.isAnimated || hasHtmlFill || audioGated,
           usesMouse: features.usesMouse,
           supportsRenderScale: false,
+          supportsAudio: audioGated,
         });
       } catch (compositionError) {
         if (compileGeneration === compileGenerationRef.current) {
           setFillsLoading(false);
+          finishSessionResourceLoad(compileSessionId);
           setError(compositionError.message || String(compositionError));
         }
         return false;
@@ -2972,11 +3411,14 @@ export default function App() {
       }
       if (!ok) {
         setFillsLoading(false);
+        finishSessionResourceLoad(compileSessionId);
         setRunning(false);
         return false;
       }
       setFillsLoading(false);
-      setError(fillWarnings.length ? fillWarnings.join(" ") : null);
+      finishSessionResourceLoad(compileSessionId);
+      if (fillWarnings.length) reportAppError(fillWarnings.join(" "));
+      else setError(null);
       measurePerf("navigation.compositionCompile", compileStartedAt);
       if (syncEditorState) {
         const selected =
@@ -2996,7 +3438,10 @@ export default function App() {
         setError(null);
         setThumbnailRefreshRevision((revision) => revision + 1);
       }
-      if (playPreferenceRef.current && (features.isAnimated || hasHtmlFill)) {
+      if (
+        playPreferenceRef.current &&
+        (features.isAnimated || hasHtmlFill || audioGated)
+      ) {
         host.setActive(true);
         host.play();
         setRunning(true);
@@ -3009,9 +3454,11 @@ export default function App() {
     },
     [
       drafts,
+      finishSessionResourceLoad,
       hydrateCompositionRefs,
       recordNavigationFirstFrame,
       rememberResolved,
+      reportAppError,
       setRuntimeValues,
     ]
   );
@@ -3023,6 +3470,7 @@ export default function App() {
         compileCompositionRef.current?.();
         return;
       }
+      const compileSessionId = draftSessionRef.current.presetId;
       const fillKey = effectFillPreviewKey(effectFillsRef.current);
       if (sessionKindRef.current === "effect" && fillKey) {
         if (
@@ -3032,6 +3480,7 @@ export default function App() {
           lastSuccessfulCompileRef.current.source === nextSource &&
           lastSuccessfulCompileRef.current.effectFillKey === fillKey
         ) {
+          finishSessionResourceLoad(compileSessionId);
           return;
         }
         let loaded;
@@ -3040,6 +3489,7 @@ export default function App() {
         } catch (compileError) {
           setError(compileError.message);
           setRunning(false);
+          finishSessionResourceLoad(compileSessionId);
           return;
         }
         const compilePresetId = draftSessionRef.current.presetId;
@@ -3101,6 +3551,7 @@ export default function App() {
         lastSuccessfulCompileRef.current.source === nextSource &&
         !lastSuccessfulCompileRef.current.effectFillKey
       ) {
+        finishSessionResourceLoad(compileSessionId);
         return;
       }
       const compileGeneration = ++compileGenerationRef.current;
@@ -3114,6 +3565,7 @@ export default function App() {
         setError(compileError.message);
         host.pause();
         setRunning(false);
+        finishSessionResourceLoad(compileSessionId);
         return;
       }
 
@@ -3131,9 +3583,13 @@ export default function App() {
           { setup: loaded.setup, render: loaded.render },
           {
             isFill: detectKind(nextSource) === "fill",
-            isAnimated: nextFeatures.isAnimated,
+            isAnimated:
+              nextFeatures.isAnimated ||
+              (experimentalAudioRef.current && supportsAudioRef.current),
             usesMouse: nextFeatures.usesMouse,
             supportsRenderScale: supportsRenderScale(nextSource),
+            supportsAudio:
+              experimentalAudioRef.current && supportsAudioRef.current,
           }
         )
         .then((ok) => {
@@ -3146,6 +3602,7 @@ export default function App() {
           }
           if (!ok) {
             setRunning(false);
+            finishSessionResourceLoad(compileSessionId);
             return;
           }
           lastSuccessfulCompileRef.current = {
@@ -3177,12 +3634,16 @@ export default function App() {
             setRunning(false);
           }
           recordNavigationFirstFrame();
+          finishSessionResourceLoad(compileSessionId);
         })
         .catch(() => {
           /* Destroyed hosts / GPU teardown can reject; ignore stale work. */
+          if (compileGeneration === compileGenerationRef.current) {
+            finishSessionResourceLoad(compileSessionId);
+          }
         });
     },
-    [recordNavigationFirstFrame, setRuntimeValues]
+    [finishSessionResourceLoad, recordNavigationFirstFrame, setRuntimeValues]
   );
   compileRef.current = compile;
 
@@ -3442,7 +3903,7 @@ export default function App() {
             video: wantedDevice
               ? { deviceId: { exact: wantedDevice } }
               : true,
-            audio: false,
+            audio: experimentalAudioRef.current && supportsAudioRef.current,
           });
           ownsStream = true;
         } catch (cameraError) {
@@ -3564,7 +4025,7 @@ export default function App() {
         !supportsHtmlInCanvas() ||
         !supportsCopyElementImageToTexture(host.device)
       ) {
-        setError(HTML_IN_CANVAS_SETUP);
+        reportAppError(HTML_IN_CANVAS_SETUP);
         clearObjectUrl();
         const bitmap = await makeSampleBitmap();
         if (!isInputApplyCurrent(generation)) {
@@ -3578,7 +4039,6 @@ export default function App() {
       }
       clearObjectUrl();
       setPendingMedia(null);
-      setError(null);
       setUploading(false);
       setInputSource("html");
       await new Promise((resolve) =>
@@ -3620,7 +4080,7 @@ export default function App() {
       setPreviewRevision((revision) => revision + 1);
     } catch (inputError) {
       if (isInputApplyCurrent(generation)) {
-        setError(inputError.message || String(inputError));
+        reportAppError(inputError.message || String(inputError));
       }
     } finally {
       if (isInputApplyCurrent(generation)) setUploading(false);
@@ -3649,13 +4109,12 @@ export default function App() {
           !supportsHtmlInCanvas() ||
           !supportsCopyElementImageToTexture(host.device)
         ) {
-          setError(HTML_IN_CANVAS_SETUP);
+          reportAppError(HTML_IN_CANVAS_SETUP);
           return;
         }
         ++inputApplyGenRef.current;
         clearObjectUrl();
         setPendingMedia(null);
-        setError(null);
         // This supersedes any in-flight load, whose own cleanup will bail out.
         setUploading(false);
         setInputSource("html");
@@ -3664,7 +4123,6 @@ export default function App() {
 
       const generation = ++inputApplyGenRef.current;
       setInputSource(next);
-      setError(null);
       // Whichever branch runs owns the overlay. A superseded load skips its own
       // cleanup, so the newest switch must always be the one to clear it.
       setUploading(true);
@@ -3688,7 +4146,7 @@ export default function App() {
         }
       } catch (sourceError) {
         if (isInputApplyCurrent(generation)) {
-          setError(sourceError.message || String(sourceError));
+          reportAppError(sourceError.message || String(sourceError));
         }
       } finally {
         if (isInputApplyCurrent(generation)) setUploading(false);
@@ -3707,6 +4165,11 @@ export default function App() {
     (detail) => {
       if (!isPaintFillType(detail?.type)) return Promise.resolve(false);
       const generation = ++inputApplyGenRef.current;
+      const showsLoading =
+        detail.type === "image" ||
+        detail.type === "video" ||
+        detail.type === "webcam";
+      if (showsLoading) setUploading(true);
       if (paintFillRafRef.current) {
         cancelAnimationFrame(paintFillRafRef.current.id);
         paintFillRafRef.current.resolve?.(false);
@@ -3753,7 +4216,7 @@ export default function App() {
                 const file = await fileFromBlobUrl(url, "input.mp4");
                 if (file && isInputApplyCurrent(generation)) {
                   if (file.size > MAX_MEDIA_BYTES) {
-                    setError("Input media must be 25 MB or smaller.");
+                    reportAppError("Input media must be 25 MB or smaller.");
                   } else {
                     setPendingMedia(file);
                   }
@@ -3800,7 +4263,7 @@ export default function App() {
                 const file = await fileFromBlobUrl(media.url);
                 if (file && isInputApplyCurrent(generation)) {
                   if (file.size > MAX_MEDIA_BYTES) {
-                    setError("Input media must be 25 MB or smaller.");
+                    reportAppError("Input media must be 25 MB or smaller.");
                   } else {
                     setPendingMedia(file);
                   }
@@ -3811,12 +4274,16 @@ export default function App() {
             resolve(true);
           })().catch((paintError) => {
             if (isInputApplyCurrent(generation)) {
-              setError(paintError.message || String(paintError));
+              reportAppError(paintError.message || String(paintError));
             }
             resolve(false);
           });
         });
         paintFillRafRef.current = { id, resolve };
+      }).finally(() => {
+        if (showsLoading && isInputApplyCurrent(generation)) {
+          setUploading(false);
+        }
       });
     },
     [
@@ -3838,7 +4305,7 @@ export default function App() {
     if (!pending) return;
     pendingInputSourceRef.current = null;
     applyInputSource(pending).catch((sourceError) =>
-      setError(sourceError.message || String(sourceError))
+      reportAppError(sourceError.message || String(sourceError))
     );
   }, [applyInputSource, runtimeReady]);
 
@@ -3859,13 +4326,13 @@ export default function App() {
         !supportsHtmlInCanvas() ||
         !supportsCopyElementImageToTexture(host.device)
       ) {
-        setError(HTML_IN_CANVAS_SETUP);
+        reportAppError(HTML_IN_CANVAS_SETUP);
         return;
       }
       host.setHtmlInput(element, HTML_INPUT_WIDTH, HTML_INPUT_HEIGHT);
       setPreviewRevision((revision) => revision + 1);
     } catch (htmlError) {
-      setError(htmlError.message || String(htmlError));
+      reportAppError(htmlError.message || String(htmlError));
     }
   }, [inputSource, runtimeReady]);
 
@@ -3899,7 +4366,7 @@ export default function App() {
       return;
     }
     reapplyPreferredInput().catch((inputError) =>
-      setError(inputError.message || String(inputError))
+      reportAppError(inputError.message || String(inputError))
     );
   }, [kind, runtimeReady, applyPaintFill, clearObjectUrl, reapplyPreferredInput]);
 
@@ -3925,6 +4392,9 @@ export default function App() {
       },
     });
     hostRef.current = host;
+    const audioBus = new AudioInputBus();
+    audioBusRef.current = audioBus;
+    host.setAudioBus(audioBus);
     host.setPreviewZoom(previewZoom);
     // The overlay mounts before this effect runs, so adopt the surface it reported.
     host.setPointerSurface(pointerSurfaceRef.current);
@@ -3952,6 +4422,7 @@ export default function App() {
         setRuntimeReady(true);
       } catch (initError) {
         setFatal(initError.message || String(initError));
+        finishSessionResourceLoad(draftSessionRef.current.presetId);
       }
     })();
     return () => {
@@ -3966,14 +4437,29 @@ export default function App() {
         host.destroy();
         hostRef.current = null;
       }
+      audioBusRef.current?.dispose();
+      audioBusRef.current = null;
+      ownedAudioElementRef.current?.pause?.();
+      ownedAudioElementRef.current?.remove?.();
+      ownedAudioElementRef.current = null;
+      dedicatedMicStreamRef.current?.getTracks?.().forEach((track) => track.stop());
+      dedicatedMicStreamRef.current = null;
+      audioSourceKeyRef.current = "";
       initedRef.current = false;
       setRuntimeReady(false);
       clearObjectUrl();
     };
-  }, [clearObjectUrl, restoreSample, viewMode, isComposerView]);
+  }, [
+    clearObjectUrl,
+    finishSessionResourceLoad,
+    restoreSample,
+    viewMode,
+    isComposerView,
+  ]);
 
   useEffect(() => {
     if (!runtimeReady || !hostRef.current?.ready) return;
+    if (sessionResourcesLoading && !source && !composition) return;
     clearTimeout(compileTimer.current);
     const switchedShader = lastCompiledPresetRef.current !== presetId;
     lastCompiledPresetRef.current = presetId;
@@ -3994,6 +4480,250 @@ export default function App() {
     sessionKind === COMPOSITION_KIND ? liveShaderRevision : 0,
     presetId,
     runtimeReady,
+    sessionResourcesLoading,
+  ]);
+
+  useEffect(() => {
+    return subscribeExperimentalAudio(setExperimentalAudio);
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    const bus = audioBusRef.current;
+    if (!host?.ready || !bus) return undefined;
+    const gated = experimentalAudio && supportsAudio;
+    host.supportsAudio = gated;
+    let cancelled = false;
+    const inputs =
+      sessionKind === COMPOSITION_KIND
+        ? normalizeDocumentInputs(composition?.inputs)
+        : documentInputs;
+    const graph =
+      sessionKind === COMPOSITION_KIND
+        ? composition
+        : { fills: effectFills, inputs };
+    const audioFile = enabledAudioFileInput(inputs);
+    const videoFill = enabledVideoFillSoundtrack(graph);
+    const webcamLive = liveWebcamFillCount(graph) > 0;
+    const webcamStream =
+      [...compositionWebcamStreamsRef.current.values()].find((entry) =>
+        isLiveMediaStream(entry?.stream),
+      )?.stream ||
+      (hasLiveWebcamStream(videoRef.current)
+        ? videoRef.current.srcObject
+        : null);
+    const micInput = enabledMicrophoneInput(inputs);
+    const previousInputs =
+      audioInputsPresetRef.current === presetId
+        ? audioInputsSnapshotRef.current
+        : [];
+    const removedInputs = removedDocumentInputs(previousInputs, inputs);
+    audioInputsPresetRef.current = presetId;
+    audioInputsSnapshotRef.current = inputs;
+
+    const stopDedicatedMic = () => {
+      dedicatedMicStreamRef.current
+        ?.getTracks?.()
+        .forEach((track) => track.stop());
+      dedicatedMicStreamRef.current = null;
+    };
+    const releaseOwnedAudio = () => {
+      const el = ownedAudioElementRef.current;
+      if (!el) return;
+      el.pause?.();
+      el.removeAttribute?.("src");
+      el.load?.();
+      el.remove?.();
+      ownedAudioElementRef.current = null;
+    };
+    const revokeRemovedAudioUrls = () => {
+      for (const input of removedInputs) {
+        const url = input.audio?.url;
+        if (typeof url === "string" && url.startsWith("blob:")) {
+          URL.revokeObjectURL(url);
+        }
+      }
+    };
+    const resetDeletedAudioInputs = () => {
+      if (!removedInputs.length) return;
+      revokeRemovedAudioUrls();
+      host.resetShaderState();
+    };
+    const detachLiveAudio = () => {
+      stopDedicatedMic();
+      releaseOwnedAudio();
+      host.clearAudio();
+      audioSourceKeyRef.current = "";
+    };
+
+    (async () => {
+      if (!gated) {
+        bus.suspend();
+        detachLiveAudio();
+        resetDeletedAudioInputs();
+        return;
+      }
+      try {
+        await bus.resume();
+        if (cancelled) return;
+        if (audioFile?.audio?.url) {
+          const key = `file:${audioFile.id}:${audioFile.audio.url}`;
+          if (audioSourceKeyRef.current !== key || !bus.sourceNode) {
+            stopDedicatedMic();
+            releaseOwnedAudio();
+            const playback = audioPlaybackSettings(audioFile.audio);
+            const el = document.createElement("audio");
+            el.crossOrigin = "anonymous";
+            el.loop = playback.loop;
+            el.preload = "auto";
+            el.src = audioFile.audio.url;
+            ownedAudioElementRef.current = el;
+            if (cancelled) {
+              releaseOwnedAudio();
+              host.clearAudio();
+              return;
+            }
+            await bus.attachElement(el, {
+              gain: playback.gain,
+              monitor: playback.monitor,
+            });
+            if (cancelled) {
+              host.clearAudio();
+              return;
+            }
+            audioSourceKeyRef.current = key;
+          }
+          const playback = audioPlaybackSettings(audioFile.audio);
+          const el = ownedAudioElementRef.current;
+          if (el) el.loop = playback.loop;
+          bus.setGain(playback.gain);
+          bus.setMonitor(playback.monitor);
+          await bus.syncPlayback({ running });
+          resetDeletedAudioInputs();
+          return;
+        }
+        releaseOwnedAudio();
+        const videoEl =
+          compositionMediaSourcesRef.current.find(
+            (node) => node?.tagName === "VIDEO" && node.src && !node.srcObject,
+          ) ||
+          (videoRef.current?.src && !videoRef.current.srcObject
+            ? videoRef.current
+            : null);
+        if (videoFill && videoEl) {
+          const key = `video:${videoFill.id}`;
+          if (audioSourceKeyRef.current !== key) {
+            stopDedicatedMic();
+            await bus.attachElement(videoEl);
+            if (cancelled) {
+              host.clearAudio();
+              return;
+            }
+            audioSourceKeyRef.current = key;
+          }
+          resetDeletedAudioInputs();
+          return;
+        }
+        if (!micInput && webcamLive && webcamStream) {
+          const hasMic = webcamStream
+            .getAudioTracks?.()
+            .some((track) => track.readyState === "live");
+          if (hasMic) {
+            const key = `webcam:${webcamDeviceId(webcamStream)}`;
+            if (audioSourceKeyRef.current !== key) {
+              stopDedicatedMic();
+              await bus.attachStream(webcamStream);
+              if (cancelled) {
+                host.clearAudio();
+                return;
+              }
+              audioSourceKeyRef.current = key;
+            }
+            resetDeletedAudioInputs();
+            return;
+          }
+          try {
+            const deviceId = webcamDeviceId(webcamStream);
+            const upgraded = await navigator.mediaDevices.getUserMedia({
+              video: deviceId ? { deviceId: { exact: deviceId } } : true,
+              audio: true,
+            });
+            if (cancelled) {
+              upgraded.getTracks().forEach((track) => track.stop());
+              return;
+            }
+            await bus.attachStream(upgraded, { owned: true });
+            if (cancelled) {
+              host.clearAudio();
+              return;
+            }
+            audioSourceKeyRef.current = `webcam-upgraded:${deviceId}`;
+            resetDeletedAudioInputs();
+            return;
+          } catch {
+            const micStream = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+            if (cancelled) {
+              micStream.getTracks().forEach((track) => track.stop());
+              return;
+            }
+            stopDedicatedMic();
+            dedicatedMicStreamRef.current = micStream;
+            await bus.attachStream(micStream, { owned: true });
+            if (cancelled) {
+              host.clearAudio();
+              return;
+            }
+            audioSourceKeyRef.current = "mic-fallback";
+            resetDeletedAudioInputs();
+            return;
+          }
+        }
+        if (micInput) {
+          if (audioSourceKeyRef.current !== "mic") {
+            const micStream = await navigator.mediaDevices.getUserMedia({
+              audio: true,
+              video: false,
+            });
+            if (cancelled) {
+              micStream.getTracks().forEach((track) => track.stop());
+              return;
+            }
+            stopDedicatedMic();
+            dedicatedMicStreamRef.current = micStream;
+            await bus.attachStream(micStream, { owned: true });
+            if (cancelled) {
+              host.clearAudio();
+              return;
+            }
+            audioSourceKeyRef.current = "mic";
+          }
+          resetDeletedAudioInputs();
+          return;
+        }
+        detachLiveAudio();
+        resetDeletedAudioInputs();
+        if (!host.running && host.ready && host.renderFn) host.redraw();
+      } catch (audioError) {
+        if (!cancelled) reportAppError(audioError.message || String(audioError));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    composition,
+    documentInputs,
+    effectFills,
+    experimentalAudio,
+    presetId,
+    previewRevision,
+    running,
+    sessionKind,
+    supportsAudio,
   ]);
 
   useEffect(
@@ -4125,6 +4855,7 @@ export default function App() {
       kind: documentSnapshot.kind,
       source: documentSnapshot.source,
       is_public: session.isPublic,
+      features: documentSnapshot.features,
     });
     if (!isDraftId(session.presetId)) return;
     const nextDrafts = draftsRef.current.map((draft) =>
@@ -4146,6 +4877,7 @@ export default function App() {
                   ? documentSnapshot.composition.effectFill
                   : null,
               dependencySnapshots: documentSnapshot.dependencySnapshots,
+              features: documentSnapshot.features,
               isPublic: session.isPublic,
               pendingMedia: session.pendingMedia,
             }
@@ -4186,19 +4918,35 @@ export default function App() {
           setEffectFill(keyedFills[0] || null);
         }
       }
+      const currentInputs = liveSessionInputs(
+        session.kind,
+        compositionRef.current,
+        documentInputsRef.current,
+      );
       let pendingPersistence = draftMediaPersistenceRef.current;
       if (
         !pendingPersistence &&
-        (fillMediaEntries(keyedFills).length || session.pendingMedia)
+        (fillMediaEntries(keyedFills).length ||
+          session.pendingMedia ||
+          hasDraftAudioMedia(currentInputs))
       ) {
         pendingPersistence = persistLocalDraftMedia(
           sessionId,
           keyedFills,
           session.pendingMedia,
+          currentInputs,
         );
       }
       if (pendingPersistence) {
         await pendingPersistence;
+      }
+      if (hasDraftAudioMedia(currentInputs)) {
+        await persistDraftAudioInputs(
+          sessionId,
+          currentInputs,
+          draftMediaStore,
+          { downloadAsset },
+        );
       }
       if (draftMediaPersistenceErrorRef.current) {
         const message =
@@ -4249,6 +4997,7 @@ export default function App() {
       kind: sessionKind,
       source,
       is_public: isPublic,
+      features: mergeShaderFeatures(inferFeatures(source), { supportsAudio }),
     });
   }, [
     currentShader?.id,
@@ -4258,6 +5007,7 @@ export default function App() {
     sessionKind,
     shaderName,
     source,
+    supportsAudio,
   ]);
 
   const activateShaderSession = useShaderSession({
@@ -4292,17 +5042,28 @@ export default function App() {
     activeDependencySnapshotsRef,
     setEffectFill,
     setEffectFills,
+    setSupportsAudio,
+    setDocumentInputs,
     inputApplyGenRef,
     sessionInputAppliedRef,
     navigationStartedAtRef,
     sessionRequestRef,
+    onSessionLoadStart: beginSessionResourceLoad,
   });
 
   const openDraft = useCallback(
     async (draft) => {
-      const hydratedDraft = await hydrateLocalDraftMedia(draft);
+      setShaderRoute(draft.id, draft.kind);
+      if (draftSessionRef.current.presetId === draft.id) return;
+      beginSessionResourceLoad(draft.id);
+      let hydratedDraft;
+      try {
+        hydratedDraft = await hydrateLocalDraftMedia(draft);
+      } catch (error) {
+        finishSessionResourceLoad(draft.id);
+        throw error;
+      }
       setShaderRoute(hydratedDraft.id, hydratedDraft.kind);
-      if (draftSessionRef.current.presetId === hydratedDraft.id) return;
       await activateShaderSession({
         sessionId: hydratedDraft.id,
         name: hydratedDraft.name,
@@ -4314,10 +5075,16 @@ export default function App() {
         public: hydratedDraft.isPublic,
         media: hydratedDraft.pendingMedia || null,
         dependencySnapshots: hydratedDraft.dependencySnapshots,
+        features: hydratedDraft.features,
         dirty: true,
       });
     },
-    [activateShaderSession, setShaderRoute],
+    [
+      activateShaderSession,
+      beginSessionResourceLoad,
+      finishSessionResourceLoad,
+      setShaderRoute,
+    ],
   );
 
   const createDraft = useCallback(
@@ -4469,7 +5236,6 @@ export default function App() {
       await openLocal();
     } catch (error) {
       const message = error.message || "Could not create composition";
-      setError(message);
       showNotice(message, { error: true });
     }
   }, [activateShaderSession, persistBeforeSessionChange, showNotice, user]);
@@ -4638,6 +5404,8 @@ export default function App() {
         return;
       }
       const requestId = ++sessionRequestRef.current;
+      const loadingSessionId = cloudChoiceId(shader.id);
+      beginSessionResourceLoad(loadingSessionId);
       navigationStartedAtRef.current = perfNow();
       try {
         const fetchStartedAt = perfNow();
@@ -4740,83 +5508,167 @@ export default function App() {
           const nextComposition = normalizeComposition(hydratedComposition);
           compositionRef.current = nextComposition;
           setComposition(nextComposition);
+          setDocumentInputs(normalizeDocumentInputs(nextComposition.inputs));
         } else {
           const nextEffectFills =
             readEffectFillsFromComposition(hydratedComposition);
           effectFillsRef.current = nextEffectFills;
           setEffectFills(nextEffectFills);
+          setDocumentInputs(readDocumentInputs(hydratedComposition));
         }
+        setSupportsAudio(Boolean(fullShader.features?.supportsAudio));
       } catch (openError) {
         if (requestId !== sessionRequestRef.current) return;
+        finishSessionResourceLoad(loadingSessionId);
         navigationStartedAtRef.current = 0;
         if (requireAccessible) throw openError;
-        setError(openError.message || String(openError));
+        reportAppError(openError.message || String(openError));
       }
     },
-    [activateShaderSession, setShaderRoute],
+    [
+      activateShaderSession,
+      beginSessionResourceLoad,
+      finishSessionResourceLoad,
+      setShaderRoute,
+    ],
   );
 
   const cloudThumbnailPathsRef = useRef({});
+  const cloudThumbnailExpiriesRef = useRef({});
+  const hydratedLibraryScopeRef = useRef(null);
+  const skipNextLibraryCacheWriteRef = useRef(false);
   const userId = user?.id ?? null;
+  const libraryScope = libraryCacheScope(userId);
 
   const refreshLibrary = useCallback(async () => {
     if (!authConfigured) {
       cloudThumbnailPathsRef.current = {};
-      setCloudShaders([]);
+      cloudThumbnailExpiriesRef.current = {};
+      setCloudShadersState([]);
       setCloudThumbnails({});
       return;
     }
+    const refreshEpoch = libraryMutationEpochRef.current;
     try {
       // Row-level security returns public shaders to everyone and adds the
       // current user's private drafts when signed in.
       const shaders = await listShaders();
-      setCloudShaders(shaders);
-      const urlsByPath = await getAssetUrls(
-        shaders.map((shader) => shader.thumbnail_path)
+      const now = Date.now();
+      const pathsToRefresh = [];
+      for (const shader of shaders) {
+        const id = shader.id;
+        const path = shader.thumbnail_path || null;
+        const reusable =
+          path &&
+          cloudThumbnailPathsRef.current[id] === path &&
+          cloudThumbnailsRef.current[id] &&
+          cloudThumbnailExpiriesRef.current[id] > now;
+        if (path && !reusable) pathsToRefresh.push(path);
+      }
+      const urlsByPath = await getAssetUrls(pathsToRefresh);
+      if (
+        !libraryRefreshIsCurrent(
+          refreshEpoch,
+          libraryMutationEpochRef.current,
+        )
+      ) {
+        return;
+      }
+      setCloudShadersState((current) =>
+        reconcileLibraryShaders(current, shaders),
       );
-      setCloudThumbnails((previous) => {
-        const nextPathById = {};
-        const next = {};
-        let changed =
-          Object.keys(previous).length !== shaders.length;
-        for (const shader of shaders) {
-          const path = shader.thumbnail_path || null;
-          nextPathById[shader.id] = path;
-          // Keep the prior signed URL when the asset path is unchanged so a
-          // routine library refresh (e.g. tab focus / auth churn) does not
-          // force every thumbnail <img> to reload.
-          if (
-            path &&
-            cloudThumbnailPathsRef.current[shader.id] === path &&
-            previous[shader.id]
-          ) {
-            next[shader.id] = previous[shader.id];
-            continue;
-          }
-          const url = path ? urlsByPath[path] || null : null;
-          next[shader.id] = url;
-          if (url !== previous[shader.id]) changed = true;
+      const previous = cloudThumbnailsRef.current;
+      const nextPathById = {};
+      const nextExpiryById = {};
+      const next = {};
+      let thumbnailsChanged =
+        Object.keys(previous).length !== shaders.length;
+      for (const shader of shaders) {
+        const path = shader.thumbnail_path || null;
+        nextPathById[shader.id] = path;
+        if (
+          path &&
+          cloudThumbnailPathsRef.current[shader.id] === path &&
+          previous[shader.id] &&
+          cloudThumbnailExpiriesRef.current[shader.id] > now
+        ) {
+          next[shader.id] = previous[shader.id];
+          nextExpiryById[shader.id] =
+            cloudThumbnailExpiriesRef.current[shader.id];
+          continue;
         }
-        for (const id of Object.keys(previous)) {
-          if (!(id in next)) changed = true;
+        const url = path ? urlsByPath[path] || null : null;
+        next[shader.id] = url;
+        if (url) {
+          nextExpiryById[shader.id] =
+            Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS;
         }
-        cloudThumbnailPathsRef.current = nextPathById;
-        return changed ? next : previous;
+        if (url !== previous[shader.id]) thumbnailsChanged = true;
+      }
+      for (const id of Object.keys(previous)) {
+        if (!(id in next)) thumbnailsChanged = true;
+      }
+      const nextThumbnails = thumbnailsChanged ? next : previous;
+      cloudThumbnailsRef.current = nextThumbnails;
+      cloudThumbnailPathsRef.current = nextPathById;
+      cloudThumbnailExpiriesRef.current = nextExpiryById;
+      setCloudThumbnails(nextThumbnails);
+      writeLibrarySessionCache({
+        scope: libraryScope,
+        shaders,
+        thumbnails: nextThumbnails,
+        thumbnailPaths: nextPathById,
+        thumbnailExpiries: nextExpiryById,
       });
     } catch (libraryError) {
       const message = formatSupabaseError(
         libraryError,
         "Could not load shaders from the server."
       );
-      setError(message);
       showNotice(message, { error: true });
     }
-  }, [authConfigured, showNotice, userId]);
+  }, [authConfigured, libraryScope, showNotice]);
+
+  useLayoutEffect(() => {
+    if (routeEmbed || authLoading) return;
+    if (hydratedLibraryScopeRef.current !== libraryScope) {
+      const cached = readLibrarySessionCache({ scope: libraryScope });
+      hydratedLibraryScopeRef.current = libraryScope;
+      skipNextLibraryCacheWriteRef.current = true;
+      setCloudShadersState(cached?.shaders || []);
+      setCloudThumbnails(cached?.thumbnails || {});
+      cloudThumbnailPathsRef.current = cached?.thumbnailPaths || {};
+      cloudThumbnailExpiriesRef.current = cached?.thumbnailExpiries || {};
+    }
+    refreshLibrary();
+  }, [authLoading, libraryScope, refreshLibrary, routeEmbed]);
 
   useEffect(() => {
-    if (routeEmbed) return;
-    refreshLibrary();
-  }, [refreshLibrary, routeEmbed]);
+    if (
+      routeEmbed ||
+      authLoading ||
+      hydratedLibraryScopeRef.current !== libraryScope
+    ) {
+      return;
+    }
+    if (skipNextLibraryCacheWriteRef.current) {
+      skipNextLibraryCacheWriteRef.current = false;
+      return;
+    }
+    writeLibrarySessionCache({
+      scope: libraryScope,
+      shaders: cloudShaders,
+      thumbnails: cloudThumbnails,
+      thumbnailPaths: cloudThumbnailPathsRef.current,
+      thumbnailExpiries: cloudThumbnailExpiriesRef.current,
+    });
+  }, [
+    authLoading,
+    cloudShaders,
+    cloudThumbnails,
+    libraryScope,
+    routeEmbed,
+  ]);
 
   useEffect(() => {
     if (routeEmbed) return;
@@ -4970,12 +5822,36 @@ export default function App() {
               mimeType: contentType,
             };
           }
-          const durableComposition = isComposition
-            ? normalizeComposition({ ...graph, fills: durableFills })
-            : {
-                effectFills: durableFills,
-                effectFill: durableFills[0] || null,
-              };
+          const migratedKind = isComposition
+            ? COMPOSITION_KIND
+            : detectKind(source);
+          const liveInputs = editorActive
+            ? liveSessionInputs(
+                migratedKind,
+                compositionRef.current,
+                documentInputsRef.current,
+              )
+            : readDocumentInputs(
+                hydratedDraft.composition ||
+                  session.composition ||
+                  draft.composition,
+              );
+          const durableInputs = await uploadDocumentInputAudio({
+            inputs: liveInputs,
+            ownerId: user.id,
+            shaderId: cloudId,
+            fileFromUrl: fileFromBlobUrl,
+            downloadAsset,
+            uploadAsset,
+            mediaType,
+            maxBytes: MAX_MEDIA_BYTES,
+          });
+          const durableComposition = compositionWithDocumentInputs(
+            migratedKind,
+            graph || {},
+            durableFills,
+            durableInputs,
+          );
           const dependencyGraph = isComposition
             ? durableComposition
             : normalizeComposition({ fills: durableFills, effects: [] });
@@ -4998,15 +5874,22 @@ export default function App() {
             composition: durableComposition,
             effectFills: durableFills,
             input: durableInput,
-            features: isComposition
-              ? collectCompositionFeatures(
-                  graph,
-                  resolvedByKeyWithDependencySnapshots(
-                    new Map(Object.entries(resolvedShadersRef.current)),
-                    dependencySnapshots,
-                  ),
-                )
-              : inferFeatures(source),
+            features: mergeShaderFeatures(
+              isComposition
+                ? collectCompositionFeatures(
+                    graph,
+                    resolvedByKeyWithDependencySnapshots(
+                      new Map(Object.entries(resolvedShadersRef.current)),
+                      dependencySnapshots,
+                    ),
+                  )
+                : inferFeatures(source),
+              {
+                supportsAudio: Boolean(
+                  session.features?.supportsAudio || draft.features?.supportsAudio,
+                ),
+              },
+            ),
             dependencySnapshots,
           });
           const payload = {
@@ -5150,7 +6033,7 @@ export default function App() {
       }
       if (lastError) {
         migratedUserRef.current = null;
-        setError(
+        reportAppError(
           `Some drafts could not sync: ${
             lastError.message || String(lastError)
           }`
@@ -5166,7 +6049,7 @@ export default function App() {
     migrate()
       .catch((migrationError) => {
         migratedUserRef.current = null;
-        setError(migrationError.message || String(migrationError));
+        reportAppError(migrationError.message || String(migrationError));
         if (!cancelled) scheduleRetry();
       })
       .finally(() => {
@@ -5211,11 +6094,9 @@ export default function App() {
         chooseItemRef.current(nextKey);
         return;
       }
-      choosePreset("dither", { syncUrl: Boolean(routeId) }).catch(
-        (presetError) => setError(presetError.message || String(presetError))
-      );
+      setShaderRoute();
     },
-    [choosePreset, routeId]
+    [setShaderRoute]
   );
 
   const removeDraft = useCallback(
@@ -5242,29 +6123,29 @@ export default function App() {
         const draft = drafts.find((item) => item.id === id);
         if (draft) {
           openDraft(draft).catch((draftError) =>
-            setError(draftError.message || String(draftError))
+            reportAppError(draftError.message || String(draftError))
           );
         } else {
-          setError("This draft is missing or was deleted.");
+          reportAppError("This draft is missing or was deleted.");
           setShaderRoute();
         }
         return;
       }
       if (getPreset(id).id === id) {
         choosePreset(id).catch((presetError) =>
-          setError(presetError.message || String(presetError))
+          reportAppError(presetError.message || String(presetError))
         );
         return;
       }
       const local = cloudShaders.find((item) => item.id === id);
       if (local) {
         openCloudShader(local).catch((cloudError) =>
-          setError(cloudError.message || String(cloudError))
+          reportAppError(cloudError.message || String(cloudError))
         );
         return;
       }
       openCloudShader({ id }).catch(() =>
-        setError("This shader is private, missing, or unavailable.")
+        reportAppError("This shader is private, missing, or unavailable.")
       );
     },
     [
@@ -5330,8 +6211,7 @@ export default function App() {
     const initialRoute = getAppRoute();
     if (
       authLoading ||
-      sharedLoadedRef.current ||
-      (!initialRoute.profile && !runtimeReady)
+      sharedLoadedRef.current
     ) {
       return;
     }
@@ -5362,7 +6242,6 @@ export default function App() {
     authLoading,
     openSharedRouteId,
     openRouteId,
-    runtimeReady,
   ]);
 
   useEffect(() => {
@@ -5410,7 +6289,7 @@ export default function App() {
         const draft = drafts.find((item) => item.id === id);
         if (draft) {
           openDraft(draft).catch((navigationError) =>
-            setError(navigationError.message || String(navigationError)),
+            reportAppError(navigationError.message || String(navigationError)),
           );
         }
       } else if (id.startsWith("cloud:")) {
@@ -5418,12 +6297,12 @@ export default function App() {
         const shader = cloudShaders.find((item) => item.id === cloudId);
         if (shader) {
           openCloudShader(shader).catch((navigationError) =>
-            setError(navigationError.message || String(navigationError)),
+            reportAppError(navigationError.message || String(navigationError)),
           );
         } else openRouteId(cloudId);
       } else {
         choosePreset(id).catch((presetError) =>
-          setError(presetError.message || String(presetError))
+          reportAppError(presetError.message || String(presetError))
         );
       }
     },
@@ -5648,7 +6527,7 @@ export default function App() {
         setDirty(true);
         compileCompositionRef.current?.(nextGraph);
       } catch (resetError) {
-        setError(resetError.message || String(resetError));
+        reportAppError(resetError.message || String(resetError));
       }
       return;
     }
@@ -5673,7 +6552,7 @@ export default function App() {
         hostRef.current?.redraw();
       }
     } catch (resetError) {
-      setError(resetError.message || String(resetError));
+      reportAppError(resetError.message || String(resetError));
     }
   }, [
     compile,
@@ -5725,7 +6604,7 @@ export default function App() {
         setDirty(true);
         setError(null);
       } catch (resetError) {
-        setError(resetError.message || String(resetError));
+        reportAppError(resetError.message || String(resetError));
       }
     },
     [compile, drafts, protectedPreview, resolvedShaders, viewMode]
@@ -5747,7 +6626,7 @@ export default function App() {
       setProps((current) => applyDefaultValuesToProps(current, currentValues));
       setError(null);
     } catch (saveError) {
-      setError(saveError.message || String(saveError));
+      reportAppError(saveError.message || String(saveError));
     }
   }, [protectedPreview, setRuntimeValues]);
 
@@ -5847,6 +6726,11 @@ export default function App() {
               draftId,
               fills,
               file,
+              liveSessionInputs(
+                sessionKindRef.current,
+                compositionRef.current,
+                documentInputsRef.current,
+              ),
             );
             draftMediaPersistenceRef.current = persistence;
             try {
@@ -5898,7 +6782,7 @@ export default function App() {
       const file = event.target.files?.[0];
       if (file) {
         pickFile(file).catch((fileError) =>
-          setError(fileError.message || String(fileError))
+          reportAppError(fileError.message || String(fileError))
         );
       }
       event.target.value = "";
@@ -5920,16 +6804,18 @@ export default function App() {
   const onPreviewFile = useCallback(
     (file) =>
       pickFile(file).catch((dropError) => {
-        setError(dropError.message || String(dropError));
+        reportAppError(dropError.message || String(dropError));
       }),
     [pickFile]
   );
 
   const exportFiles = useCallback(async () => {
     try {
-      await exportFigmaFiles(sourceRef.current, shaderName || "Shader");
+      await exportFigmaFiles(sourceRef.current, shaderName || "Shader", {
+        supportsAudio: supportsAudioRef.current,
+      });
     } catch (exportError) {
-      setError(exportError.message || String(exportError));
+      reportAppError(exportError.message || String(exportError));
     }
   }, [shaderName]);
 
@@ -5937,7 +6823,7 @@ export default function App() {
     const host = hostRef.current;
     const canvas = host?.canvas;
     if (!host?.ready || !canvas?.width || !canvas?.height) {
-      setError("Preview image is not ready to download.");
+      reportAppError("Preview image is not ready to download.");
       return;
     }
 
@@ -5964,13 +6850,13 @@ export default function App() {
         shouldResume: () => playPreferenceRef.current,
       });
     } catch (captureError) {
-      setError(
+      reportAppError(
         captureError?.message || "Could not capture the preview image."
       );
       return;
     }
     if (!blob) {
-      setError("Could not capture the preview image.");
+      reportAppError("Could not capture the preview image.");
       return;
     }
 
@@ -6014,12 +6900,20 @@ export default function App() {
     () => videoResolutionOptions(currentExportSize?.width, currentExportSize?.height),
     [currentExportSize]
   );
+  const exportSoundtrackAvailable = Boolean(
+    resolveExportSoundtrack({
+      kind,
+      composition,
+      effectFills,
+      documentInputs,
+    })?.url,
+  );
 
   const exportPreviewVideo = useCallback(async () => {
     const host = hostRef.current;
     const canvas = host?.canvas;
     if (!host?.ready || !canvas?.width || !canvas?.height) {
-      setError("Preview video is not ready to export.");
+      reportAppError("Preview video is not ready to export.");
       return;
     }
 
@@ -6049,24 +6943,69 @@ export default function App() {
     setVideoExportProgress({ progress: 0 });
 
     try {
-      const compositionExport =
-        kind === COMPOSITION_KIND
-          ? serializeCompositionExport(
-              composition,
-              pinAwareResolvedByKey,
-              null
-            )
-          : null;
-      const needsMediaInput =
-        kind === "effect" ||
-        (kind === COMPOSITION_KIND && !compositionExport?.isFill);
-      const inputVideo = needsMediaInput ? host.video : null;
-      const inputBitmap =
+      const compositionExport = serializeVideoExportComposition({
+        kind,
+        composition,
+        effectFills,
+        presetId,
+        source: sourceRef.current,
+        values: valuesRef.current,
+        resolvedByKey: pinAwareResolvedByKey,
+      });
+      const needsMediaInput = compositionExport
+        ? !compositionExport.isFill
+        : kind === "effect";
+      const inputVideo = needsMediaInput
+        ? host.compositionExportVideo?.() || host.video
+        : null;
+      let inputBitmap =
         needsMediaInput && !inputVideo
           ? await host.captureInputBitmap({ width, height })
           : null;
       if (needsMediaInput && !inputBitmap && !inputVideo) {
+        const paintGraph =
+          kind === COMPOSITION_KIND ? composition : { fills: effectFills };
+        const fill = normalizeComposition(paintGraph).fills.find(
+          (item) => item.enabled,
+        );
+        const paint = resolvePaintFill(fill?.paint, {
+          defaultImageUrl: defaultInputUrl,
+          defaultVideoUrl,
+        });
+        if (
+          paint &&
+          isPaintFillType(paint.type) &&
+          paint.type !== "video" &&
+          paint.type !== "webcam"
+        ) {
+          inputBitmap = await rasterizePaintFill(paint, width, height);
+        }
+      }
+      if (needsMediaInput && !inputBitmap && !inputVideo) {
         throw new Error("Could not snapshot the current shader input.");
+      }
+      const soundtrack =
+        videoExportSettings.includeAudio !== false
+          ? resolveExportSoundtrack({
+              kind,
+              composition,
+              effectFills,
+              documentInputs,
+            })
+          : null;
+      let exportAudio = null;
+      if (soundtrack?.url) {
+        const decoded = await decodeExportPcm(soundtrack.url);
+        const fileInput =
+          soundtrack.source === "audio"
+            ? enabledAudioFileInput(
+                kind === COMPOSITION_KIND ? composition?.inputs : documentInputs,
+              )
+            : null;
+        exportAudio = applyAudioPlayback(decoded, {
+          ...audioPlaybackSettings(fileInput?.audio),
+          durationSec: duration,
+        });
       }
       const blob = await renderVideoInWorker({
         source: compositionExport ? "" : sourceRef.current,
@@ -6077,6 +7016,8 @@ export default function App() {
         composition: compositionExport,
         inputBitmap,
         inputVideo,
+        audio: exportAudio,
+        supportsAudio: Boolean(exportAudio),
         width,
         height,
         duration,
@@ -6104,14 +7045,17 @@ export default function App() {
       window.setTimeout(() => URL.revokeObjectURL(url), 0);
       videoExportedToastRef.current?.showToast?.();
     } catch (videoError) {
-      setError(videoError.message || String(videoError));
+      reportAppError(videoError.message || String(videoError));
     } finally {
       setVideoExportProgress(null);
     }
   }, [
     composition,
+    documentInputs,
+    effectFills,
     kind,
     pinAwareResolvedByKey,
+    presetId,
     shaderName,
     videoExportSettings,
   ]);
@@ -6387,14 +7331,27 @@ export default function App() {
           };
         }
 
-        const durableComposition = isComposition
-          ? normalizeComposition({ ...graph, fills: durableFills })
-          : requestedKind === "effect"
-            ? {
-                effectFills: durableFills,
-                effectFill: durableFills[0] || null,
-              }
-            : {};
+        const liveInputs = liveSessionInputs(
+          requestedKind,
+          graph,
+          documentInputsRef.current,
+        );
+        const durableInputs = await uploadDocumentInputAudio({
+          inputs: liveInputs,
+          ownerId: user.id,
+          shaderId: targetShaderId,
+          fileFromUrl: fileFromBlobUrl,
+          downloadAsset,
+          uploadAsset,
+          mediaType,
+          maxBytes: MAX_MEDIA_BYTES,
+        });
+        const durableComposition = compositionWithDocumentInputs(
+          requestedKind,
+          graph,
+          durableFills,
+          durableInputs,
+        );
         const dependencyGraph = isComposition
           ? durableComposition
           : requestedKind === "effect"
@@ -6435,6 +7392,7 @@ export default function App() {
           !checkpointKind &&
           !stackedMedia.length &&
           !capturedPendingMedia &&
+          !hasDraftAudioMedia(liveInputs) &&
           contentFingerprint === lastSavedFingerprintRef.current
         ) {
           if (
@@ -6628,6 +7586,14 @@ export default function App() {
         if (saved.thumbnail_path) {
           try {
             const url = await getAssetUrl(saved.thumbnail_path);
+            cloudThumbnailPathsRef.current = {
+              ...cloudThumbnailPathsRef.current,
+              [saved.id]: saved.thumbnail_path,
+            };
+            cloudThumbnailExpiriesRef.current = {
+              ...cloudThumbnailExpiriesRef.current,
+              [saved.id]: Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS,
+            };
             setCloudThumbnails((current) => ({
               ...current,
               [saved.id]: url,
@@ -6736,9 +7702,11 @@ export default function App() {
             "This shader changed in another tab. Your local edits are still here; review and save again.",
             { error: true }
           );
-        }
-        if (saveStillActive) {
-          setError(formatSupabaseError(saveError, "Could not save shader."));
+        } else if (saveStillActive) {
+          showNotice(
+            formatSupabaseError(saveError, "Could not save shader."),
+            { error: true },
+          );
         }
         throw saveError;
       } finally {
@@ -6978,6 +7946,7 @@ export default function App() {
     versionPreviewAppliedRef.current = false;
     versionPreviewSnapshotRef.current = null;
     versionPreviewRequestRef.current += 1;
+    setVersionPreviewLoading(false);
     compileGenerationRef.current += 1;
     clearVersionPreviewMedia();
     if (!restoreSnapshot) return;
@@ -7025,6 +7994,7 @@ export default function App() {
       if (versionPreviewStateRef.current?.versionId === versionId) return;
 
       const requestId = ++versionPreviewRequestRef.current;
+      setVersionPreviewLoading(true);
 
       try {
         let target = versionPreviewCacheRef.current.get(versionId);
@@ -7134,6 +8104,7 @@ export default function App() {
             isAnimated: nextFeatures.isAnimated,
             usesMouse: nextFeatures.usesMouse,
             supportsRenderScale: supportsRenderScale(target.source),
+            supportsAudio: false,
           }
         );
         if (
@@ -7164,6 +8135,10 @@ export default function App() {
         }
       } catch {
         // Ignore preview failures while browsing version history.
+      } finally {
+        if (requestId === versionPreviewRequestRef.current) {
+          setVersionPreviewLoading(false);
+        }
       }
     },
     [
@@ -7272,6 +8247,8 @@ export default function App() {
           setSource(restored.source || "");
           setSessionKind(restored.kind);
           setComposition(nextComposition);
+          setSupportsAudio(Boolean(restored.features?.supportsAudio));
+          setDocumentInputs(readDocumentInputs(restoredComposition));
           let restoredFills = [];
           if (restored.kind === "effect") {
             restoredFills = readEffectFillsFromComposition(
@@ -7343,7 +8320,7 @@ export default function App() {
             { error: true }
           );
         }
-        setError(restoreError.message || String(restoreError));
+        reportAppError(restoreError.message || String(restoreError));
       } finally {
         setRestoringVersion(false);
       }
@@ -7472,7 +8449,6 @@ export default function App() {
     } catch (publishError) {
       setPublishToast(null);
       const message = formatSupabaseError(publishError, "Publish failed.");
-      setError(message);
       showNotice(message, { error: true });
     }
   }, [saveShader, saving, showNotice, user]);
@@ -7498,7 +8474,6 @@ export default function App() {
       if (!saved) return;
     } catch (unpublishError) {
       const message = formatSupabaseError(unpublishError, "Unpublish failed.");
-      setError(message);
       showNotice(message, { error: true });
     }
   }, [currentShader?.id, isOwner, saveShader, saving, showNotice, user]);
@@ -7594,18 +8569,23 @@ export default function App() {
           };
         }
 
-        const durableComposition =
-          duplicateKind === COMPOSITION_KIND
-            ? normalizeComposition({
-                ...targetComposition,
-                fills: durableFills,
-              })
-            : duplicateKind === "effect"
-              ? {
-                  effectFills: durableFills,
-                  effectFill: durableFills[0] || null,
-                }
-              : {};
+        const durableInputs = await uploadDocumentInputAudio({
+          inputs: readDocumentInputs(targetComposition),
+          ownerId: user.id,
+          shaderId: cloudId,
+          copyDurableAssets: true,
+          fileFromUrl: fileFromBlobUrl,
+          downloadAsset,
+          uploadAsset,
+          mediaType,
+          maxBytes: MAX_MEDIA_BYTES,
+        });
+        const durableComposition = compositionWithDocumentInputs(
+          duplicateKind,
+          targetComposition,
+          durableFills,
+          durableInputs,
+        );
         const durableDocument = buildShaderDocumentSnapshot({
           ...documentSnapshot,
           composition: durableComposition,
@@ -7668,7 +8648,6 @@ export default function App() {
       } catch (duplicateError) {
         const message =
           duplicateError.message || "Could not duplicate this version";
-        setError(message);
         showNotice(message, { error: true });
       } finally {
         setDuplicating(false);
@@ -7775,15 +8754,27 @@ export default function App() {
             mimeType: contentType,
           };
         }
-        const durableComposition =
-          duplicateKind === COMPOSITION_KIND
-            ? normalizeComposition({ ...liveGraph, fills: durableFills })
-            : duplicateKind === "effect"
-              ? {
-                  effectFills: durableFills,
-                  effectFill: durableFills[0] || null,
-                }
-              : {};
+        const durableInputs = await uploadDocumentInputAudio({
+          inputs: liveSessionInputs(
+            duplicateKind,
+            liveGraph,
+            documentInputsRef.current,
+          ),
+          ownerId: user.id,
+          shaderId: cloudId,
+          copyDurableAssets: true,
+          fileFromUrl: fileFromBlobUrl,
+          downloadAsset,
+          uploadAsset,
+          mediaType,
+          maxBytes: MAX_MEDIA_BYTES,
+        });
+        const durableComposition = compositionWithDocumentInputs(
+          duplicateKind,
+          liveGraph || {},
+          durableFills,
+          durableInputs,
+        );
         const dependencyGraph =
           duplicateKind === COMPOSITION_KIND
             ? durableComposition
@@ -7848,20 +8839,23 @@ export default function App() {
         showNotice("Private draft created");
         return;
       }
+      const liveInputs = liveSessionInputs(
+        duplicateKind,
+        liveGraph,
+        documentInputsRef.current,
+      );
       const annotatedFills = await persistLocalDraftMedia(
         id,
         liveFills,
-        mediaFile
+        mediaFile,
+        liveInputs,
       );
-      const localComposition =
-        duplicateKind === COMPOSITION_KIND
-          ? normalizeComposition({ ...liveGraph, fills: annotatedFills })
-          : duplicateKind === "effect"
-            ? {
-                effectFills: annotatedFills,
-                effectFill: annotatedFills[0] || null,
-              }
-            : {};
+      const localComposition = compositionWithDocumentInputs(
+        duplicateKind,
+        liveGraph || {},
+        annotatedFills,
+        liveInputs,
+      );
       const draft = {
         id,
         name,
@@ -7907,7 +8901,6 @@ export default function App() {
       });
       showNotice("Unsaved copy created");
     } catch (duplicateError) {
-      setError(duplicateError.message || String(duplicateError));
       showNotice(duplicateError.message || "Could not duplicate shader", {
         error: true,
       });
@@ -7970,7 +8963,7 @@ export default function App() {
         );
         return true;
       } catch (deleteError) {
-        setError(deleteError.message || String(deleteError));
+        showNotice(deleteError.message || String(deleteError), { error: true });
         return false;
       }
     },
@@ -8083,7 +9076,9 @@ export default function App() {
       await navigator.clipboard.writeText(embedUrl);
       showNotice("Embed link copied");
     } catch (copyError) {
-      setError(copyError.message || String(copyError));
+      showNotice(copyError.message || "Could not copy embed link", {
+        error: true,
+      });
     }
   }, [embedUrl, showNotice]);
 
@@ -8096,7 +9091,9 @@ export default function App() {
       await navigator.clipboard.writeText(embedCode);
       showNotice("Embed code copied");
     } catch (copyError) {
-      setError(copyError.message || String(copyError));
+      showNotice(copyError.message || "Could not copy embed code", {
+        error: true,
+      });
     }
   }, [
     embedCode,
@@ -8443,6 +9440,12 @@ export default function App() {
           origin: editorOrigin,
           author: editorAuthor,
         }),
+        {
+          includeEmptyKinds:
+            editorKind === "all"
+              ? [COMPOSITION_KIND, "effect", "fill"]
+              : [editorKind],
+        },
       ),
     [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
@@ -8478,12 +9481,16 @@ export default function App() {
           ...graph,
           fills: annotateLocalDraftMediaKeys(presetId, graph.fills),
         });
-        if (fillMediaEntries(graph.fills).length > 0) {
+        if (
+          fillMediaEntries(graph.fills).length > 0 ||
+          hasDraftAudioMedia(graph.inputs)
+        ) {
           draftMediaPersistenceErrorRef.current = null;
           const persistence = persistLocalDraftMedia(
             presetId,
             graph.fills,
             pendingMedia,
+            graph.inputs,
           );
           draftMediaPersistenceRef.current = persistence;
           persistence.then(
@@ -8497,9 +9504,10 @@ export default function App() {
               if (draftMediaPersistenceRef.current === persistence) {
                 draftMediaPersistenceRef.current = null;
               }
-              setError(
+              showNotice(
                 mediaError.message ||
                   "Local media could not be saved for browser reload.",
+                { error: true },
               );
             },
           );
@@ -8518,8 +9526,13 @@ export default function App() {
       setComposition(graph);
       setDirty(true);
     },
-    [pendingMedia, presetId, protectedPreview, user, viewMode]
+    [pendingMedia, presetId, protectedPreview, showNotice, user, viewMode]
   );
+
+  const onSupportsAudioChange = useCallback((next) => {
+    setSupportsAudio(Boolean(next));
+    setDirty(true);
+  }, []);
 
   const onCompositionSelectLayer = useCallback((layerId) => {
     selectedLayerIdRef.current = layerId;
@@ -8606,7 +9619,7 @@ export default function App() {
           figmaImportKind === "all" || figmaImportKind === "imported";
         return [
           ...(showSeparators
-            ? [{ key: `separator:figma:${kind}`, separatorLabel: label }]
+            ? [{ key: `separator:figma:${kind}`, separatorLabel: label, separatorKind: kind }]
             : []),
           ...items.map((shader) => {
             const key = figmaLibraryKey(kind, shader.id);
@@ -8769,6 +9782,12 @@ export default function App() {
         ref={propertiesPanelContentFadeRef}
         class="shader-properties-panel-content"
         padding="none"
+        inert={
+          sessionResourcesLoading || restoringVersion ? "" : undefined
+        }
+        aria-busy={
+          sessionResourcesLoading || restoringVersion ? "true" : undefined
+        }
       >
           {isComposerView ? (
             <>
@@ -8781,6 +9800,8 @@ export default function App() {
                 effectCards={compositionEffectCards}
                 nameCards={compositionNameCards}
                 readOnly={viewMode === "view" ? false : protectedPreview}
+                experimentalAudio={experimentalAudio}
+                onSupportsAudioChange={onSupportsAudioChange}
                 layerControls={
                   <Suspense fallback={null}>
                     <Controls
@@ -8859,12 +9880,14 @@ export default function App() {
               <CompositionEditor
                 key={presetId}
                 fillOnly
-                graph={{ fills: effectFills, effects: [] }}
+                graph={{ fills: effectFills, effects: [], inputs: documentInputs }}
                 imageUrl={inputImageUrl}
                 resolvedByKey={pinAwareResolvedByKey}
                 fillCards={compositionFillCards}
                 nameCards={compositionNameCards}
                 readOnly={viewMode === "view" ? false : protectedPreview}
+                experimentalAudio={experimentalAudio}
+                onSupportsAudioChange={onSupportsAudioChange}
                 onOpenShader={
                   viewMode === "view"
                     ? openReferencedShaderInView
@@ -8873,7 +9896,9 @@ export default function App() {
                 onResetLayer={resetEffectFillProperties}
                 onChange={(next) => {
                   clearShaderVersionPreviewRef.current?.();
-                  const nextFills = normalizeComposition(next).fills;
+                  const nextGraph = normalizeComposition(next);
+                  const nextFills = nextGraph.fills;
+                  setDocumentInputs(normalizeDocumentInputs(nextGraph.inputs));
                   const fills =
                     !user && isDraftId(presetId)
                       ? annotateLocalDraftMediaKeys(presetId, nextFills)
@@ -8881,13 +9906,15 @@ export default function App() {
                   if (
                     !user &&
                     isDraftId(presetId) &&
-                    fillMediaEntries(fills).length > 0
+                    (fillMediaEntries(fills).length > 0 ||
+                      hasDraftAudioMedia(nextGraph.inputs))
                   ) {
                     draftMediaPersistenceErrorRef.current = null;
                     const persistence = persistLocalDraftMedia(
                       presetId,
                       fills,
                       pendingMedia,
+                      nextGraph.inputs,
                     );
                     draftMediaPersistenceRef.current = persistence;
                     persistence.then(
@@ -8905,9 +9932,10 @@ export default function App() {
                         ) {
                           draftMediaPersistenceRef.current = null;
                         }
-                        setError(
+                        showNotice(
                           mediaError.message ||
                             "Local media could not be saved for browser reload.",
+                          { error: true },
                         );
                       },
                     );
@@ -8975,6 +10003,49 @@ export default function App() {
                 />
               </Suspense>
             </div>
+            <DocumentInputsPane
+              inputs={documentInputs}
+              readOnly={viewMode === "view" ? false : protectedPreview}
+              experimentalAudio={experimentalAudio}
+              hasLiveWebcam={
+                sessionKind === "effect" &&
+                liveWebcamFillCount({ fills: effectFills }) > 0
+              }
+              onChange={(next) => {
+                const normalized = normalizeDocumentInputs(next);
+                setDocumentInputs(normalized);
+                setDirty(true);
+                if (!user && isDraftId(presetId) && hasDraftAudioMedia(normalized)) {
+                  draftMediaPersistenceErrorRef.current = null;
+                  const persistence = persistLocalDraftMedia(
+                    presetId,
+                    sessionKind === "effect" ? effectFillsRef.current : [],
+                    pendingMedia,
+                    normalized,
+                  );
+                  draftMediaPersistenceRef.current = persistence;
+                  persistence.then(
+                    () => {
+                      if (draftMediaPersistenceRef.current === persistence) {
+                        draftMediaPersistenceRef.current = null;
+                      }
+                    },
+                    (mediaError) => {
+                      draftMediaPersistenceErrorRef.current = mediaError;
+                      if (draftMediaPersistenceRef.current === persistence) {
+                        draftMediaPersistenceRef.current = null;
+                      }
+                      showNotice(
+                        mediaError.message ||
+                          "Local media could not be saved for browser reload.",
+                        { error: true },
+                      );
+                    },
+                  );
+                }
+              }}
+              onSupportsAudioChange={onSupportsAudioChange}
+            />
             <ExportPropertiesPane
               disabled={Boolean(videoExportProgress)}
               onExport={() => openExportDialog(exportTab)}
@@ -9046,6 +10117,7 @@ export default function App() {
           previewRevision={card.cloud?.state_revision}
           animated={Boolean(card.features?.isAnimated)}
           interactive={Boolean(card.features?.usesMouse)}
+          audio={Boolean(card.features?.supportsAudio)}
           onAuthorClick={
             card.authorId
               ? () => openUserProfile(card.authorId, card.authorHandle)
@@ -9187,6 +10259,17 @@ export default function App() {
 
   const beginFigmaSync = useCallback(async () => {
     if (figmaSyncing || sessionKind === COMPOSITION_KIND) return;
+    const audioInputs = hasAudioInput(
+      sessionKind === COMPOSITION_KIND
+        ? compositionRef.current?.inputs
+        : documentInputsRef.current,
+    );
+    if (supportsAudioRef.current || audioInputs) {
+      showNotice("Shaders with audio cannot be pushed to Figma.", {
+        error: true,
+      });
+      return;
+    }
     const documentSnapshot = captureDocumentSnapshot();
     const snapshot = {
       name: shaderName.trim() || "Untitled Shader",
@@ -9284,6 +10367,19 @@ export default function App() {
   ]);
   const shaderEditorHeader = (
           <fig-header class="shader-editor-header" borderless>
+            {libraryNavMotion === "open" ? null : (
+            <fig-tooltip text="Show library">
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label="Show library"
+                onClick={showLibraryNav}
+              >
+                <ToggleSidebarIcon />
+              </fig-button>
+            </fig-tooltip>
+            )}
             <div
               className={
                 renaming ? "shader-title is-renaming" : "shader-title"
@@ -9417,6 +10513,7 @@ export default function App() {
                       (sessionKind === "fill" ? "fill" : "effect")
                     }
                     figmaSyncing={figmaSyncing}
+                    figmaPushBlocked={figmaPushBlocked}
                     triggerRef={moreMenuAnchorRef}
                     onAction={(value) =>
                       onShaderAction(value, moreMenuAnchorRef.current)
@@ -9524,6 +10621,14 @@ export default function App() {
       (fill) => fill.enabled && mediaFillType(fill.type),
     ),
   );
+  const previewResourcesLoading =
+    !fatal &&
+    (!runtimeReady ||
+      sessionResourcesLoading ||
+      inputBusy ||
+      versionPreviewLoading ||
+      restoringVersion ||
+      embedStatus === "loading");
   const previewCanvas = (
     <>
       {fatal ? (
@@ -9558,6 +10663,7 @@ export default function App() {
           }
           canvasTheme={canvasTheme}
           interactive={!routeEmbed}
+          loading={previewResourcesLoading}
         />
       )}
     </>
@@ -9590,7 +10696,7 @@ export default function App() {
   const embedStateMessage = fatal
     ? fatal
     : embedStatus === "loading"
-      ? `Loading ${embedItemLabel}…`
+      ? ""
       : embedStatus === "unavailable"
         ? `This ${embedItemLabel} is unavailable.`
         : embedStatus === "ready" && error
@@ -9607,7 +10713,7 @@ export default function App() {
           preview={
             <>
               {previewCanvas}
-              {previewTools}
+              {!previewResourcesLoading ? previewTools : null}
               {embedStateMessage ? (
                 <div className="embed-state" role="status" aria-live="polite">
                   {embedStateMessage}
@@ -9645,13 +10751,13 @@ export default function App() {
           onClose={() => setExportOpen(false)}
           onExportImage={() => {
             downloadPreviewImage().catch((downloadError) => {
-              setError(downloadError.message || String(downloadError));
+              reportAppError(downloadError.message || String(downloadError));
             });
           }}
           onExportVideo={() => {
             exportPreviewVideo().catch((videoError) => {
               setVideoExportProgress(null);
-              setError(videoError.message || String(videoError));
+              reportAppError(videoError.message || String(videoError));
             });
           }}
           onDownloadEmbed={downloadEmbedCode}
@@ -9671,6 +10777,13 @@ export default function App() {
               ),
             }))
           }
+          onIncludeAudioInput={(next) =>
+            setVideoExportSettings((settings) => ({
+              ...settings,
+              includeAudio: Boolean(next),
+            }))
+          }
+          audioAvailable={exportSoundtrackAvailable}
         />
       </>
     );
@@ -9694,8 +10807,24 @@ export default function App() {
     );
   }
 
+  const onAccountProfileChange = (displayName, profile) => {
+    if (!user) return;
+    setCloudShaders((current) =>
+      current.map((shader) =>
+        shader.owner_id === user.id
+          ? {
+              ...shader,
+              author_name: displayName,
+              author_handle: profile?.handle || shader.author_handle,
+            }
+          : shader,
+      ),
+    );
+  };
+
   return (
     <>
+      {viewMode !== "editor" && (
       <AppNav
         activeView={activeNavItem}
         onHome={() => {
@@ -9726,25 +10855,13 @@ export default function App() {
         onCanvasThemeChange={setCanvasTheme}
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
-        onProfileChange={(displayName, profile) => {
-          if (!user) return;
-          setCloudShaders((current) =>
-            current.map((shader) =>
-              shader.owner_id === user.id
-                ? {
-                    ...shader,
-                    author_name: displayName,
-                    author_handle: profile?.handle || shader.author_handle,
-                  }
-                : shader,
-            ),
-          );
-        }}
+        onProfileChange={onAccountProfileChange}
         onViewProfile={() => {
           if (user?.id) openUserProfile(user.id);
         }}
         onNotice={showNotice}
       />
+      )}
       <div className="app-shell-content">
       {viewMode === "profile" && (
         <ProfileView
@@ -9772,13 +10889,43 @@ export default function App() {
       )}
 
       {viewMode === "editor" && (
-      <div className="editor-view" ref={editorViewRef}>
+      <div
+        className="editor-view"
+        ref={editorViewRef}
+        style={{ "--app-nav-shift": `${appNavShift}px` }}
+        data-library-motion={libraryNavMotion}
+        data-library-collapsed={
+          libraryNavMotion === "open" ? "false" : "true"
+        }
+      >
+        {libraryNavMounted ? (
+        <div
+          ref={appNavRef}
+          className="library-rail"
+          aria-hidden={libraryNavMotion === "open" ? undefined : "true"}
+        >
         <nav
           className="app-nav"
-          style={{ "--app-nav-width": `${appNavWidth}px` }}
+          style={{
+            "--app-nav-width": `${appNavWidth}px`,
+          }}
         >
           <div className="app-nav-headers">
             <fig-header class="app-nav-library-filters">
+              <fig-tooltip text="Home">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Home"
+                  onClick={() => {
+                    setActiveNavItem("home");
+                    openHome();
+                  }}
+                >
+                  <fig-icon name="arrow-left" />
+                </fig-button>
+              </fig-tooltip>
               <fig-input-text
                 class="app-nav-search"
                 type="search"
@@ -9797,34 +10944,18 @@ export default function App() {
                   origin={editorOrigin}
                   onOriginChange={setEditorOrigin}
                   authors={publishedAuthors}
+                  view={libraryView}
+                  onViewChange={setLibraryView}
                 />
-                <fig-tooltip
-                  text={
-                    libraryView === "grid"
-                      ? "Toggle to list view"
-                      : "Toggle to grid view"
-                  }
-                >
+                <fig-tooltip text="Hide library">
                   <fig-button
                     type="button"
                     variant="ghost"
                     icon="true"
-                    aria-label={
-                      libraryView === "grid"
-                        ? "Toggle to list view"
-                        : "Toggle to grid view"
-                    }
-                    onClick={() =>
-                      setLibraryView((current) =>
-                        current === "grid" ? "list" : "grid"
-                      )
-                    }
+                    aria-label="Hide library"
+                    onClick={hideLibraryNav}
                   >
-                    {libraryView === "grid" ? (
-                      <GridViewIcon />
-                    ) : (
-                      <ListViewIcon />
-                    )}
+                    <ToggleSidebarIcon />
                   </fig-button>
                 </fig-tooltip>
               </hstack>
@@ -9836,6 +10967,11 @@ export default function App() {
             layout={libraryView}
             onChoice={chooseItem}
             onContextMenu={onShaderContextMenu}
+            onAdd={(kind) => {
+              if (kind === "effect") createDraft("blank-effect");
+              else if (kind === "fill") createDraft("blank-fill");
+              else if (kind === "composition") createCompositionDraft();
+            }}
           />
           <ShaderActionsMenu
             menuRef={shaderContextMenuRef}
@@ -9867,8 +11003,28 @@ export default function App() {
               (sessionKind === "fill" ? "fill" : "effect")
             }
             figmaSyncing={figmaSyncing}
+            figmaPushBlocked={figmaPushBlocked}
             onAction={onShaderAction}
           />
+          <fig-footer>
+            <AccountMenu
+              layout="bar"
+              position="top right"
+              open={authOpen}
+              onOpenChange={setAuthOpen}
+              theme={theme}
+              onThemeChange={setTheme}
+              canvasTheme={canvasTheme}
+              onCanvasThemeChange={setCanvasTheme}
+              settingsOpen={settingsOpen}
+              onSettingsOpenChange={setSettingsOpen}
+              onProfileChange={onAccountProfileChange}
+              onViewProfile={() => {
+                if (user?.id) openUserProfile(user.id);
+              }}
+              onNotice={showNotice}
+            />
+          </fig-footer>
         </nav>
 
         <div
@@ -9896,6 +11052,8 @@ export default function App() {
             );
           }}
         />
+        </div>
+        ) : null}
 
       {isComposerView ? (
         <ComposerView
@@ -9905,7 +11063,7 @@ export default function App() {
           preview={
             <>
               {previewCanvas}
-              {previewTools}
+              {!previewResourcesLoading ? previewTools : null}
             </>
           }
           properties={renderPropertiesPanel()}
@@ -10046,6 +11204,8 @@ export default function App() {
                     planOwnerId={isOwner ? user.id : null}
                     planShaderId={isOwner ? currentShader.id : null}
                     featuresRef={shaderFeaturesRef}
+                    experimentalAudioRef={experimentalAudioRef}
+                    compileErrorRef={compileErrorRef}
                     user={user}
                     onApplySource={onSourceChange}
                     onAppliedCheckpoint={checkpointAgentVersion}
@@ -10060,7 +11220,7 @@ export default function App() {
           preview={
             <>
               {previewCanvas}
-              {previewTools}
+              {!previewResourcesLoading ? previewTools : null}
             </>
           }
           properties={renderPropertiesPanel()}
@@ -10136,13 +11296,13 @@ export default function App() {
         onClose={() => setExportOpen(false)}
         onExportImage={() => {
           downloadPreviewImage().catch((downloadError) => {
-            setError(downloadError.message || String(downloadError));
+            reportAppError(downloadError.message || String(downloadError));
           });
         }}
         onExportVideo={() => {
           exportPreviewVideo().catch((videoError) => {
             setVideoExportProgress(null);
-            setError(videoError.message || String(videoError));
+            reportAppError(videoError.message || String(videoError));
           });
         }}
         onDownloadEmbed={downloadEmbedCode}
@@ -10154,14 +11314,21 @@ export default function App() {
             duration: Number(event.target.value ?? event.detail),
           }))
         }
-        onImageQualityInput={(event) =>
-          setVideoExportSettings((settings) => ({
-            ...settings,
-            imageQuality: resolveImageExportQuality(
-              event.target.value ?? event.detail
-            ),
-          }))
-        }
+          onImageQualityInput={(event) =>
+            setVideoExportSettings((settings) => ({
+              ...settings,
+              imageQuality: resolveImageExportQuality(
+                event.target.value ?? event.detail
+              ),
+            }))
+          }
+          onIncludeAudioInput={(next) =>
+            setVideoExportSettings((settings) => ({
+              ...settings,
+              includeAudio: Boolean(next),
+            }))
+          }
+          audioAvailable={exportSoundtrackAvailable}
       />
 
       <DeleteShaderDialog
@@ -10396,10 +11563,6 @@ export default function App() {
         videoExportToastRef={videoExportToastRef}
         videoExportedToastRef={videoExportedToastRef}
         videoExportProgress={videoExportProgress}
-        inputLoadingToastRef={inputLoadingToastRef}
-        inputLoadingLabel={
-          fillsLoading && !uploading ? "Loading fills…" : "Loading input…"
-        }
         noticeToastRef={noticeToastRef}
         notice={notice}
         onNoticeClose={() => setNotice(null)}

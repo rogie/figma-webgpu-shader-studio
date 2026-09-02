@@ -58,7 +58,9 @@ export async function listAvailableProviderModels(
  * @param {string} options.source
  * @param {string} options.kind
  * @param {string} options.fileName
- * @param {{ isAnimated?: boolean, usesMouse?: boolean }} [options.features]
+ * @param {{ isAnimated?: boolean, usesMouse?: boolean, supportsAudio?: boolean }} [options.features]
+ * @param {boolean} [options.experimentalAudio]
+ * @param {string} [options.compileError]
  * @param {string} [options.skills]
  * @param {"agent"|"plan"} [options.mode]
  * @param {string} [options.cursorAgentId]
@@ -76,6 +78,8 @@ export async function* streamChat({
   skills,
   mode,
   cursorAgentId,
+  experimentalAudio,
+  compileError,
   signal,
 }) {
   if (!isSupabaseConfigured) {
@@ -112,6 +116,8 @@ export async function* streamChat({
       skills,
       mode,
       cursorAgentId,
+      experimentalAudio,
+      compileError,
     })),
     signal,
   });

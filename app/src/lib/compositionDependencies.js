@@ -3,7 +3,7 @@ import {
   parseCompositionShaderId,
   referencedShaderKeys,
 } from "./composition.js";
-import { inferFeatures } from "../runtime/params.js";
+import { inferFeatures, mergeShaderFeatures } from "../runtime/params.js";
 
 function aliases(value) {
   const parsed = parseCompositionShaderId(value);
@@ -89,7 +89,7 @@ function durableSnapshot(row, fallbackKey) {
       row.parameter_values && typeof row.parameter_values === "object"
         ? structuredClone(row.parameter_values)
         : {},
-    features: inferFeatures(row.source),
+    features: mergeShaderFeatures(inferFeatures(row.source), row.features),
     composition:
       row.composition && typeof row.composition === "object"
         ? structuredClone(row.composition)

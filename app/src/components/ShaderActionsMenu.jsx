@@ -14,6 +14,7 @@ export default function ShaderActionsMenu({
   figmaLinked = false,
   figmaKind = "effect",
   figmaSyncing = false,
+  figmaPushBlocked = false,
   showRename = true,
   showSave = true,
   showTrigger = true,
@@ -82,12 +83,14 @@ export default function ShaderActionsMenu({
           <fig-separator label="Figma" />
           <fig-menu-item
             value="sync-figma"
-            disabled={figmaSyncing ? "" : undefined}
+            disabled={figmaSyncing || figmaPushBlocked ? "" : undefined}
           >
-            {figmaShaderActionLabel({
-              linked: figmaLinked,
-              kind: figmaKind,
-            })}
+            {figmaPushBlocked
+              ? "Can't push audio shaders"
+              : figmaShaderActionLabel({
+                  linked: figmaLinked,
+                  kind: figmaKind,
+                })}
           </fig-menu-item>
         </>
       )}

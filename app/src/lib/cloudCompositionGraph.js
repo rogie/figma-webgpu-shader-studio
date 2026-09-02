@@ -34,7 +34,11 @@ export function cloudCompositionGraph(row, { defaultImageUrl = "" } = {}) {
         },
       ];
     }
-    return normalizeComposition({ fills, effects: [] });
+    return normalizeComposition({
+      fills,
+      effects: [],
+      inputs: row.composition?.inputs,
+    });
   }
 
   const graph = normalizeComposition(row.composition);

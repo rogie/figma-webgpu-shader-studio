@@ -1,5 +1,6 @@
 import { inferFeatures } from "../runtime/params.js";
 import { isPaintFillType } from "./paintFill.js";
+import { normalizeDocumentInputs } from "./documentInputs.js";
 
 export const COMPOSITION_KIND = "composition";
 export const COMPOSITION_FILL_ID = "fill";
@@ -58,6 +59,7 @@ export function emptyComposition() {
     fills: [fill],
     fill,
     effects: [],
+    inputs: [],
   };
 }
 
@@ -230,9 +232,11 @@ export function normalizeComposition(value) {
   const effects = Array.isArray(graph.effects)
     ? graph.effects.map(normalizeEffect).filter((effect) => effect.shaderId)
     : [];
+  const inputs = normalizeDocumentInputs(graph.inputs);
   return withFillAlias(
     {
       effects: effects.slice(0, MAX_COMPOSITION_EFFECTS),
+      inputs,
     },
     fills
   );
@@ -447,37 +451,70 @@ function resolvedFeatures(resolved) {
     return {
       isAnimated: Boolean(resolved.features.isAnimated),
       usesMouse: Boolean(resolved.features.usesMouse),
+      supportsAudio: Boolean(resolved.features.supportsAudio),
     };
   }
   if (typeof resolved?.source === "string" && resolved.source) {
-    return inferFeatures(resolved.source);
+    return { ...inferFeatures(resolved.source), supportsAudio: false };
   }
-  return { isAnimated: false, usesMouse: false };
+  return { isAnimated: false, usesMouse: false, supportsAudio: false };
+}
+
+export function isLiveWebcamFill(fill) {
+  if (!fill) return false;
+  const paintType = fill.paint?.type;
+  if (paintType === "webcam") return fill.paint?.webcam?.live !== false;
+  return false;
+}
+
+export function liveWebcamFillCount(graph) {
+  return normalizeComposition(graph).fills.filter(isLiveWebcamFill).length;
+}
+
+export function enabledVideoFillSoundtrack(graph) {
+  for (const fill of normalizeComposition(graph).fills) {
+    if (!fill.enabled) continue;
+    if (fill.paint?.type === "video" && fill.paint.video?.url) {
+      return fill;
+    }
+  }
+  return null;
+}
+
+function graphHasAudioMotion(graph) {
+  const normalized = normalizeComposition(graph);
+  return normalized.inputs.some(
+    (input) =>
+      input.enabled &&
+      (input.type === "microphone" ||
+        (input.type === "audio" && (input.audio?.url || input.audio?.assetPath))),
+  );
 }
 
 export function isCompositionPlayable(graph, resolvedByKey = new Map()) {
   const normalized = normalizeComposition(graph);
   for (const compositionFill of normalized.fills) {
+    if (isLiveWebcamFill(compositionFill)) return true;
     if (!compositionFill.enabled) continue;
     if (compositionFill.type === "video") return true;
-    if (
-      compositionFill.paint?.type === "video" ||
-      compositionFill.paint?.type === "webcam"
-    ) {
+    if (compositionFill.paint?.type === "video") {
       return true;
     }
     if (compositionFill.type === "shader" && compositionFill.shaderId) {
       const fill = resolvedByKey.get(compositionFill.shaderId);
-      if (fill && fill.kind !== COMPOSITION_KIND && resolvedFeatures(fill).isAnimated) {
-        return true;
+      if (fill && fill.kind !== COMPOSITION_KIND) {
+        const features = resolvedFeatures(fill);
+        if (features.isAnimated || features.supportsAudio) return true;
       }
     }
   }
+  if (graphHasAudioMotion(normalized)) return true;
   return normalized.effects.some((effect) => {
     if (!effect.enabled || !effect.shaderId) return false;
     const resolved = resolvedByKey.get(effect.shaderId);
     if (!resolved || resolved.kind === COMPOSITION_KIND) return false;
-    return resolvedFeatures(resolved).isAnimated;
+    const features = resolvedFeatures(resolved);
+    return features.isAnimated || features.supportsAudio;
   });
 }
 
@@ -487,7 +524,16 @@ export function isDocumentPlayable({
   composition,
   effectFills,
   resolvedByKey = new Map(),
+  features = null,
+  inputs = null,
 } = {}) {
+  if (features?.supportsAudio) return true;
+  const documentInputs = Array.isArray(inputs)
+    ? inputs
+    : composition?.inputs || [];
+  if (graphHasAudioMotion({ fills: [], effects: [], inputs: documentInputs })) {
+    return true;
+  }
   if (kind === COMPOSITION_KIND) {
     return isCompositionPlayable(composition, resolvedByKey);
   }
@@ -496,7 +542,7 @@ export function isDocumentPlayable({
   }
   if (kind === "effect") {
     return isCompositionPlayable(
-      { fills: Array.isArray(effectFills) ? effectFills : [] },
+      { fills: Array.isArray(effectFills) ? effectFills : [], inputs: documentInputs },
       resolvedByKey,
     );
   }
@@ -506,10 +552,13 @@ export function isDocumentPlayable({
 export function collectCompositionFeatures(graph, resolvedByKey = new Map()) {
   const normalized = normalizeComposition(graph);
   let usesMouse = false;
+  let supportsAudio = false;
   const consider = (key) => {
     const resolved = resolvedByKey.get(key);
     if (!resolved || resolved.kind === COMPOSITION_KIND) return;
-    if (resolvedFeatures(resolved).usesMouse) usesMouse = true;
+    const features = resolvedFeatures(resolved);
+    if (features.usesMouse) usesMouse = true;
+    if (features.supportsAudio) supportsAudio = true;
   };
   for (const fill of normalized.fills) {
     if (fill.enabled && fill.type === "shader" && fill.shaderId) {
@@ -522,6 +571,7 @@ export function collectCompositionFeatures(graph, resolvedByKey = new Map()) {
   return {
     isAnimated: isCompositionPlayable(normalized, resolvedByKey),
     usesMouse,
+    ...(supportsAudio ? { supportsAudio: true } : {}),
   };
 }
 

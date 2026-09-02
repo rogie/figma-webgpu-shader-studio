@@ -245,6 +245,7 @@ export default function ProfileView({
                   previewRevision={card.cloud.state_revision}
                   animated={Boolean(card.features?.isAnimated)}
                   interactive={Boolean(card.features?.usesMouse)}
+                  audio={Boolean(card.features?.supportsAudio)}
                 />
               </fig-choice>
             ),

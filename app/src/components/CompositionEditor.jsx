@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 import {
   compositionLayerName,
   compositionRefAliases,
+  isLiveWebcamFill,
+  liveWebcamFillCount,
   MAX_COMPOSITION_EFFECTS,
   MAX_COMPOSITION_FILLS,
   mergeLayerValues,
@@ -12,6 +14,14 @@ import {
   resolveReferencedShaderSource,
   resolveShaderFillKey,
 } from "../lib/composition.js";
+import {
+  createDocumentInput,
+  inputTypeLabel,
+  MAX_DOCUMENT_INPUTS,
+  audioInputHasFile,
+  audioPlaybackSettings,
+  normalizeDocumentInputs,
+} from "../lib/documentInputs.js";
 import { graphTypeForPaint, isPaintFillType, resolvePaintFill } from "../lib/paintFill.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { popupProtectedFromHandleDismiss } from "../lib/canvasHandlePopupGuard.js";
@@ -23,6 +33,8 @@ import { valuesMatchDefaults } from "../runtime/params.js";
 import defaultInputUrl from "../assets/default-input.png";
 import { defaultVideoUrl } from "../runtime/sample.js";
 import Controls from "./Controls.jsx";
+import MicrophoneIcon from "./MicrophoneIcon.jsx";
+import VolumeIcon from "./VolumeIcon.jsx";
 import ShaderPicker, {
   SHADER_PICKER_ANCHOR_IDS,
   SHADER_PICKER_TRIGGER_IDS,
@@ -265,6 +277,23 @@ function ResetPropertiesButton({
   );
 }
 
+function layerToggleLabel(visibility, noun, enabled) {
+  if (visibility === "microphone" || visibility === "audio") {
+    return enabled ? `Mute ${noun}` : `Unmute ${noun}`;
+  }
+  return enabled ? `Hide ${noun}` : `Show ${noun}`;
+}
+
+function LayerVisibilityIcon({ visibility, enabled }) {
+  if (visibility === "microphone") {
+    return <MicrophoneIcon muted={!enabled} />;
+  }
+  if (visibility === "audio") {
+    return <VolumeIcon muted={!enabled} />;
+  }
+  return <fig-icon name={enabled ? "visible" : "hidden"} />;
+}
+
 function PropertiesLayerRow({
   id,
   name,
@@ -272,12 +301,13 @@ function PropertiesLayerRow({
   enabled = true,
   readOnly = false,
   noun = "effect",
+  visibility = "layer",
   control = null,
   onOpen,
   onToggleVisible,
   onRemove,
 }) {
-  const hideLabel = enabled ? `Hide ${noun}` : `Show ${noun}`;
+  const hideLabel = layerToggleLabel(visibility, noun, enabled);
   const removeLabel = `Remove ${noun}`;
   return (
     <div id={id} className="properties-layer-row" aria-label={name}>
@@ -308,7 +338,7 @@ function PropertiesLayerRow({
             aria-label={hideLabel}
             onClick={onToggleVisible}
           >
-            <fig-icon name={enabled ? "visible" : "hidden"} />
+            <LayerVisibilityIcon visibility={visibility} enabled={enabled} />
           </fig-button>
         </fig-tooltip>
       )}
@@ -696,6 +726,326 @@ export function ExportPropertiesPane({ disabled = false, onExport }) {
   );
 }
 
+function AudioInputControl({
+  input,
+  disabled = false,
+  anchorId = "",
+  onChange,
+}) {
+  const fileRef = useRef(null);
+  const popupRef = useRef(null);
+  const [open, setOpen] = useState(false);
+  const hasFile = audioInputHasFile(input);
+  const label = input.audio?.name || input.audio?.url || "Choose audio";
+  const playback = audioPlaybackSettings(input.audio);
+  const gainPercent = Math.round(playback.gain * 100);
+  const anchorSelector = anchorId ? `#${anchorId}` : undefined;
+
+  const commitAudio = useCallback(
+    (nextAudio) => {
+      onChange?.({
+        ...input,
+        audio: { ...input.audio, ...nextAudio },
+      });
+    },
+    [input, onChange]
+  );
+
+  const replaceFile = useCallback(
+    (file) => {
+      if (!file) return;
+      const previous = input.audio?.url;
+      if (previous && previous.startsWith("blob:")) {
+        URL.revokeObjectURL(previous);
+      }
+      const kept = audioPlaybackSettings(input.audio);
+      onChange?.({
+        ...input,
+        audio: {
+          url: URL.createObjectURL(file),
+          name: file.name,
+          gain: kept.gain,
+          monitor: kept.monitor,
+          loop: kept.loop,
+        },
+      });
+    },
+    [input, onChange]
+  );
+
+  useEffect(() => {
+    if (!hasFile) {
+      if (open) setOpen(false);
+      return undefined;
+    }
+    const popup = popupRef.current;
+    if (!popup) return undefined;
+    popup.setAttribute("closedby", "any");
+    if ("closedBy" in popup) popup.closedBy = "any";
+    if (anchorSelector) popup.setAttribute("anchor", anchorSelector);
+    const onClose = () => setOpen(false);
+    popup.addEventListener("close", onClose);
+    popup.addEventListener("cancel", onClose);
+    if (open && !disabled) popup.open = true;
+    else popup.open = false;
+    return () => {
+      popup.removeEventListener("close", onClose);
+      popup.removeEventListener("cancel", onClose);
+    };
+  }, [anchorSelector, disabled, hasFile, open]);
+
+  return (
+    <div className="composition-fill-control">
+      <fig-button
+        type="button"
+        variant={open ? "ghost" : "input"}
+        size="large"
+        full=""
+        align="start"
+        title={label}
+        aria-haspopup={hasFile ? "dialog" : undefined}
+        aria-expanded={hasFile && open ? "true" : "false"}
+        selected={open ? "" : undefined}
+        disabled={disabled ? "" : undefined}
+        onClick={() => {
+          if (hasFile) setOpen((current) => !current);
+          else fileRef.current?.click();
+        }}
+      >
+        <span className="properties-layer-row-label">{label}</span>
+      </fig-button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept="audio/*,.mp3,.wav,.ogg,.m4a,.aac,.flac"
+        hidden
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = "";
+          replaceFile(file);
+        }}
+      />
+      {hasFile
+        ? portalToFigOverlay(
+            <dialog
+              is="fig-popup"
+              ref={popupRef}
+              class="composition-layer-props"
+              position="left"
+              popover="manual"
+              closedby="any"
+              anchor={anchorSelector}
+            >
+              <fig-header>
+                <h3>{input.audio?.name || "Audio"}</h3>
+                <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
+                  <fig-tooltip text="Close">
+                    <fig-button
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Close"
+                      onClick={() => setOpen(false)}
+                    >
+                      <fig-icon name="close" />
+                    </fig-button>
+                  </fig-tooltip>
+                </hstack>
+              </fig-header>
+              <fig-content class="composition-layer-props-content">
+                <fig-field direction="horizontal" columns="thirds">
+                  <label>Gain</label>
+                  <fig-slider
+                    value={gainPercent}
+                    min="0"
+                    max="200"
+                    step="1"
+                    units="%"
+                    full=""
+                    onInput={(event) =>
+                      commitAudio({
+                        gain: Number(event.target.value) / 100,
+                      })
+                    }
+                    dangerouslySetInnerHTML={opaqueContent}
+                  />
+                </fig-field>
+                <fig-field direction="horizontal" columns="thirds">
+                  <label>Hear audio</label>
+                  <fig-switch
+                    checked={playback.monitor ? "" : undefined}
+                    aria-label="Hear audio"
+                    onInput={(event) =>
+                      commitAudio({
+                        monitor: Boolean(event.target.checked),
+                      })
+                    }
+                    dangerouslySetInnerHTML={opaqueContent}
+                  />
+                </fig-field>
+                <fig-field direction="horizontal" columns="thirds">
+                  <label>Loop</label>
+                  <fig-switch
+                    checked={playback.loop ? "" : undefined}
+                    aria-label="Loop"
+                    onInput={(event) =>
+                      commitAudio({ loop: Boolean(event.target.checked) })
+                    }
+                    dangerouslySetInnerHTML={opaqueContent}
+                  />
+                </fig-field>
+                <fig-field>
+                  <fig-button
+                    type="button"
+                    variant="secondary"
+                    full=""
+                    disabled={disabled ? "" : undefined}
+                    onClick={() => fileRef.current?.click()}
+                  >
+                    Replace file
+                  </fig-button>
+                </fig-field>
+              </fig-content>
+            </dialog>
+          )
+        : null}
+    </div>
+  );
+}
+
+export function DocumentInputsPane({
+  inputs = [],
+  readOnly = false,
+  experimentalAudio = false,
+  hasLiveWebcam = false,
+  onChange,
+  onSupportsAudioChange,
+}) {
+  const normalized = normalizeDocumentInputs(inputs);
+  const audioEnabled = experimentalAudio;
+  const atInputLimit = normalized.length >= MAX_DOCUMENT_INPUTS;
+  const canAdd = experimentalAudio && !readOnly && !atInputLimit;
+  const commitInputs = useCallback(
+    (next) => {
+      const committed = normalizeDocumentInputs(next);
+      onSupportsAudioChange?.(committed.length > 0);
+      onChange?.(committed);
+    },
+    [onChange, onSupportsAudioChange]
+  );
+  const addInput = useCallback(
+    (type) => {
+      if (readOnly || !experimentalAudio) return;
+      if (normalized.length >= MAX_DOCUMENT_INPUTS) return;
+      if (type === "microphone" && hasLiveWebcam) return;
+      if (type !== "audio" && type !== "microphone") return;
+      commitInputs([...normalized, createDocumentInput(type)]);
+    },
+    [
+      commitInputs,
+      experimentalAudio,
+      hasLiveWebcam,
+      normalized,
+      readOnly,
+    ]
+  );
+  const addMenuRef = useFigMenuChange(addInput);
+  const updateInput = useCallback(
+    (id, next) => {
+      onChange?.(normalized.map((item) => (item.id === id ? next : item)));
+    },
+    [normalized, onChange]
+  );
+
+  return (
+    <div className="properties-pane">
+      <fig-header borderless>
+        <h3>Sources</h3>
+        {!readOnly && (
+          <hstack>
+            <fig-menu ref={addMenuRef} position="bottom right">
+              <fig-tooltip text="Add input">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  fig-menu-trigger=""
+                  aria-label="Add input"
+                  disabled={!canAdd ? "" : undefined}
+                >
+                  <fig-icon name="add" />
+                </fig-button>
+              </fig-tooltip>
+              <fig-menu-item
+                value="audio"
+                disabled={!experimentalAudio || atInputLimit ? "" : undefined}
+              >
+                Audio
+              </fig-menu-item>
+              <fig-menu-item
+                value="microphone"
+                disabled={
+                  !experimentalAudio || atInputLimit || hasLiveWebcam
+                    ? ""
+                    : undefined
+                }
+              >
+                Microphone
+              </fig-menu-item>
+            </fig-menu>
+          </hstack>
+        )}
+      </fig-header>
+      {!experimentalAudio && normalized.length > 0 ? (
+        <p className="composition-notice">
+          This shader uses audio. Enable Audio inputs in Settings → Experimental.
+        </p>
+      ) : null}
+      {normalized.length > 0 && (
+        <div className="composition-effect-list">
+          {normalized.map((input) => {
+            const rowId =
+              input.type === "audio" ? layerPropsAnchorId(input.id) : undefined;
+            return (
+            <PropertiesLayerRow
+              key={input.id}
+              id={rowId}
+              name={
+                input.type === "audio"
+                  ? input.audio?.name || "Audio"
+                  : inputTypeLabel(input.type)
+              }
+              enabled={input.enabled}
+              readOnly={readOnly || !audioEnabled}
+              noun={input.type === "microphone" ? "microphone" : "audio"}
+              visibility={
+                input.type === "microphone" ? "microphone" : "audio"
+              }
+              control={
+                input.type === "audio" ? (
+                  <AudioInputControl
+                    input={input}
+                    anchorId={rowId}
+                    disabled={readOnly || !audioEnabled || !input.enabled}
+                    onChange={(next) => updateInput(input.id, next)}
+                  />
+                ) : null
+              }
+              onToggleVisible={() =>
+                updateInput(input.id, { ...input, enabled: !input.enabled })
+              }
+              onRemove={() =>
+                commitInputs(normalized.filter((item) => item.id !== input.id))
+              }
+            />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function FigmaPropertiesPane({
   shader,
   loading = false,
@@ -1061,6 +1411,8 @@ export default function CompositionEditor({
   onExport,
   exportDisabled = false,
   fillOnly = false,
+  experimentalAudio = false,
+  onSupportsAudioChange,
 }) {
   const propertiesPopupRef = useRef(null);
   const propertiesContentRef = useRef(null);
@@ -1294,6 +1646,15 @@ export default function CompositionEditor({
 
   const applyPaintFill = useCallback(
     (fillId, paint, persist) => {
+      if (
+        paint?.type === "webcam" &&
+        paint.webcam?.live !== false &&
+        normalized.fills.some(
+          (fill) => fill.id !== fillId && isLiveWebcamFill(fill),
+        )
+      ) {
+        return;
+      }
       imageFillTargetIdRef.current = fillId;
       if (persist) {
         update({
@@ -1449,6 +1810,9 @@ export default function CompositionEditor({
       ) {
         return;
       }
+      if (type === "webcam" && liveWebcamFillCount(normalized) > 0) {
+        return;
+      }
       const fill =
         type === "shader"
           ? {
@@ -1535,7 +1899,12 @@ export default function CompositionEditor({
                 <fig-menu-item value="gradient">Gradient</fig-menu-item>
                 <fig-menu-item value="image">Image</fig-menu-item>
                 <fig-menu-item value="video">Video</fig-menu-item>
-                <fig-menu-item value="webcam">Webcam</fig-menu-item>
+                <fig-menu-item
+                  value="webcam"
+                  disabled={liveWebcamFillCount(normalized) > 0 ? "" : undefined}
+                >
+                  Webcam
+                </fig-menu-item>
                 <fig-menu-item value="shader">Shader</fig-menu-item>
               </fig-menu>
             </hstack>
@@ -1546,7 +1915,7 @@ export default function CompositionEditor({
             A composition can use up to {MAX_COMPOSITION_FILLS} fills.
           </p>
         )}
-        {normalized.fills.length ? (
+        {normalized.fills.length > 0 && (
           <fig-reorder
             ref={fillsReorderRef}
             class="composition-effect-list"
@@ -1584,10 +1953,6 @@ export default function CompositionEditor({
               />
             ))}
           </fig-reorder>
-        ) : (
-          <p className="composition-notice">
-            No fills. Use Add fill to create one.
-          </p>
         )}
       </div>
 
@@ -1648,6 +2013,17 @@ export default function CompositionEditor({
             </fig-reorder>
           )}
         </div>
+      )}
+
+      {!fillOnly && (
+        <DocumentInputsPane
+          inputs={normalized.inputs}
+          readOnly={readOnly}
+          experimentalAudio={experimentalAudio}
+          hasLiveWebcam={liveWebcamFillCount(normalized) > 0}
+          onChange={(nextInputs) => update({ ...normalized, inputs: nextInputs })}
+          onSupportsAudioChange={onSupportsAudioChange}
+        />
       )}
 
       {!fillOnly && (

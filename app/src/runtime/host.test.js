@@ -27,6 +27,88 @@ test("export host can raise the dimension cap and lock 1x output", () => {
   assert.equal(host.previewPixelRatioMode, "1x");
 });
 
+test("host frame.audio is present and zeroed by default", () => {
+  const host = makeHost();
+  assert.equal(host.frame.audio.volume, 0);
+  assert.deepEqual(host.frame.audio.bands, { bass: 0, mid: 0, treble: 0 });
+  assert.equal(host.frame.audio.frequency.length, 64);
+  assert.equal(host.frame.audio.playing, false);
+  host.supportsAudio = false;
+  host.writeExportAudio(
+    { volume: 1, bands: { bass: 1, mid: 1, treble: 1 }, frequency: new Float32Array(64).fill(1) },
+    { time: 12, playing: true },
+  );
+  assert.equal(host.frame.audio.volume, 0);
+  assert.equal(host.frame.audio.playing, false);
+});
+
+test("clearAudio detaches the bus and zeros the live frame", () => {
+  const host = makeHost();
+  host.supportsAudio = true;
+  host.frame.audio.volume = 0.8;
+  host.frame.audio.playing = true;
+  let cleared = 0;
+  host.setAudioBus({
+    clear() {
+      cleared += 1;
+    },
+    tick(frame) {
+      frame.volume = 1;
+      frame.playing = true;
+    },
+  });
+  host.frame.audio.volume = 0.8;
+  host.frame.audio.playing = true;
+  host.clearAudio();
+  assert.equal(cleared, 1);
+  assert.equal(host.frame.audio.volume, 0);
+  assert.equal(host.frame.audio.playing, false);
+});
+
+test("compositionExportVideo prefers a file-backed composition fill", () => {
+  const host = makeHost();
+  const video = {
+    src: "https://cdn.example.com/clip.mp4",
+    currentSrc: "https://cdn.example.com/clip.mp4",
+  };
+  host.video = {
+    src: "https://cdn.example.com/legacy.mp4",
+    currentSrc: "https://cdn.example.com/legacy.mp4",
+  };
+  host.compositionLayers = [
+    {
+      role: "fill",
+      enabled: true,
+      sourceType: "image",
+      source: { width: 8, height: 8 },
+    },
+    {
+      role: "fill",
+      enabled: true,
+      sourceType: "video",
+      source: video,
+    },
+  ];
+  assert.equal(host.compositionExportVideo(), video);
+});
+
+test("compositionExportVideo ignores webcam fills and falls back to host.video", () => {
+  const host = makeHost();
+  host.video = {
+    src: "https://cdn.example.com/legacy.mp4",
+    currentSrc: "https://cdn.example.com/legacy.mp4",
+  };
+  host.compositionLayers = [
+    {
+      role: "fill",
+      enabled: true,
+      sourceType: "webcam",
+      source: { srcObject: {}, src: "", currentSrc: "" },
+    },
+  ];
+  assert.equal(host.compositionExportVideo(), host.video);
+});
+
 test("play schedules RAF even when animation source inference is false", () => {
   const originalRaf = globalThis.requestAnimationFrame;
   let rafCalls = 0;
@@ -407,6 +489,8 @@ test("resetShaderState can clear validation history without presenting", () => {
   host.frame.time = 100;
   host.frame.deltaTime = 16;
   host.frame.frame = 6;
+  host.frame.audio.volume = 1;
+  host.frame.audio.playing = true;
   let setupCalls = 0;
   let presents = 0;
   host.setupFn = () => {
@@ -422,6 +506,8 @@ test("resetShaderState can clear validation history without presenting", () => {
   assert.equal(host.frame.time, 0);
   assert.equal(host.frame.deltaTime, 0);
   assert.equal(host.frame.frame, 0);
+  assert.equal(host.frame.audio.volume, 0);
+  assert.equal(host.frame.audio.playing, false);
 });
 
 test("teardown preserves host textures cached in shader state", () => {

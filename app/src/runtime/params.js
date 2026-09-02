@@ -50,6 +50,19 @@ export function inferFeatures(source) {
   };
 }
 
+export function declaredSupportsAudio(features) {
+  return Boolean(features?.supportsAudio);
+}
+
+export function mergeShaderFeatures(inferred, declared = {}) {
+  const features = {
+    isAnimated: Boolean(inferred?.isAnimated),
+    usesMouse: Boolean(inferred?.usesMouse),
+  };
+  if (declaredSupportsAudio(declared)) features.supportsAudio = true;
+  return features;
+}
+
 // Adaptive preview supersampling is opt-in because older raw shaders use the
 // physical output dimensions as their logical pixel coordinate system.
 export function supportsRenderScale(source) {

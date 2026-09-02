@@ -71,3 +71,20 @@ test("preserves explicit composition paint instead of applying legacy input", ()
     "owner/shader/current.png",
   );
 });
+
+test("preserves document audio inputs on effect graphs", () => {
+  const graph = cloudCompositionGraph({
+    kind: "effect",
+    composition: {
+      effectFills: [],
+      inputs: [
+        {
+          type: "audio",
+          id: "beat",
+          audio: { assetPath: "owner/shader/assets/audio.mp3", name: "beat.mp3" },
+        },
+      ],
+    },
+  });
+  assert.equal(graph.inputs[0].audio.assetPath, "owner/shader/assets/audio.mp3");
+});

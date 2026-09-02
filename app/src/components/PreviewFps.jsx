@@ -2,7 +2,6 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   readPreviewPixelRatioMode,
   subscribePreviewPixelRatioMode,
-  writePreviewPixelRatioMode,
 } from "../runtime/dpi.js";
 import { calculateFrameRate } from "../runtime/frameRate.js";
 
@@ -17,10 +16,6 @@ function PreviewFps({
   initialPixelRatioMode,
 }) {
   const [fps, setFps] = useState(0);
-  const [pixelRatioMode, setPixelRatioMode] = useState(
-    () => initialPixelRatioMode || readPreviewPixelRatioMode(),
-  );
-  const resolutionControlRef = useRef(null);
   const zoomControlRef = useRef(null);
   const zoomPercent = Math.round(previewZoom * 100);
   const zoomOptions = (
@@ -31,21 +26,6 @@ function PreviewFps({
     value: String(percent),
     label: `${percent}%`,
   }));
-
-  useEffect(() => {
-    const control = resolutionControlRef.current;
-    if (!control) return undefined;
-    const updateResolution = (event) => {
-      const detail = event.detail;
-      const value =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target.value);
-      writePreviewPixelRatioMode(value);
-    };
-    control.addEventListener("change", updateResolution);
-    return () => control.removeEventListener("change", updateResolution);
-  }, [hostRef]);
 
   useEffect(() => {
     const control = zoomControlRef.current;
@@ -71,7 +51,6 @@ function PreviewFps({
   useEffect(
     () =>
       subscribePreviewPixelRatioMode((mode) => {
-        setPixelRatioMode(mode);
         hostRef.current?.setPreviewPixelRatioMode?.(mode);
       }),
     [hostRef]
@@ -79,7 +58,6 @@ function PreviewFps({
 
   useEffect(() => {
     const mode = initialPixelRatioMode || readPreviewPixelRatioMode();
-    setPixelRatioMode(mode);
     hostRef.current?.setPreviewPixelRatioMode?.(mode);
   }, [hostRef, initialPixelRatioMode]);
 
@@ -104,21 +82,6 @@ function PreviewFps({
 
   return (
     <div className="preview-performance">
-      <fig-tooltip text="Pixel ratio">
-        <fig-select
-          ref={resolutionControlRef}
-          class="preview-resolution"
-          variant="ghost"
-          position="top left"
-          value={pixelRatioMode}
-          options={JSON.stringify([
-            { value: "1x", label: "1x" },
-            { value: "2x", label: "2x" },
-          ])}
-          aria-label="Preview resolution"
-          dangerouslySetInnerHTML={opaqueContent}
-        />
-      </fig-tooltip>
       <fig-tooltip text="Zoom">
         <fig-select
           ref={zoomControlRef}

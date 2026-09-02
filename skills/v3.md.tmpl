@@ -249,6 +249,24 @@ Don't create `package.json`, `tsconfig.json`, `eslint.config.js`, or `figma-shad
 * Do not read `frame.time`, `frame.deltaTime`, `frame.frame`, or `frame.mousePosition`.
 * These are enforced by `figma shader build` — it hard-fails on any animation or mouse use. There is no workaround; do not try one. Author the static effect and stop.
 {{- end }}
+{{- if .studioAudio }}
+
+## Studio-only audio inputs
+
+Audio is Shader Studio-only. Shader modules must not call `navigator`, `AudioContext`, or otherwise capture audio. The host writes `frame.audio` when Experimental audio is on and `features.json` has `"supportsAudio": true`.
+
+`features.json` may include optional `"supportsAudio": true` (declaration-only; do not infer from source). Figma cannot run audio; do not push audio shaders to Figma.
+
+`frame.audio` is always present. It is zeroed unless both gates are on and a source is running:
+
+* `volume` number 0–1
+* `bands` `{ bass, mid, treble }` 0–1
+* `frequency` Float32Array length 64 (reused in place — copy each frame)
+* `time` milliseconds for file/video; `0` for live mic/webcam
+* `playing` boolean
+
+Copy these into uniforms like `frame.time` / `frame.mousePosition`.
+{{- end }}
 
 ## `main.ts` minimum contract
 

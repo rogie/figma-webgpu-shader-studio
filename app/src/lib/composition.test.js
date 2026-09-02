@@ -11,6 +11,8 @@ import {
   hasCompositionFill,
   isCompositionPlayable,
   isDocumentPlayable,
+  isLiveWebcamFill,
+  liveWebcamFillCount,
   hasCompositionGraph,
   libraryKind,
   mergeLayerValues,
@@ -53,6 +55,7 @@ test("empty composition defaults to an image fill", () => {
     fills: [expectedFill],
     fill: expectedFill,
     effects: [],
+    inputs: [],
   });
   assert.strictEqual(graph.fill, graph.fills[0]);
 });
@@ -608,6 +611,49 @@ test("document playback follows shader time, video fills, and animated fills", (
     }),
     true,
   );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "fill",
+      source: "return vec4(1.0);",
+      features: { supportsAudio: true },
+    }),
+    true,
+  );
+});
+
+test("hidden webcam fills stay live for audio and playback", () => {
+  const hiddenWebcam = {
+    id: "cam",
+    type: "webcam",
+    enabled: false,
+    paint: { type: "webcam", webcam: { live: true } },
+  };
+  assert.equal(isLiveWebcamFill(hiddenWebcam), true);
+  assert.equal(isLiveWebcamFill({ ...hiddenWebcam, enabled: true }), true);
+  assert.equal(
+    isLiveWebcamFill({
+      ...hiddenWebcam,
+      enabled: true,
+      paint: { type: "webcam", webcam: { live: false } },
+    }),
+    false,
+  );
+  assert.equal(
+    liveWebcamFillCount({ fills: [hiddenWebcam], effects: [] }),
+    1,
+  );
+  assert.equal(
+    isCompositionPlayable({ fills: [hiddenWebcam], effects: [] }),
+    true,
+  );
+  assert.equal(
+    isDocumentPlayable({
+      kind: "effect",
+      source: "return vec4(1.0);",
+      effectFills: [hiddenWebcam],
+    }),
+    true,
+  );
 });
 
 test("collects features from enabled live refs only", () => {
@@ -642,6 +688,29 @@ test("collects features from enabled live refs only", () => {
       resolved
     ),
     { isAnimated: false, usesMouse: false }
+  );
+});
+
+test("collects supportsAudio from referenced shaders", () => {
+  const resolved = new Map([
+    [
+      "cloud:reactive",
+      {
+        kind: "fill",
+        source: "return vec4(1.0);",
+        features: { isAnimated: false, usesMouse: false, supportsAudio: true },
+      },
+    ],
+  ]);
+  assert.deepEqual(
+    collectCompositionFeatures(
+      {
+        fills: [{ type: "shader", shaderId: "cloud:reactive", enabled: true }],
+        effects: [],
+      },
+      resolved,
+    ),
+    { isAnimated: true, usesMouse: false, supportsAudio: true },
   );
 });
 
@@ -913,6 +982,33 @@ test("serializeCompositionExport inlines playable layer sources", () => {
       },
     ],
   });
+});
+
+test("serializeCompositionExport inlines an effect preview over media fills", () => {
+  const serialized = serializeCompositionExport(
+    {
+      fills: [
+        { id: "photo", type: "image", paint: { type: "image" } },
+      ],
+      effects: [
+        {
+          id: "effect-preview",
+          shaderId: "draft:fx",
+          values: { amount: 0.4 },
+        },
+      ],
+    },
+    new Map(),
+    new Map([
+      ["draft:fx", { source: "export function render() {}", broken: false }],
+    ])
+  );
+  assert.equal(serialized.isFill, false);
+  assert.equal(serialized.fillType, "image");
+  assert.equal(serialized.layers.length, 1);
+  assert.equal(serialized.layers[0].id, "effect-preview");
+  assert.equal(serialized.layers[0].role, "effect");
+  assert.equal(serialized.layers[0].source, "export function render() {}");
 });
 
 test("serializeCompositionExport treats media fills as input-backed", () => {

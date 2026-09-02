@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
-import FilterFilledIcon from "./FilterFilledIcon.jsx";
-import FilterIcon from "./FilterIcon.jsx";
+import GridViewIcon from "./GridViewIcon.jsx";
+import ListViewIcon from "./ListViewIcon.jsx";
 import "./LibraryFilterMenu.css";
 
 const KIND_OPTIONS = [
@@ -24,6 +24,20 @@ function FilterMenuItem({ value, checked, children }) {
   );
 }
 
+function ViewMenuItem({ value, checked, icon, children }) {
+  return (
+    <fig-menu-item value={value} selected={checked ? "" : undefined}>
+      <fig-icon
+        name="checkmark"
+        size="small"
+        style={{ visibility: checked ? "visible" : "hidden" }}
+      />
+      {icon}
+      {children}
+    </fig-menu-item>
+  );
+}
+
 export default function LibraryFilterMenu({
   kind = "all",
   onKindChange,
@@ -34,6 +48,8 @@ export default function LibraryFilterMenu({
   authors = [],
   showAuthors = true,
   showOrigin = true,
+  view = null,
+  onViewChange,
 }) {
   const filtersActive =
     kind !== "all" ||
@@ -48,6 +64,7 @@ export default function LibraryFilterMenu({
     if (group === "kind") onKindChange?.(next);
     else if (group === "author") onAuthorChange?.(next);
     else if (group === "origin") onOriginChange?.(next);
+    else if (group === "view") onViewChange?.(next);
   });
 
   const menuRef = useCallback(
@@ -70,7 +87,7 @@ export default function LibraryFilterMenu({
           aria-pressed={filtersActive ? "true" : "false"}
           aria-label="Filter library"
         >
-          {filtersActive ? <FilterFilledIcon /> : <FilterIcon />}
+          <fig-icon name="adjust" />
         </fig-button>
       </fig-tooltip>
       <fig-separator label="Types" />
@@ -115,6 +132,25 @@ export default function LibraryFilterMenu({
           >
             Published
           </FilterMenuItem>
+        </>
+      )}
+      {view && onViewChange && (
+        <>
+          <fig-separator label="View options" />
+          <ViewMenuItem
+            value="view:grid"
+            checked={view === "grid"}
+            icon={<GridViewIcon />}
+          >
+            Grid
+          </ViewMenuItem>
+          <ViewMenuItem
+            value="view:list"
+            checked={view === "list"}
+            icon={<ListViewIcon />}
+          >
+            List
+          </ViewMenuItem>
         </>
       )}
     </fig-menu>

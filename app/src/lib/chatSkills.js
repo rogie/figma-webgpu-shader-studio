@@ -8,7 +8,7 @@ import wgslSkill from "../../../skills/wgsl/SKILL.md?raw";
  * Strip Go template markers from v3.md.tmpl while keeping animation/mouse
  * guidance (always relevant in the studio preview).
  */
-function normalizeV3Guide(text) {
+function normalizeV3Guide(text, { experimentalAudio = false } = {}) {
   const tokenPattern = /\{\{-?\s*([^{}]+?)\s*-?\}\}/g;
   const parents = [];
   let active = true;
@@ -21,6 +21,9 @@ function normalizeV3Guide(text) {
     const directive = match[1].trim();
     if (/^if\s+\.animations$/.test(directive)) {
       parents.push(active);
+    } else if (/^if\s+\.studioAudio$/.test(directive)) {
+      parents.push(active);
+      active = active && experimentalAudio;
     } else if (directive === "else") {
       active = false;
     } else if (directive === "end") {
@@ -46,16 +49,29 @@ const PLAN_SKILL_CONTEXT = `# Shader Studio planning context
 
 ${CANVAS_HANDLES_CONTEXT}`;
 
-let cachedAuthoring = null;
+const STUDIO_AUDIO_GUIDE = `## Studio-only audio inputs
 
-/**
- * Authoring skills + Figma shader contract for chat system context.
- * Sent with each chat request so the model can write valid studio modules.
- */
-export function getChatSkillContext(mode = "agent") {
-  if (mode === "plan") return PLAN_SKILL_CONTEXT;
-  if (cachedAuthoring) return cachedAuthoring;
-  cachedAuthoring = [
+Audio is Studio-only. Shader modules must not call \`navigator\`, \`AudioContext\`, or otherwise capture audio. The host writes \`frame.audio\` when Experimental audio is on and \`features.json\` has \`"supportsAudio": true\`.
+
+\`features.json\` may include optional \`"supportsAudio": true\` (declaration-only; do not infer from source). Figma cannot run audio; do not push audio shaders to Figma.
+
+\`frame.audio\` is always present. It is zeroed unless both gates are on and a source is running:
+
+- \`volume\` number 0–1
+- \`bands\` \`{ bass, mid, treble }\` 0–1
+- \`frequency\` Float32Array length 64 (reused in place — copy each frame)
+- \`time\` milliseconds for file/video; 0 for live mic/webcam
+- \`playing\` boolean
+
+Copy these into uniforms like \`frame.time\` / \`frame.mousePosition\`.`;
+
+const AUDIO_OFF_RULE =
+  "Do not mention frame.audio, supportsAudio, or audio inputs. Those APIs are unavailable in this session.";
+
+const cachedAuthoring = { off: null, on: null };
+
+function authoringSkills(experimentalAudio) {
+  return [
     "# Shader Studio authoring skills",
     "",
     "Follow these skills when editing the open Figma WebGPU shader module.",
@@ -81,7 +97,9 @@ export function getChatSkillContext(mode = "agent") {
     "",
     "## Skill: Figma shader module contract (v3)",
     "",
-    normalizeV3Guide(v3Template),
+    normalizeV3Guide(v3Template, { experimentalAudio }),
+    "",
+    experimentalAudio ? STUDIO_AUDIO_GUIDE : AUDIO_OFF_RULE,
     "",
     "## Skill: WGSL",
     "",
@@ -91,5 +109,21 @@ export function getChatSkillContext(mode = "agent") {
     "",
     webgpuSkill.trim(),
   ].join("\n");
-  return cachedAuthoring;
 }
+
+/**
+ * Authoring skills + Figma shader contract for chat system context.
+ * Sent with each chat request so the model can write valid studio modules.
+ */
+export function getChatSkillContext(mode = "agent", { experimentalAudio = false } = {}) {
+  if (mode === "plan") {
+    return experimentalAudio
+      ? `${PLAN_SKILL_CONTEXT}\n\n${STUDIO_AUDIO_GUIDE}`
+      : `${PLAN_SKILL_CONTEXT}\n\n${AUDIO_OFF_RULE}`;
+  }
+  const cacheKey = experimentalAudio ? "on" : "off";
+  if (cachedAuthoring[cacheKey]) return cachedAuthoring[cacheKey];
+  cachedAuthoring[cacheKey] = authoringSkills(experimentalAudio);
+  return cachedAuthoring[cacheKey];
+}
+

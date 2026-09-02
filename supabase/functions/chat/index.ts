@@ -31,10 +31,12 @@ type RequestBody = {
   source?: string;
   kind?: string;
   fileName?: string;
-  features?: { isAnimated?: boolean; usesMouse?: boolean };
+  features?: { isAnimated?: boolean; usesMouse?: boolean; supportsAudio?: boolean };
+  experimentalAudio?: boolean;
   skills?: string;
   mode?: "agent" | "plan";
   cursorAgentId?: string;
+  compileError?: string;
 };
 
 function jsonResponse(status: number, body: Record<string, unknown>) {
@@ -862,6 +864,8 @@ Deno.serve(async (req) => {
     features: body.features,
     skills,
     mode,
+    experimentalAudio: Boolean(body.experimentalAudio),
+    compileError: typeof body.compileError === "string" ? body.compileError : "",
   });
 
   const history: ChatMessage[] = [];

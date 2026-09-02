@@ -163,6 +163,7 @@ test("request preserves complete source, features, and skill context", () => {
   assert.equal(request.source, source);
   assert.equal(request.skills, skills);
   assert.equal(request.mode, "plan");
+  assert.equal(request.experimentalAudio, false);
   assert.deepEqual(request.features, {
     isAnimated: false,
     usesMouse: true,
@@ -177,6 +178,8 @@ test("request preserves complete source, features, and skill context", () => {
   assert.match(skills, /Skill: WebGPU/);
   assert.doesNotMatch(skills, /\{\{[^}]+\}\}/);
   assert.doesNotMatch(skills, /`isAnimated` must be `false`/);
+  assert.match(skills, /Do not mention frame.audio/);
+  assert.doesNotMatch(skills, /Studio-only audio inputs/);
 });
 
 test("plan requests exclude implementation-only shader skills", () => {
@@ -210,6 +213,53 @@ test("Edge Function prompt embeds full source and skills without truncation", ()
   assert.match(prompt, /isAnimated=true, usesMouse=false/);
   assert.match(prompt, /manual edits or a restored saved version/);
   assert.match(prompt, /Never reconstruct or preserve code.*earlier assistant/);
+  assert.match(prompt, /Do not mention frame.audio/);
+  assert.doesNotMatch(prompt, /supportsAudio=/);
+});
+
+test("prompt includes live compile errors for the model to fix", () => {
+  const prompt = buildSystemPrompt({
+    source: "export default function Effect() {}",
+    kind: "effect",
+    fileName: "main.ts",
+    compileError: "Compile error: unexpected token",
+  });
+  assert.match(prompt, /Current preview compile error from main.ts \/ WGSL/);
+  assert.match(prompt, /Compile error: unexpected token/);
+  const request = buildChatRequest({
+    provider: "gemini",
+    model: "gemini-3.5-flash",
+    messages: [{ role: "user", content: "Fix it" }],
+    source: "export default function Effect() {}",
+    kind: "effect",
+    fileName: "main.ts",
+    compileError: "  Shader compilation error at WGSL line 12  ",
+  });
+  assert.equal(
+    request.compileError,
+    "Shader compilation error at WGSL line 12",
+  );
+});
+
+test("chat skills and prompt include Studio audio only when experimental audio is on", () => {
+  const off = getChatSkillContext("agent");
+  const on = getChatSkillContext("agent", { experimentalAudio: true });
+  assert.match(off, /Do not mention frame.audio/);
+  assert.doesNotMatch(off, /Studio-only audio inputs/);
+  assert.match(on, /Studio-only audio inputs/);
+  assert.match(on, /supportsAudio/);
+  assert.match(on, /Float32Array length 64/);
+
+  const gatedPrompt = buildSystemPrompt({
+    source: "export default function Effect() {}",
+    kind: "effect",
+    fileName: "main.ts",
+    features: { isAnimated: false, usesMouse: false, supportsAudio: true },
+    experimentalAudio: true,
+    skills: on,
+  });
+  assert.match(gatedPrompt, /supportsAudio=true/);
+  assert.doesNotMatch(gatedPrompt, /Do not mention frame.audio/);
 });
 
 test("SSE parser preserves split chunks and an unterminated final event", () => {

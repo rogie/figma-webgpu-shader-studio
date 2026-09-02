@@ -18,9 +18,10 @@ function download(filename, contents, mime) {
  *
  * @param {string} source
  * @param {string} [name]
- * @returns {{ mainTs: string, featuresJson: string, features: { name: string, version: number, isAnimated: boolean, usesMouse: boolean } }}
+ * @param {{ supportsAudio?: boolean }} [extraFeatures]
+ * @returns {{ mainTs: string, featuresJson: string, features: { name: string, version: number, isAnimated: boolean, usesMouse: boolean, supportsAudio?: boolean } }}
  */
-export function buildFigmaShaderPackage(source, name) {
+export function buildFigmaShaderPackage(source, name, extraFeatures = {}) {
   const inferred = inferFeatures(source);
   const features = {
     version: 2,
@@ -28,6 +29,7 @@ export function buildFigmaShaderPackage(source, name) {
     isAnimated: inferred.isAnimated,
     usesMouse: inferred.usesMouse,
   };
+  if (extraFeatures?.supportsAudio) features.supportsAudio = true;
   return {
     mainTs: source,
     featuresJson: `${JSON.stringify(features, null, 2)}\n`,
@@ -50,9 +52,13 @@ function zipFilename(name) {
  * @param {string} [name]
  * @returns {Promise<{ filename: string, bytes: Uint8Array }>}
  */
-export async function buildFigmaShaderZip(source, name) {
+export async function buildFigmaShaderZip(source, name, extraFeatures = {}) {
   const { strToU8, zipSync } = await import("fflate");
-  const { mainTs, featuresJson, features } = buildFigmaShaderPackage(source, name);
+  const { mainTs, featuresJson, features } = buildFigmaShaderPackage(
+    source,
+    name,
+    extraFeatures
+  );
   return {
     filename: zipFilename(features.name),
     bytes: zipSync(
@@ -66,7 +72,11 @@ export async function buildFigmaShaderZip(source, name) {
 }
 
 // Export one shader-coder ZIP with main.ts and generated features.json.
-export async function exportFigmaFiles(source, name) {
-  const { filename, bytes } = await buildFigmaShaderZip(source, name);
+export async function exportFigmaFiles(source, name, extraFeatures = {}) {
+  const { filename, bytes } = await buildFigmaShaderZip(
+    source,
+    name,
+    extraFeatures
+  );
   download(filename, bytes, "application/zip");
 }

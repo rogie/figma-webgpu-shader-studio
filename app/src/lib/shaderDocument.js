@@ -4,6 +4,10 @@ import {
   normalizeComposition,
 } from "./composition.js";
 import { persistableEffectFills } from "./effectFillStorage.js";
+import {
+  persistableDocumentInputs,
+  readDocumentInputs,
+} from "./documentInputs.js";
 import { detectKind, inferFeatures } from "../runtime/params.js";
 
 const EFFECT_KIND = "effect";
@@ -137,6 +141,7 @@ function normalizedFeatures(state, kind, source) {
       supplied.usesMouse === undefined
         ? inferred.usesMouse
         : Boolean(supplied.usesMouse),
+    ...(supplied.supportsAudio ? { supportsAudio: true } : {}),
   };
 }
 
@@ -182,17 +187,35 @@ function selectedEffectFills(state) {
   return [];
 }
 
+function compositionInputs(state) {
+  const composition = isRecord(state.composition) ? state.composition : {};
+  if (Array.isArray(state.inputs)) return persistableDocumentInputs(state.inputs);
+  if (Array.isArray(composition.inputs)) {
+    return persistableDocumentInputs(composition.inputs);
+  }
+  return persistableDocumentInputs(readDocumentInputs(state));
+}
+
+function withInputs(payload, inputs) {
+  return inputs.length ? { ...payload, inputs } : payload;
+}
+
 function normalizedComposition(state, kind) {
-  if (kind === FILL_KIND) return {};
+  if (kind === FILL_KIND) {
+    return withInputs({}, compositionInputs(state));
+  }
 
   if (kind === EFFECT_KIND) {
     const effectFills = cloneJsonValue(
       persistableEffectFills(selectedEffectFills(state)),
     );
-    return {
-      effectFills,
-      effectFill: effectFills[0] || null,
-    };
+    return withInputs(
+      {
+        effectFills,
+        effectFill: effectFills[0] || null,
+      },
+      compositionInputs(state),
+    );
   }
 
   const sourceGraph = state.composition || state.graph;
@@ -207,11 +230,14 @@ function normalizedComposition(state, kind) {
       : {}),
   });
   const fills = cloneJsonValue(persistableEffectFills(graph.fills));
-  return {
-    fills,
-    fill: fills[0] || null,
-    effects: cloneJsonValue(graph.effects),
-  };
+  return withInputs(
+    {
+      fills,
+      fill: fills[0] || null,
+      effects: cloneJsonValue(graph.effects),
+    },
+    persistableDocumentInputs(graph.inputs || compositionInputs(state)),
+  );
 }
 
 function isShaderDocumentLike(value) {
