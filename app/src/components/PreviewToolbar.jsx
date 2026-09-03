@@ -5,6 +5,7 @@ import PreviewFps from "./PreviewFps.jsx";
 export default function PreviewToolbar({
   running,
   onTogglePlay,
+  onSeek,
   showPlayback,
   fatal,
   hostRef,
@@ -30,6 +31,7 @@ export default function PreviewToolbar({
           <PlayControls
             running={running}
             onTogglePlay={onTogglePlay}
+            onSeek={onSeek}
             hostRef={hostRef}
           />
           <fig-separator direction="vertical" />

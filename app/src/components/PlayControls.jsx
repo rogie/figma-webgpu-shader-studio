@@ -17,7 +17,7 @@ function isWheelBusy(wheel) {
   );
 }
 
-function PlayControls({ running, onTogglePlay, hostRef }) {
+function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
   const wheelRef = useRef(null);
   const editingRef = useRef(false);
   const wasRunningRef = useRef(running);
@@ -32,6 +32,7 @@ function PlayControls({ running, onTogglePlay, hostRef }) {
       const next = readPropskitSliderNumber(event);
       if (!Number.isFinite(next)) return;
       hostRef.current?.seek?.(Math.max(0, next) * 1000, { present: "frame" });
+      onSeek?.();
     };
     const handleFocusIn = () => {
       editingRef.current = true;
@@ -53,7 +54,7 @@ function PlayControls({ running, onTogglePlay, hostRef }) {
       wheel.removeEventListener("focusin", handleFocusIn);
       wheel.removeEventListener("focusout", handleFocusOut);
     };
-  }, [hostRef]);
+  }, [hostRef, onSeek]);
 
   useLayoutEffect(() => {
     const wheel = wheelRef.current;

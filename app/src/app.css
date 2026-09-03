@@ -132,7 +132,7 @@ body,
     }
   }
 
-  .composer-viewer .embed-state {
+  :is(.composer-viewer, .shader-viewer) .embed-state {
     position: absolute;
     z-index: 10;
     inset: 0;
@@ -432,6 +432,9 @@ body,
             rgba(255, 255, 255, 0.1) 0% 50%
           )
           0 0 / 1.33332rem 1.33332rem;
+      }
+
+      :is(.canvas-stage, .present-canvas-stage) {
         position: absolute;
         inset: 0;
         border-radius: var(--viewer-radius);
@@ -442,6 +445,10 @@ body,
         overflow: hidden;
         container-type: size;
 
+        &.present-canvas-stage {
+          border-radius: 0;
+        }
+
         &.canvas-stage--light {
           --canvas-stage-color: #f5f5f5;
           color-scheme: light;
@@ -449,7 +456,7 @@ body,
         }
 
         &.canvas-stage--dark {
-          --canvas-stage-color: #1e1e1e;
+          --canvas-stage-color: transparent;
           color-scheme: dark;
           background-color: var(--canvas-stage-color);
         }

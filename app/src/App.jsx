@@ -24,10 +24,12 @@ import ProfileView from "./components/ProfileView.jsx";
 import "./components/HomeNav.css";
 import ComposerView from "./components/ComposerView.jsx";
 import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
+import PopoutIcon from "./components/PopoutIcon.jsx";
 import ToggleSidebarIcon from "./components/ToggleSidebarIcon.jsx";
 import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
 import PreviewToolbar from "./components/PreviewToolbar.jsx";
+import PresentSettingsDialog from "./components/PresentSettingsDialog.jsx";
 import ShaderActionsMenu from "./components/ShaderActionsMenu.jsx";
 import ShaderList from "./components/ShaderList.jsx";
 import ShaderCard from "./components/ShaderCard.jsx";
@@ -111,6 +113,14 @@ import {
   editorStateMatchesSnapshot,
   shaderDocumentFingerprint,
 } from "./lib/shaderDocument.js";
+import {
+  createPresentSessionId,
+  isPresentMessage,
+  makePresentUrl,
+  presentChannelName,
+  presentMessage,
+  readPresentSessionId,
+} from "./lib/presentWindow.js";
 import {
   hasUncheckpointedShaderState,
   isShaderStateConflict,
@@ -1187,17 +1197,16 @@ function publicItemsReferencing(shaderId, rows = []) {
 }
 
 function replaceShaderUrl(id, kind, embed = false, view = false) {
-  window.history.replaceState(
-    {},
-    "",
-    id
-      ? embed
-        ? makeEmbedUrl(id, kind)
-        : view
-          ? makeViewUrl(id, kind)
+  let url = id
+    ? embed
+      ? makeEmbedUrl(id, kind)
+      : view
+        ? makeViewUrl(id, kind)
         : makeShareUrl(id, kind)
-      : makeHomeUrl()
-  );
+    : makeHomeUrl();
+  const presentId = embed ? readPresentSessionId() : null;
+  if (presentId) url = makePresentUrl(url, presentId);
+  window.history.replaceState({}, "", url);
 }
 
 function pushShaderUrl(id, kind) {
@@ -1410,6 +1419,7 @@ export default function App() {
   const [routeProfile, setRouteProfile] = useState(
     () => getAppRoute().profile || null,
   );
+  const [presentSessionId] = useState(() => readPresentSessionId());
   const [editorRouteError, setEditorRouteError] = useState(null);
   const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
   const [routeEmbed, setRouteEmbed] = useState(routeEmbedRef.current);
@@ -1418,6 +1428,17 @@ export default function App() {
   const [embedStatus, setEmbedStatus] = useState(() =>
     routeEmbedRef.current || routeViewRef.current ? "loading" : "idle"
   );
+  const presentWindowRef = useRef(null);
+  const presentChannelRef = useRef(null);
+  const presentReadyRef = useRef(false);
+  const presentWindowOpenRef = useRef(false);
+  const presentWindowPollRef = useRef(0);
+  const presentRestoreFrameRef = useRef(0);
+  const presentSendTimerRef = useRef(0);
+  const presentStateRef = useRef(null);
+  const presentPlaybackRef = useRef(null);
+  const presentApplyGenerationRef = useRef(0);
+  const [presentWindowOpen, setPresentWindowOpen] = useState(false);
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
   const [homeKind, setHomeKind] = useState("all");
@@ -3444,11 +3465,17 @@ export default function App() {
         setThumbnailRefreshRevision((revision) => revision + 1);
       }
       if (
-        playPreferenceRef.current &&
-        (features.isAnimated || hasHtmlFill || audioGated)
+        presentSessionId ||
+        (playPreferenceRef.current &&
+          (features.isAnimated || hasHtmlFill || audioGated))
       ) {
-        host.setActive(true);
-        host.play();
+        if (presentWindowOpenRef.current) {
+          host.pause();
+          host.setActive(false);
+        } else {
+          host.setActive(true);
+          host.play();
+        }
         setRunning(true);
       } else {
         host.pause();
@@ -3465,6 +3492,7 @@ export default function App() {
       rememberResolved,
       reportAppError,
       setRuntimeValues,
+      presentSessionId,
     ]
   );
   compileCompositionRef.current = compileComposition;
@@ -3630,9 +3658,14 @@ export default function App() {
           // validated, and presented successfully.
           setThumbnailRefreshRevision((revision) => revision + 1);
           // Restore the user's play/pause preference after shader switches.
-          if (playPreferenceRef.current) {
-            host.setActive(true);
-            host.play();
+          if (presentSessionId || playPreferenceRef.current) {
+            if (presentWindowOpenRef.current) {
+              host.pause();
+              host.setActive(false);
+            } else {
+              host.setActive(true);
+              host.play();
+            }
             setRunning(true);
           } else {
             host.pause();
@@ -3648,7 +3681,12 @@ export default function App() {
           }
         });
     },
-    [finishSessionResourceLoad, recordNavigationFirstFrame, setRuntimeValues]
+    [
+      finishSessionResourceLoad,
+      presentSessionId,
+      recordNavigationFirstFrame,
+      setRuntimeValues,
+    ]
   );
   compileRef.current = compile;
 
@@ -4415,10 +4453,12 @@ export default function App() {
     // while WebGPU is initializing or while that image is decoding.
     const initialInputGeneration = ++inputApplyGenRef.current;
 
-    // Pause the render loop and video decode while the tab is backgrounded so a
-    // hidden Shader Studio stops driving the GPU and video decoder.
+    // Pause ordinary hidden views, but keep a Present window active while the
+    // editor has focus so it can continue driving the GPU and video decoder.
     const onVisibilityChange = () => {
-      host.setActive(document.visibilityState === "visible");
+      host.setActive(
+        Boolean(presentSessionId) || document.visibilityState === "visible",
+      );
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
 
@@ -4426,8 +4466,10 @@ export default function App() {
       try {
         await host.init();
         if (cancelled) return;
-        // A tab opened in the background starts inactive.
-        host.setActive(document.visibilityState === "visible");
+        // Present is allowed to keep rendering behind the focused editor.
+        host.setActive(
+          Boolean(presentSessionId) || document.visibilityState === "visible",
+        );
         await restoreSample(initialInputGeneration);
         if (cancelled) return;
         // Compile via the source/preset effect once runtimeReady flips — avoids
@@ -4468,6 +4510,7 @@ export default function App() {
     restoreSample,
     viewMode,
     isComposerView,
+    presentSessionId,
   ]);
 
   useEffect(() => {
@@ -5063,6 +5106,415 @@ export default function App() {
     sessionRequestRef,
     onSessionLoadStart: beginSessionResourceLoad,
   });
+
+  const buildPresentState = useCallback(() => {
+    const nextKind = sessionKindRef.current;
+    const nextValues = valuesRef.current;
+    const nextInputs = normalizeDocumentInputs(documentInputsRef.current);
+    const nextComposition =
+      nextKind === COMPOSITION_KIND
+        ? compositionWithLayerValues(
+            compositionRef.current,
+            selectedLayerIdRef.current,
+            nextValues,
+          )
+        : {
+            effectFills: effectFillsRef.current,
+            effectFill: effectFillsRef.current[0] || null,
+            inputs: nextInputs,
+          };
+    const document = captureDocumentSnapshot({
+      source: sourceRef.current,
+      kind: nextKind,
+      parameterValues: nextValues,
+      composition: nextComposition,
+      effectFills: effectFillsRef.current,
+      inputs: nextInputs,
+    });
+    const liveDependencies = new Map([
+      ...Object.entries(resolvedShadersRef.current),
+      ...liveShaderSourceRef.current,
+    ]);
+    const dependencySnapshots = { ...document.dependencySnapshots };
+    for (const key of referencedShaderKeys(nextComposition)) {
+      const dependency = liveDependencies.get(key);
+      if (dependency?.source) dependencySnapshots[key] = dependency;
+    }
+    const itemId =
+      routeId ||
+      currentShader?.id ||
+      (presetId.startsWith("cloud:")
+        ? presetId.slice("cloud:".length)
+        : presetId);
+
+    return {
+      id: itemId,
+      sessionId: presetId,
+      name: shaderName,
+      description: shaderDescription,
+      document: {
+        ...document,
+        composition: nextComposition,
+        effectFills: effectFillsRef.current,
+        dependencySnapshots,
+      },
+      pendingMedia,
+      running,
+      time: hostRef.current?.frame?.time || 0,
+      canvasTheme,
+    };
+  }, [
+    canvasTheme,
+    captureDocumentSnapshot,
+    composition,
+    currentShader?.id,
+    documentInputs,
+    effectFills,
+    pendingMedia,
+    presetId,
+    routeId,
+    running,
+    shaderDescription,
+    shaderName,
+    source,
+    values,
+  ]);
+  presentStateRef.current = buildPresentState;
+
+  const postPresentState = useCallback(() => {
+    const channel = presentChannelRef.current;
+    if (!channel || !presentReadyRef.current) return;
+    try {
+      channel.postMessage(
+        presentMessage("state", presentStateRef.current?.()),
+      );
+    } catch (presentError) {
+      reportAppError(
+        presentError?.message || "Could not update the Present window.",
+      );
+    }
+  }, [reportAppError]);
+
+  const queuePresentState = useCallback(() => {
+    if (
+      presentSessionId ||
+      !presentReadyRef.current ||
+      presentSendTimerRef.current
+    ) {
+      return;
+    }
+    presentSendTimerRef.current = requestAnimationFrame(() => {
+      presentSendTimerRef.current = 0;
+      postPresentState();
+    });
+  }, [postPresentState, presentSessionId]);
+
+  useEffect(() => {
+    queuePresentState();
+  }, [buildPresentState, queuePresentState]);
+
+  const syncPresentPlayback = useCallback((playback) => {
+    const host = hostRef.current;
+    if (!host?.ready) return;
+    if (playback) host.seek(playback.time, { present: "frame" });
+    host.setActive(true);
+    host.play();
+    setRunning(true);
+  }, []);
+
+  const applyPresentState = useCallback(
+    async (payload) => {
+      const documentState = payload?.document;
+      if (
+        !presentSessionId ||
+        !documentState ||
+        typeof documentState !== "object" ||
+        typeof documentState.source !== "string" ||
+        !payload.id
+      ) {
+        return;
+      }
+      const generation = ++presentApplyGenerationRef.current;
+      const nextKind =
+        documentState.kind === COMPOSITION_KIND
+          ? COMPOSITION_KIND
+          : documentState.kind === "fill"
+            ? "fill"
+            : "effect";
+      presentPlaybackRef.current = {
+        running: Boolean(payload.running),
+        time: Number.isFinite(payload.time) ? Math.max(0, payload.time) : 0,
+      };
+      playPreferenceRef.current = Boolean(payload.running);
+      if (payload.canvasTheme === "dark" || payload.canvasTheme === "light") {
+        setCanvasTheme(payload.canvasTheme);
+      }
+      document.title = `${payload.name || "Shader"} — Present`;
+      setEmbedStatus("loading");
+      await activateShaderSession({
+        sessionId: `present:${presentSessionId}`,
+        routeId: payload.id,
+        name: payload.name || "Present",
+        description: payload.description || "",
+        source: documentState.source,
+        kind: nextKind,
+        composition: documentState.composition,
+        values: documentState.parameterValues || {},
+        public: false,
+        media: payload.pendingMedia || null,
+        dirty: false,
+        cloudShader: {
+          id: payload.id,
+          name: payload.name || "Present",
+          description: payload.description || "",
+          source: documentState.source,
+          kind: nextKind,
+          composition: documentState.composition,
+          parameter_values: documentState.parameterValues || {},
+          features: documentState.features,
+          dependency_snapshots: documentState.dependencySnapshots,
+          is_public: false,
+        },
+        features: documentState.features,
+        dependencySnapshots: documentState.dependencySnapshots,
+        persistPrevious: false,
+      });
+      if (generation !== presentApplyGenerationRef.current) return;
+      syncPresentPlayback(presentPlaybackRef.current);
+      setEmbedStatus("ready");
+    },
+    [activateShaderSession, presentSessionId, syncPresentPlayback],
+  );
+
+  useEffect(() => {
+    if (!presentSessionId) return undefined;
+    if (typeof BroadcastChannel !== "function") {
+      setEmbedStatus("unavailable");
+      return undefined;
+    }
+    const channel = new BroadcastChannel(
+      presentChannelName(presentSessionId),
+    );
+    presentChannelRef.current = channel;
+    let disposed = false;
+    let receivedState = false;
+    const announceReady = () => {
+      if (!receivedState) channel.postMessage(presentMessage("ready"));
+    };
+    const announcePopupClosed = () => {
+      channel.postMessage(presentMessage("popup-closed"));
+    };
+    window.addEventListener("pagehide", announcePopupClosed);
+    channel.addEventListener("message", (event) => {
+      if (isPresentMessage(event.data, "closed")) {
+        presentApplyGenerationRef.current += 1;
+        hostRef.current?.pause();
+        setRunning(false);
+        setEmbedStatus("unavailable");
+        return;
+      }
+      if (!isPresentMessage(event.data, "state")) return;
+      receivedState = true;
+      window.clearInterval(readyTimer);
+      window.clearTimeout(unavailableTimer);
+      applyPresentState(event.data.payload).catch((presentError) => {
+        if (disposed) return;
+        setError(presentError?.message || String(presentError));
+        setEmbedStatus("unavailable");
+      });
+    });
+    announceReady();
+    const readyTimer = window.setInterval(announceReady, 250);
+    const unavailableTimer = window.setTimeout(() => {
+      if (!receivedState) setEmbedStatus("unavailable");
+    }, 5000);
+    return () => {
+      disposed = true;
+      window.removeEventListener("pagehide", announcePopupClosed);
+      window.clearInterval(readyTimer);
+      window.clearTimeout(unavailableTimer);
+      channel.close();
+      if (presentChannelRef.current === channel) {
+        presentChannelRef.current = null;
+      }
+    };
+  }, [applyPresentState, presentSessionId]);
+
+  useEffect(() => {
+    if (
+      !presentSessionId ||
+      embedStatus !== "ready" ||
+      !runtimeReady ||
+      sessionResourcesLoading
+    ) {
+      return;
+    }
+    const playback = presentPlaybackRef.current;
+    syncPresentPlayback(playback);
+  }, [
+    embedStatus,
+    presentSessionId,
+    runtimeReady,
+    sessionResourcesLoading,
+    source,
+    syncPresentPlayback,
+  ]);
+
+  useEffect(
+    () => {
+      const announceClosed = () => {
+        if (!presentSessionId) {
+          presentChannelRef.current?.postMessage(presentMessage("closed"));
+        }
+      };
+      window.addEventListener("pagehide", announceClosed);
+      return () => {
+        window.removeEventListener("pagehide", announceClosed);
+        announceClosed();
+        if (presentSendTimerRef.current) {
+          cancelAnimationFrame(presentSendTimerRef.current);
+        }
+        if (presentWindowPollRef.current) {
+          window.clearInterval(presentWindowPollRef.current);
+        }
+        if (presentRestoreFrameRef.current) {
+          cancelAnimationFrame(presentRestoreFrameRef.current);
+        }
+        presentChannelRef.current?.close();
+      };
+    },
+    [presentSessionId],
+  );
+
+  const setEditorPreviewSuspended = useCallback((suspended) => {
+    if (presentRestoreFrameRef.current) {
+      cancelAnimationFrame(presentRestoreFrameRef.current);
+      presentRestoreFrameRef.current = 0;
+    }
+    presentWindowOpenRef.current = suspended;
+    setPresentWindowOpen(suspended);
+    const host = hostRef.current;
+    if (!host) return;
+    if (suspended) {
+      host.pause();
+      host.setActive(false);
+      return;
+    }
+    presentRestoreFrameRef.current = requestAnimationFrame(() => {
+      presentRestoreFrameRef.current = 0;
+      if (presentWindowOpenRef.current) return;
+      const currentHost = hostRef.current;
+      if (!currentHost) return;
+      const stage = visualizerRef.current?.getBoundingClientRect();
+      if (stage?.width > 0 && stage?.height > 0) {
+        currentHost.setStageCssSize(stage.width, stage.height);
+      }
+      currentHost.setActive(true);
+      if (playPreferenceRef.current) {
+        currentHost.play();
+        setRunning(true);
+      } else {
+        currentHost.redraw();
+        setRunning(false);
+      }
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!presentWindowOpen) return;
+    const host = hostRef.current;
+    host?.pause();
+    host?.setActive(false);
+  }, [
+    composition,
+    documentInputs,
+    effectFills,
+    presentWindowOpen,
+    runtimeReady,
+    source,
+    values,
+  ]);
+
+  const stopPresentWindow = useCallback(
+    (channel = presentChannelRef.current) => {
+      if (presentWindowPollRef.current) {
+        window.clearInterval(presentWindowPollRef.current);
+        presentWindowPollRef.current = 0;
+      }
+      presentReadyRef.current = false;
+      channel?.close();
+      if (presentChannelRef.current === channel) {
+        presentChannelRef.current = null;
+      }
+      presentWindowRef.current = null;
+      setEditorPreviewSuspended(false);
+    },
+    [setEditorPreviewSuspended],
+  );
+
+  const openPresentWindow = useCallback(() => {
+    if (presentSessionId) return;
+    if (typeof BroadcastChannel !== "function") {
+      reportAppError("This browser cannot open a live Present window.");
+      return;
+    }
+    const existing = presentWindowRef.current;
+    if (existing && !existing.closed && presentChannelRef.current) {
+      setEditorPreviewSuspended(true);
+      existing.focus();
+      postPresentState();
+      return;
+    }
+
+    presentChannelRef.current?.close();
+    presentReadyRef.current = false;
+    const sessionId = createPresentSessionId();
+    const channel = new BroadcastChannel(presentChannelName(sessionId));
+    presentChannelRef.current = channel;
+    channel.addEventListener("message", (event) => {
+      if (isPresentMessage(event.data, "popup-closed")) {
+        stopPresentWindow(channel);
+        return;
+      }
+      if (!isPresentMessage(event.data, "ready")) return;
+      presentReadyRef.current = true;
+      postPresentState();
+    });
+    const currentState = buildPresentState();
+    const url = makePresentUrl(
+      makeEmbedUrl(currentState.id, currentState.document.kind),
+      sessionId,
+    );
+    const popup = window.open(
+      url,
+      "shader-studio-present",
+      "popup=yes,width=1280,height=800",
+    );
+    if (!popup) {
+      channel.close();
+      presentChannelRef.current = null;
+      reportAppError(
+        "The Present window was blocked. Allow popups and try again.",
+      );
+      return;
+    }
+    presentWindowRef.current = popup;
+    setEditorPreviewSuspended(true);
+    if (presentWindowPollRef.current) {
+      window.clearInterval(presentWindowPollRef.current);
+    }
+    presentWindowPollRef.current = window.setInterval(() => {
+      if (popup.closed) stopPresentWindow(channel);
+    }, 500);
+    popup.focus();
+  }, [
+    buildPresentState,
+    postPresentState,
+    presentSessionId,
+    reportAppError,
+    setEditorPreviewSuspended,
+    stopPresentWindow,
+  ]);
 
   const openDraft = useCallback(
     async (draft) => {
@@ -6261,7 +6713,8 @@ export default function App() {
     if (nextProfile) {
       setEmbedStatus("idle");
     } else if (id && (embed || view)) {
-      openSharedRouteId(id, nextKind);
+      if (embed && presentSessionId) setEmbedStatus("loading");
+      else openSharedRouteId(id, nextKind);
     } else if (id) {
       setEmbedStatus("idle");
       openRouteId(id);
@@ -6270,6 +6723,7 @@ export default function App() {
     authLoading,
     openSharedRouteId,
     openRouteId,
+    presentSessionId,
   ]);
 
   useEffect(() => {
@@ -6510,8 +6964,9 @@ export default function App() {
       if (def && CANVAS_PROP_TYPES.has(def.type)) {
         setValues(next);
       }
+      queuePresentState();
     });
-  }, []);
+  }, [queuePresentState]);
 
   const resetProperties = useCallback((targetLayerId = null) => {
     if (protectedPreview && viewMode !== "view") return;
@@ -9894,6 +10349,7 @@ export default function App() {
                   );
                   if (selectedLayerIdRef.current === fillId) {
                     valuesRef.current = nextValues;
+                    queuePresentState();
                   }
                 }}
               />
@@ -10529,6 +10985,17 @@ export default function App() {
                     onDuplicate={duplicateShaderVersion}
                   />
                 )}
+                <fig-tooltip text="Present">
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Present in a new window"
+                    onClick={openPresentWindow}
+                  >
+                    <PopoutIcon />
+                  </fig-button>
+                </fig-tooltip>
                 {protectedPreview ? (
                   <fig-button
                     type="button"
@@ -10715,6 +11182,7 @@ export default function App() {
           canvasTheme={canvasTheme}
           interactive={!routeEmbed}
           loading={previewResourcesLoading}
+          plain={Boolean(presentSessionId)}
         />
       )}
     </>
@@ -10724,6 +11192,7 @@ export default function App() {
     <PreviewToolbar
       running={running}
       onTogglePlay={togglePlay}
+      onSeek={queuePresentState}
       showPlayback={previewPlayable}
       fatal={fatal}
       hostRef={hostRef}
@@ -10740,6 +11209,24 @@ export default function App() {
         setCanvasTheme(canvasTheme === "dark" ? "light" : "dark")
       }
     />
+  );
+
+  const editorPreviewContent = (
+    <>
+      <div
+        className="editor-preview-runtime"
+        style={{ display: presentWindowOpen ? "none" : "contents" }}
+        aria-hidden={presentWindowOpen ? "true" : undefined}
+      >
+        {previewCanvas}
+        {!previewResourcesLoading ? previewTools : null}
+      </div>
+      {presentWindowOpen ? (
+        <div className="embed-state" role="status" aria-live="polite">
+          Preview is open in the Present window.
+        </div>
+      ) : null}
+    </>
   );
 
   const embedItemLabel =
@@ -10845,7 +11332,9 @@ export default function App() {
   if (viewMode === "embed") {
     return (
       <main
-        className="embed-view shader-viewer"
+        className={`embed-view shader-viewer${
+          presentSessionId ? " shader-view-page" : ""
+        }`}
         aria-label={`${embedItemLabel} preview`}
       >
         <div className="shader-viewer-visualizer">
@@ -10856,6 +11345,7 @@ export default function App() {
             </div>
           ) : null}
         </div>
+        {presentSessionId ? <PresentSettingsDialog /> : null}
       </main>
     );
   }
@@ -11134,12 +11624,7 @@ export default function App() {
           viewerRef={viewerRef}
           visualizerRef={visualizerRef}
           header={shaderEditorHeader}
-          preview={
-            <>
-              {previewCanvas}
-              {!previewResourcesLoading ? previewTools : null}
-            </>
-          }
+          preview={editorPreviewContent}
           properties={renderPropertiesPanel()}
         />
       ) : (
@@ -11291,12 +11776,7 @@ export default function App() {
               )}
             </>
           }
-          preview={
-            <>
-              {previewCanvas}
-              {!previewResourcesLoading ? previewTools : null}
-            </>
-          }
+          preview={editorPreviewContent}
           properties={renderPropertiesPanel()}
           onResizeCode={resizeCodePane}
           onResetCodeSize={() =>

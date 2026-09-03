@@ -2,7 +2,11 @@ import { useEffect, useRef, useState } from "react";
 
 const DIALOG_ID = "view-properties-dialog";
 
-export default function ViewPropertiesDialog({ children }) {
+export default function ViewPropertiesDialog({
+  children,
+  id = DIALOG_ID,
+  label = "Properties",
+}) {
   const [minimized, setMinimized] = useState(true);
   const dialogRef = useRef(null);
 
@@ -16,9 +20,9 @@ export default function ViewPropertiesDialog({ children }) {
       <dialog
         is="fig-dialog"
         ref={dialogRef}
-        id={DIALOG_ID}
+        id={id}
         class={`view-properties-dialog${minimized ? " is-minimized" : ""}`}
-        aria-label="Properties"
+        aria-label={label}
         closedby="none"
         position="top right"
         onCancel={(event) => {

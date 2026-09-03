@@ -48,6 +48,41 @@ export function FillDropLoading({ label = "Loading fill" }) {
   );
 }
 
+function PreviewStage({
+  plain,
+  stageRef,
+  stageClass,
+  loading,
+  interactionProps,
+  children,
+}) {
+  if (plain) {
+    return (
+      <div
+        ref={stageRef}
+        className={stageClass}
+        aria-busy={loading ? "true" : undefined}
+        {...interactionProps}
+      >
+        {children}
+      </div>
+    );
+  }
+  return (
+    <fig-preview
+      ref={stageRef}
+      class={stageClass}
+      full=""
+      checkerboard=""
+      aspect-ratio="auto"
+      aria-busy={loading ? "true" : undefined}
+      {...interactionProps}
+    >
+      {children}
+    </fig-preview>
+  );
+}
+
 function Preview({
   canvasRef,
   props,
@@ -67,6 +102,7 @@ function Preview({
   canvasTheme = "light",
   interactive = true,
   loading = false,
+  plain = false,
 }) {
   const stageRef = useRef(null);
   const [dragging, setDragging] = useState(false);
@@ -323,52 +359,49 @@ function Preview({
       });
   };
 
+  const stageClass = `${
+    plain ? "present-canvas-stage" : "canvas-stage"
+  } canvas-stage--${canvasTheme}${
+    dragging ? " is-dragging" : ""
+  }${loading ? " is-loading" : ""}`;
+  const interactionProps = {
+    onDrop: interactive ? onDrop : undefined,
+    onDragEnter: interactive
+      ? (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setDragging(true);
+        }
+      : undefined,
+    onDragOver: interactive
+      ? (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = "copy";
+          setDragging(true);
+        }
+      : undefined,
+    onDragLeave: interactive
+      ? (e) => {
+          e.preventDefault();
+          if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false);
+        }
+      : undefined,
+    onDoubleClick: interactive
+      ? (e) => {
+          if (e.target.closest("fig-handle, fig-canvas-control, svg")) return;
+          setView({ zoom: 1, x: 0, y: 0 });
+        }
+      : undefined,
+  };
+
   return (
-    <fig-preview
-      ref={stageRef}
-      class={`canvas-stage canvas-stage--${canvasTheme}${
-        dragging ? " is-dragging" : ""
-      }${loading ? " is-loading" : ""}`}
-      full=""
-      checkerboard=""
-      aspect-ratio="auto"
-      aria-busy={loading ? "true" : undefined}
-      onDrop={interactive ? onDrop : undefined}
-      onDragEnter={
-        interactive
-          ? (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setDragging(true);
-            }
-          : undefined
-      }
-      onDragOver={
-        interactive
-          ? (e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              e.dataTransfer.dropEffect = "copy";
-              setDragging(true);
-            }
-          : undefined
-      }
-      onDragLeave={
-        interactive
-          ? (e) => {
-              e.preventDefault();
-              if (!e.currentTarget.contains(e.relatedTarget)) setDragging(false);
-            }
-          : undefined
-      }
-      onDoubleClick={
-        interactive
-          ? (e) => {
-              if (e.target.closest("fig-handle, fig-canvas-control, svg")) return;
-              setView({ zoom: 1, x: 0, y: 0 });
-            }
-          : undefined
-      }
+    <PreviewStage
+      plain={plain}
+      stageRef={stageRef}
+      stageClass={stageClass}
+      loading={loading}
+      interactionProps={interactionProps}
     >
       <div
         className="canvas-frame"
@@ -425,7 +458,7 @@ function Preview({
         </div>
       )}
       {dragging && <FillDropOverlay dropTarget={dropTarget} />}
-    </fig-preview>
+    </PreviewStage>
   );
 }
 
