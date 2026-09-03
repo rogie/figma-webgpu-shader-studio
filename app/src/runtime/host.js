@@ -140,6 +140,7 @@ export class ShaderHost {
     this.running = false;
     this.rafId = 0;
     this._seekPresentRaf = 0;
+    this._mediaSeekVersions = new WeakMap();
     this.startTime = 0;
     this.lastTime = 0;
     this._playbackGeneration = 0;
@@ -1511,6 +1512,46 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     }
   }
 
+  _seekMediaElement(media, time) {
+    if (
+      !media ||
+      typeof media.addEventListener !== "function" ||
+      !Number.isFinite(media.currentTime)
+    ) {
+      return false;
+    }
+    const seconds = Math.max(0, Number(time) || 0) / 1000;
+    const duration = Number(media.duration);
+    const target =
+      Number.isFinite(duration) && duration > 0 ? seconds % duration : seconds;
+    if (Math.abs(media.currentTime - target) <= 0.0005) return false;
+
+    const version = (this._mediaSeekVersions.get(media) || 0) + 1;
+    this._mediaSeekVersions.set(media, version);
+    const onSeeked = () => {
+      if (this._mediaSeekVersions.get(media) !== version || this.running) return;
+      this._scheduleSeekPresent();
+    };
+    media.addEventListener("seeked", onSeeked, { once: true });
+    try {
+      media.currentTime = target;
+    } catch {
+      media.removeEventListener?.("seeked", onSeeked);
+      return false;
+    }
+    return true;
+  }
+
+  _seekMediaToTime(time) {
+    this._seekMediaElement(this.video, time);
+    const seen = new Set();
+    for (const layer of this.compositionLayers || []) {
+      if (layer.sourceType !== "video" || seen.has(layer.source)) continue;
+      seen.add(layer.source);
+      this._seekMediaElement(layer.source, time);
+    }
+  }
+
   _textureUsage({ copyDestination = false } = {}) {
     return (
       GPUTextureUsage.TEXTURE_BINDING |
@@ -2352,6 +2393,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     const changed = next !== this.frame.time;
     this.frame.time = next;
     this.frame.deltaTime = 0;
+    this._seekMediaToTime(next);
     const now = performance.now();
     this.startTime = now - next;
     this.lastTime = now;

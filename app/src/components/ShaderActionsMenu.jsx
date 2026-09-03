@@ -71,6 +71,7 @@ export default function ShaderActionsMenu({
         </fig-menu-item>
       )}
       <fig-menu-item value="share">Copy link</fig-menu-item>
+      {published && <fig-menu-item value="view">View</fig-menu-item>}
       <fig-separator />
       <fig-menu-item value="duplicate">Duplicate</fig-menu-item>
       {owner && <fig-menu-item value="delete">Delete</fig-menu-item>}

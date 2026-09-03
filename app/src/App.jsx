@@ -10338,6 +10338,10 @@ export default function App() {
       unpublishShader().catch(() => {});
     } else if (value === "duplicate") duplicateShader();
     else if (value === "share") copyShareLink();
+    else if (value === "view") {
+      if (!currentShader?.id || !currentShader.is_public) return;
+      openViewRoute(currentShader.id, currentShader.kind || kind);
+    }
     else if (value === "delete") {
       if (!isOwner) return;
       removeCurrentShader();
@@ -10357,6 +10361,7 @@ export default function App() {
     hasUncheckpointedChanges,
     isOwner,
     kind,
+    openViewRoute,
     removeCurrentShader,
     restoringVersion,
     saveShader,

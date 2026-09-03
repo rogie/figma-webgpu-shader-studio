@@ -267,6 +267,45 @@ test("seek can present the latest time on the next animation frame", () => {
   }
 });
 
+test("seek synchronizes video fills and redraws after the sought frame decodes", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeHost();
+    let redraws = 0;
+    let onSeeked = null;
+    const video = {
+      currentTime: 0,
+      duration: 4,
+      addEventListener(type, listener) {
+        if (type === "seeked") onSeeked = listener;
+      },
+      removeEventListener() {},
+    };
+    host.compositionLayers = [
+      {
+        role: "fill",
+        enabled: true,
+        sourceType: "video",
+        source: video,
+      },
+    ];
+    host.redraw = () => {
+      redraws += 1;
+    };
+
+    host.seek(5500, { present: "frame" });
+    assert.equal(video.currentTime, 1.5);
+    raf.flush();
+    assert.equal(redraws, 1);
+
+    onSeeked();
+    raf.flush();
+    assert.equal(redraws, 2);
+  } finally {
+    raf.restore();
+  }
+});
+
 test("play after pause continues from the paused time", () => {
   const raf = stubAnimationFrame();
   const originalNow = performance.now;
