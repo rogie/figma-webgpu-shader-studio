@@ -57,6 +57,7 @@ import {
   resolveExportSoundtrack,
 } from "./runtime/exportAudio.js";
 import { ShaderHost } from "./runtime/host.js";
+import { subscribePreviewPixelRatioMode } from "./runtime/dpi.js";
 import { loadModule } from "./runtime/loader.js";
 import { measurePerf, perfNow, recordPerf } from "./runtime/perf.js";
 import {
@@ -1242,6 +1243,7 @@ export default function App() {
     loading: authLoading,
     configured: authConfigured,
   } = useAuth();
+  const userId = user?.id ?? null;
   const [initialDocument] = useState(initialEditorDocument);
   const [presetId, setPresetId] = useState(initialDocument.id);
   const [shaderName, setShaderName] = useState(initialDocument.name);
@@ -1408,6 +1410,7 @@ export default function App() {
   const [routeProfile, setRouteProfile] = useState(
     () => getAppRoute().profile || null,
   );
+  const [editorRouteError, setEditorRouteError] = useState(null);
   const routeEmbedRef = useRef(Boolean(getAppRoute().embed));
   const [routeEmbed, setRouteEmbed] = useState(routeEmbedRef.current);
   const routeViewRef = useRef(Boolean(getAppRoute().view));
@@ -2142,10 +2145,12 @@ export default function App() {
   }, [libraryView, routeEmbed]);
 
   useEffect(() => {
-    if (editorAuthor === "me" && user?.id) {
-      setEditorAuthor(user.id);
-    }
-  }, [editorAuthor, user?.id]);
+    if (authLoading) return;
+    setEditorAuthor((current) => {
+      if (!userId) return "all";
+      return current === "me" ? userId : current;
+    });
+  }, [authLoading, userId]);
 
   useEffect(() => {
     if (routeEmbed) return;
@@ -4370,6 +4375,14 @@ export default function App() {
     );
   }, [kind, runtimeReady, applyPaintFill, clearObjectUrl, reapplyPreferredInput]);
 
+  useEffect(
+    () =>
+      subscribePreviewPixelRatioMode((mode) => {
+        hostRef.current?.setPreviewPixelRatioMode(mode);
+      }),
+    []
+  );
+
   useEffect(() => {
     if (
       viewMode === "home" ||
@@ -5400,6 +5413,9 @@ export default function App() {
         !requireAccessible &&
         draftSessionRef.current.presetId === cloudChoiceId(shader.id)
       ) {
+        setEditorRouteError((current) =>
+          current?.id === shader.id ? null : current
+        );
         setShaderRoute(shader.id, shader.kind);
         return;
       }
@@ -5414,9 +5430,14 @@ export default function App() {
             ? "navigation.getShader.cacheHit"
             : "navigation.getShader.request",
         );
-        const fullShader = !requireAccessible && shader.source
-          ? shader
-          : { ...shader, ...(await getShader(shader.id)) };
+        let fullShader = shader;
+        if (requireAccessible || !shader.source) {
+          const fetchedShader = await getShaderMaybe(shader.id);
+          if (!fetchedShader) {
+            throw new Error("This shader is private, missing, or unavailable.");
+          }
+          fullShader = { ...shader, ...fetchedShader };
+        }
         measurePerf("navigation.getShader", fetchStartedAt);
         if (requestId !== sessionRequestRef.current) return;
         if (requireAccessible) {
@@ -5504,6 +5525,9 @@ export default function App() {
         if (!hydratedComposition || requestId !== sessionRequestRef.current) {
           return;
         }
+        setEditorRouteError((current) =>
+          current?.id === fullShader.id ? null : current
+        );
         if (fullShader.kind === COMPOSITION_KIND) {
           const nextComposition = normalizeComposition(hydratedComposition);
           compositionRef.current = nextComposition;
@@ -5522,7 +5546,12 @@ export default function App() {
         finishSessionResourceLoad(loadingSessionId);
         navigationStartedAtRef.current = 0;
         if (requireAccessible) throw openError;
-        reportAppError(openError.message || String(openError));
+        const message = openError.message || String(openError);
+        if (message === "This shader is private, missing, or unavailable.") {
+          setEditorRouteError({ id: shader.id, message });
+        } else {
+          reportAppError(message);
+        }
       }
     },
     [
@@ -5537,7 +5566,6 @@ export default function App() {
   const cloudThumbnailExpiriesRef = useRef({});
   const hydratedLibraryScopeRef = useRef(null);
   const skipNextLibraryCacheWriteRef = useRef(false);
-  const userId = user?.id ?? null;
   const libraryScope = libraryCacheScope(userId);
 
   const refreshLibrary = useCallback(async () => {
@@ -9440,15 +9468,33 @@ export default function App() {
           origin: editorOrigin,
           author: editorAuthor,
         }),
-        {
-          includeEmptyKinds:
-            editorKind === "all"
-              ? [COMPOSITION_KIND, "effect", "fill"]
-              : [editorKind],
-        },
       ),
     [editorAuthor, editorKind, editorOrigin, editorQuery, libraryCards]
   );
+  const editorEmptyMessage = useMemo(() => {
+    const kindLabel = {
+      all: "shaders",
+      [COMPOSITION_KIND]: "compositions",
+      effect: "shader effects",
+      fill: "shader fills",
+    }[editorKind] || "shaders";
+    const authorLabel =
+      publishedAuthors.find((author) => author.value === editorAuthor)?.label ||
+      (editorAuthor === user?.id ? "you" : "the selected author");
+    const parts = [`No ${kindLabel} found`];
+    if (editorAuthor !== "all") parts.push(`for ${authorLabel}`);
+    if (editorOrigin === "draft") parts.push("in drafts");
+    else if (editorOrigin === "public") parts.push("in published shaders");
+    if (editorQuery.trim()) parts.push(`matching “${editorQuery.trim()}”`);
+    return `${parts.join(" ")}.`;
+  }, [
+    editorAuthor,
+    editorKind,
+    editorOrigin,
+    editorQuery,
+    publishedAuthors,
+    user?.id,
+  ]);
   editorCardsRef.current = groupedEditorCards;
   const compositionFillCards = useMemo(
     () => filterShaderLibraryCards(libraryCards, { kind: "fill" }),
@@ -10707,6 +10753,8 @@ export default function App() {
         : embedStatus === "ready" && error
           ? `This ${embedItemLabel} could not be rendered.`
           : "";
+  const editorRouteErrorMessage =
+    editorRouteError?.id === routeId ? editorRouteError.message : "";
 
   if (viewMode === "view") {
     return (
@@ -10970,6 +11018,19 @@ export default function App() {
             value={presetId}
             cards={groupedEditorCards}
             layout={libraryView}
+            emptyMessage={editorEmptyMessage}
+            showEmptyCreate={
+              !userId ||
+              editorAuthor === "all" ||
+              editorAuthor === "me" ||
+              editorAuthor === userId
+            }
+            onResetFilters={() => {
+              setEditorQuery("");
+              setEditorKind("all");
+              setEditorAuthor("all");
+              setEditorOrigin("all");
+            }}
             onChoice={chooseItem}
             onContextMenu={onShaderContextMenu}
             onAdd={(kind) => {
@@ -11060,7 +11121,15 @@ export default function App() {
         </div>
         ) : null}
 
-      {isComposerView ? (
+      {editorRouteErrorMessage ? (
+        <main
+          className="editor-route-state"
+          role="status"
+          aria-live="polite"
+        >
+          <p>{editorRouteErrorMessage}</p>
+        </main>
+      ) : isComposerView ? (
         <ComposerView
           viewerRef={viewerRef}
           visualizerRef={visualizerRef}

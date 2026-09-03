@@ -183,6 +183,15 @@ export default function ProfileView({
     : profile
       ? `@${profile.id}`
       : `@${identifier}`;
+  const profileStats = [
+    [counts.compositions, "composition"],
+    [counts.effects, "effect"],
+    [counts.fills, "fill"],
+  ]
+    .filter(([count]) => count > 0)
+    .map(([count, label]) => `${count} ${label}${count === 1 ? "" : "s"}`)
+    .join(" · ");
+
   return (
     <main className="home-nav profile-view">
       {profile && (
@@ -196,16 +205,13 @@ export default function ProfileView({
           <div className="profile-identity-copy">
             <h1>{profile.display_name || "Creator"}</h1>
             <p className="profile-handle">{handleLabel}</p>
-            <p className="profile-stats">
-              {counts.compositions} compositions · {counts.effects} effects ·{" "}
-              {counts.fills} fills
-            </p>
+            {profileStats && <p className="profile-stats">{profileStats}</p>}
           </div>
         </section>
       )}
 
       {loading ? (
-        <div className="profile-state" role="status">
+        <div className="profile-state profile-state--loading" role="status">
           <fig-spinner />
           Loading profile…
         </div>

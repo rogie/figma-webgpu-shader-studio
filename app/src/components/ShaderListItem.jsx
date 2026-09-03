@@ -10,14 +10,12 @@ function ShaderListItem({
   sublabel,
   layout = "list",
   showPreview = true,
-  selected = false,
   published = false,
   figmaLinked = false,
   actions,
 }) {
   if (layout === "grid") {
     const previewSrc = showPreview && src ? src : undefined;
-    const selectedAttr = selected ? { selected: "" } : {};
     if (previewSrc) {
       return (
         <fig-card
@@ -26,12 +24,11 @@ function ShaderListItem({
           alt={label}
           aspect-ratio="1/1"
           dangerouslySetInnerHTML={opaqueContent}
-          {...selectedAttr}
         />
       );
     }
     return (
-      <fig-card label={label} alt={label} aspect-ratio="1/1" {...selectedAttr}>
+      <fig-card label={label} alt={label} aspect-ratio="1/1">
         <fig-preview aspect-ratio="1/1" />
       </fig-card>
     );

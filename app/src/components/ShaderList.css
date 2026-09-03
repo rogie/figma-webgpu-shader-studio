@@ -12,6 +12,23 @@
     padding: 0;
   }
 
+  .shader-list-empty {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--spacer-3);
+    min-height: 0;
+    padding: var(--spacer-3);
+    color: var(--figma-color-text-secondary);
+    text-align: center;
+
+    p {
+      margin: 0;
+    }
+  }
+
   fig-header.shader-list-header {
     position: sticky;
     top: 0;
@@ -52,8 +69,8 @@
       margin: 0 var(--spacer-2);
       width: calc(100% - var(--spacer-2) * 2);
 
-      &[selected] {
-        background-color: var(--figma-color-bg-tertiary);
+      &[selected]:not([selected="false"]) {
+        background-color: var(--figma-color-bg-selected);
       }
       &:hover:not([selected]:not([selected=false])):not([disabled]:not([disabled=false])):not([aria-disabled=true]) {
         background-color: var(--figma-color-bg-tertiary);
@@ -79,9 +96,8 @@
         --fig-preview-background: transparent;
       }
 
-      fig-card[selected]:not([selected="false"])
-        > :is(fig-image, fig-media, fig-preview) {
-        outline: none;
+      fig-card:hover {
+        background-color: transparent !important;
       }
     }
   }

@@ -7,6 +7,7 @@ import {
   useMemo,
   useRef,
 } from "react";
+import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
 import { visibleLibrarySelection } from "../lib/shaderLibrary.js";
 import "./ShaderList.css";
@@ -35,7 +36,7 @@ function librarySections(cards) {
     }
     sections[sections.length - 1].cards.push(card);
   }
-  return sections;
+  return sections.filter((section) => section.cards.length > 0);
 }
 
 const ShaderList = forwardRef(function ShaderList(
@@ -50,6 +51,9 @@ const ShaderList = forwardRef(function ShaderList(
     renderActions,
     onContextMenu,
     drag = true,
+    emptyMessage = "No shaders found.",
+    showEmptyCreate = false,
+    onResetFilters,
   },
   ref
 ) {
@@ -71,6 +75,11 @@ const ShaderList = forwardRef(function ShaderList(
     .join("\u0000");
   const previousCardKeysRef = useRef(chooserCardKeys);
   const grid = layout === "grid";
+  const emptyCreateMenuRef = useFigMenuChange((kind) => {
+    if (kind === "composition" || kind === "effect" || kind === "fill") {
+      onAdd?.(kind);
+    }
+  });
 
   useLayoutEffect(() => {
     const root = innerRef.current;
@@ -127,6 +136,33 @@ const ShaderList = forwardRef(function ShaderList(
       className={className ? `shader-list ${className}` : "shader-list"}
       data-layout={grid ? "grid" : "list"}
     >
+      {!sections.length ? (
+        <div className="shader-list-empty">
+          <p role="status">{emptyMessage}</p>
+          {showEmptyCreate && onAdd ? (
+            <fig-menu ref={emptyCreateMenuRef} position="bottom center">
+              <fig-button
+                fig-menu-trigger=""
+                type="button"
+                variant="secondary"
+              >
+                Create
+              </fig-button>
+              <fig-menu-item value="effect">Shader effect</fig-menu-item>
+              <fig-menu-item value="fill">Shader fill</fig-menu-item>
+              <fig-menu-item value="composition">Composition</fig-menu-item>
+            </fig-menu>
+          ) : onResetFilters ? (
+            <fig-button
+              type="button"
+              variant="secondary"
+              onClick={onResetFilters}
+            >
+              Reset filters
+            </fig-button>
+          ) : null}
+        </div>
+      ) : null}
       {sections.map((section) => {
         const sectionValue = visibleLibrarySelection(section.cards, value);
         const addLabel = section.kind ? ADD_LABELS[section.kind] : null;
@@ -174,7 +210,6 @@ const ShaderList = forwardRef(function ShaderList(
                       label={card.name}
                       layout={layout}
                       showPreview={showPreview}
-                      selected={card.key === value}
                       published={card.origin === "public"}
                       figmaLinked={Boolean(card.figmaLinked)}
                       actions={renderActions?.(card)}
