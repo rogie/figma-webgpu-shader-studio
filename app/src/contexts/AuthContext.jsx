@@ -6,6 +6,7 @@ import {
   useMemo,
   useState,
 } from "react";
+import { reclaimRegenerableStorage } from "../lib/authStorage.js";
 import { isSupabaseConfigured, supabase } from "../lib/supabase.js";
 import { beginFigmaOAuth } from "../services/figmaShaders.js";
 
@@ -64,6 +65,7 @@ export function AuthProvider({ children }) {
 
   const signInWithGitHub = useCallback(async () => {
     if (!supabase) throw new Error("Supabase is not configured.");
+    reclaimRegenerableStorage();
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: {
