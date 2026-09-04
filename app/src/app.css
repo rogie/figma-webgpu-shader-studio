@@ -395,9 +395,10 @@ body,
     }
 
     > .shader-editor-header,
-    .composer-viewer > .shader-editor-header {
+    .composer-viewer > .shader-editor-header,
+    .composer-stage > .shader-editor-header {
       padding-left: var(--spacer-0);
-      padding-right: var(--spacer-2);
+      padding-right: var(--spacer-3);
     }
 
     .editor-view
@@ -1190,15 +1191,18 @@ dialog.delete-shader-dialog {
   display: flex;
   flex: 0 1 var(--sidebar-fluid-width);
   flex-direction: column;
-  width: var(--sidebar-fluid-width);
+  width: calc(var(--sidebar-fluid-width) + 1rem);
   min-width: var(--sidebar-min-width);
-  max-width: var(--sidebar-width);
-  height: 100%;
+  max-width: calc(var(--sidebar-width) + 1rem);
+  height: calc(100% + 1rem);
   min-height: 0;
   margin-left: var(--spacer-3);
+  margin-right: -1rem;
+  margin-bottom: -1rem;
   overflow: hidden;
-  border: 1px solid var(--figma-color-border);
-  border-radius: var(--viewer-radius);
+  border: 0;
+  border-left: 1px solid var(--figma-color-border);
+  border-radius: 0;
 }
 
 :is(.shader-properties-panel, .view-properties-dialog) {
