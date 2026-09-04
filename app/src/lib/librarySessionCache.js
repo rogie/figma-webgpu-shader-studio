@@ -101,6 +101,16 @@ export function libraryCacheIsFresh(savedAt, now = Date.now()) {
   );
 }
 
+export function libraryCacheCanSkipRefresh(cache, now = Date.now()) {
+  if (!Array.isArray(cache?.shaders) || cache.shaders.length === 0) {
+    return false;
+  }
+  const hasMissingThumbnails = cache.shaders.some(
+    (shader) => shader.thumbnail_path && !cache?.thumbnails?.[shader.id],
+  );
+  return libraryCacheIsFresh(cache.savedAt, now) && !hasMissingThumbnails;
+}
+
 export function readLibrarySessionCache({
   scope,
   storage = defaultStorage(),

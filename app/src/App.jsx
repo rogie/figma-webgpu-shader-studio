@@ -148,7 +148,7 @@ import {
 import {
   LIBRARY_THUMBNAIL_URL_TTL_MS,
   LIBRARY_ROW_CACHE_FRESH_MS,
-  libraryCacheIsFresh,
+  libraryCacheCanSkipRefresh,
   libraryCacheScope,
   libraryRefreshIsCurrent,
   readLibrarySessionCache,
@@ -6340,11 +6340,7 @@ export default function App() {
     let cacheIsFresh = false;
     if (hydratedLibraryScopeRef.current !== libraryScope) {
       const cached = readLibrarySessionCache({ scope: libraryScope });
-      const cacheHasMissingThumbnails = (cached?.shaders || []).some(
-        (shader) => shader.thumbnail_path && !cached?.thumbnails?.[shader.id],
-      );
-      cacheIsFresh =
-        libraryCacheIsFresh(cached?.savedAt) && !cacheHasMissingThumbnails;
+      cacheIsFresh = libraryCacheCanSkipRefresh(cached);
       hydratedLibraryScopeRef.current = libraryScope;
       skipNextLibraryCacheWriteRef.current = true;
       setCloudShadersState(cached?.shaders || []);

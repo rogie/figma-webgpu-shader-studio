@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   LIBRARY_ROW_CACHE_FRESH_MS,
   LIBRARY_THUMBNAIL_URL_TTL_MS,
+  libraryCacheCanSkipRefresh,
   libraryCacheIsFresh,
   libraryCacheScope,
   libraryRefreshIsCurrent,
@@ -170,5 +171,23 @@ test("row freshness has a bounded stale-while-revalidate window", () => {
   assert.equal(
     libraryCacheIsFresh(100, 100 + LIBRARY_ROW_CACHE_FRESH_MS),
     false,
+  );
+});
+
+test("an empty cache never suppresses a server refresh", () => {
+  assert.equal(
+    libraryCacheCanSkipRefresh(
+      { shaders: [], thumbnails: {}, savedAt: 100 },
+      101,
+    ),
+    false,
+  );
+  const row = shader({ thumbnail_path: null, thumbnail_small_path: null });
+  assert.equal(
+    libraryCacheCanSkipRefresh(
+      { shaders: [row], thumbnails: {}, savedAt: 100 },
+      101,
+    ),
+    true,
   );
 });
