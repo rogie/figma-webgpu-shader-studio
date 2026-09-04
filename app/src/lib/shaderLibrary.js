@@ -55,6 +55,7 @@ export function buildShaderLibraryCards({
   figmaShaders = [],
   thumbnails = {},
   cloudThumbnails = {},
+  cloudSmallThumbnails = {},
   liveNames = {},
   user = null,
 }) {
@@ -111,6 +112,11 @@ export function buildShaderLibraryCards({
       kind: resolvedLibraryKind(shader),
       thumbnailUrl:
         thumbnails[key] ||
+        cloudThumbnails[shader.id] ||
+        null,
+      thumbnailSmallUrl:
+        thumbnails[key] ||
+        cloudSmallThumbnails[shader.id] ||
         cloudThumbnails[shader.id] ||
         null,
       authorId: shader.owner_id ?? user?.id ?? null,

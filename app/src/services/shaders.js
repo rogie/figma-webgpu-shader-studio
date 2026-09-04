@@ -17,6 +17,7 @@ import { shaderPlanPath } from "../lib/chatPlans.js";
 export { shaderPlanPath };
 
 export const ASSET_BUCKET = "shader-assets";
+export const THUMBNAIL_BUCKET = "shader-thumbnails";
 export const PLAN_BUCKET = "shader-plans";
 export const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
 
@@ -41,11 +42,11 @@ function unwrap(result) {
 
 /** Library cards: omit source, composition, snapshots, and input blobs. */
 export const SHADER_LIBRARY_COLUMNS =
-  "id, owner_id, name, description, kind, is_public, thumbnail_path, features, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
+  "id, owner_id, name, description, kind, is_public, thumbnail_path, thumbnail_small_path, thumbnail_bucket, features, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
 
 /** Editor, view, and embed: the visual document plus listing metadata. */
 export const SHADER_DOCUMENT_COLUMNS =
-  "id, owner_id, name, description, source, kind, is_public, thumbnail_path, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
+  "id, owner_id, name, description, source, kind, is_public, thumbnail_path, thumbnail_small_path, thumbnail_bucket, input_path, input_name, input_mime_type, parameter_values, features, composition, dependency_snapshots, figma_shader_id, figma_shader_kind, figma_shader_version, state_revision, versioned_state_revision, created_at, updated_at";
 
 const PUBLIC_REFERENCE_COLUMNS = "id, name, kind, is_public, composition";
 
@@ -505,6 +506,7 @@ export async function uploadAsset({
   blob,
   fileName,
   contentType,
+  bucket = ASSET_BUCKET,
   cryptoApi = globalThis.crypto,
   client: suppliedClient = null,
 }) {
@@ -518,7 +520,7 @@ export async function uploadAsset({
     contentType,
     cryptoApi,
   });
-  const result = await client.storage.from(ASSET_BUCKET).upload(path, blob, {
+  const result = await client.storage.from(bucket).upload(path, blob, {
       upsert: false,
       contentType: contentType || blob.type || "application/octet-stream",
       cacheControl: "31536000",
@@ -527,12 +529,19 @@ export async function uploadAsset({
   return path;
 }
 
-async function listAssetFolder(client, prefix) {
+export async function uploadThumbnailAsset(options) {
+  return uploadAsset({
+    ...options,
+    bucket: options.public ? THUMBNAIL_BUCKET : ASSET_BUCKET,
+  });
+}
+
+async function listAssetFolder(client, prefix, bucket = ASSET_BUCKET) {
   const rows = [];
   const pageSize = 1000;
   for (let offset = 0; ; offset += pageSize) {
     const page = unwrap(
-      await client.storage.from(ASSET_BUCKET).list(prefix, {
+      await client.storage.from(bucket).list(prefix, {
         limit: pageSize,
         offset,
         sortBy: { column: "name", order: "asc" },
@@ -547,7 +556,7 @@ async function listAssetFolder(client, prefix) {
     if (row.id || row.metadata) {
       paths.push(path);
     } else {
-      paths.push(...(await listAssetFolder(client, path)));
+      paths.push(...(await listAssetFolder(client, path, bucket)));
     }
   }
   return paths;
@@ -556,6 +565,15 @@ async function listAssetFolder(client, prefix) {
 export async function listShaderAssetPaths(ownerId, shaderId) {
   if (!ownerId || !shaderId) return [];
   return listAssetFolder(requireClient(), `${ownerId}/${shaderId}`);
+}
+
+export async function listShaderThumbnailPaths(ownerId, shaderId) {
+  if (!ownerId || !shaderId) return [];
+  return listAssetFolder(
+    requireClient(),
+    `${ownerId}/${shaderId}`,
+    THUMBNAIL_BUCKET,
+  );
 }
 
 export async function listRetainedShaderAssetPaths(shaderId) {
@@ -626,6 +644,19 @@ export async function removeAssets(paths) {
   }
 }
 
+export async function removeThumbnailAssets(paths) {
+  const filtered = paths.filter(Boolean);
+  if (!filtered.length) return;
+  const client = requireClient();
+  for (let offset = 0; offset < filtered.length; offset += 1000) {
+    unwrap(
+      await client.storage
+        .from(THUMBNAIL_BUCKET)
+        .remove(filtered.slice(offset, offset + 1000))
+    );
+  }
+}
+
 export async function downloadAsset(path) {
   const client = requireClient();
   return unwrap(await client.storage.from(ASSET_BUCKET).download(path));
@@ -642,10 +673,14 @@ export async function getAssetUrl(path, expiresIn = 3600) {
   return data.signedUrl;
 }
 
-export async function getAssetUrls(paths, expiresIn = 3600) {
+export async function getAssetUrls(
+  paths,
+  expiresIn = 3600,
+  suppliedClient = null,
+) {
   const filtered = [...new Set(paths.filter(Boolean))];
   if (!filtered.length) return {};
-  const client = requireClient();
+  const client = suppliedClient || requireClient();
   const rows = unwrap(
     await client.storage
       .from(ASSET_BUCKET)
@@ -656,6 +691,47 @@ export async function getAssetUrls(paths, expiresIn = 3600) {
       .filter((row) => row?.path && row?.signedUrl)
       .map((row) => [row.path, row.signedUrl])
   );
+}
+
+export function getPublicThumbnailUrl(path, client = requireClient()) {
+  if (!path) return null;
+  return (
+    client.storage.from(THUMBNAIL_BUCKET).getPublicUrl(path)?.data?.publicUrl ||
+    null
+  );
+}
+
+export async function getThumbnailUrls(
+  shaders,
+  { expiresIn = 3600, client: suppliedClient = null } = {},
+) {
+  const rows = Array.isArray(shaders) ? shaders : [];
+  if (!rows.length) return { full: {}, small: {} };
+  const client = suppliedClient || requireClient();
+  const privatePaths = [];
+  for (const shader of rows) {
+    if ((shader.thumbnail_bucket || ASSET_BUCKET) === THUMBNAIL_BUCKET) continue;
+    if (shader.thumbnail_path) privatePaths.push(shader.thumbnail_path);
+    if (shader.thumbnail_small_path) privatePaths.push(shader.thumbnail_small_path);
+  }
+  const signedByPath = await getAssetUrls(privatePaths, expiresIn, client);
+  const full = {};
+  const small = {};
+  for (const shader of rows) {
+    const isPublicBucket =
+      (shader.thumbnail_bucket || ASSET_BUCKET) === THUMBNAIL_BUCKET;
+    const resolve = (path) =>
+      path
+        ? isPublicBucket
+          ? getPublicThumbnailUrl(path, client)
+          : signedByPath[path] || null
+        : null;
+    const fullUrl = resolve(shader.thumbnail_path);
+    const smallUrl = resolve(shader.thumbnail_small_path) || fullUrl;
+    if (fullUrl) full[shader.id] = fullUrl;
+    if (smallUrl) small[shader.id] = smallUrl;
+  }
+  return { full, small };
 }
 
 function appBasePathname() {

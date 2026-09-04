@@ -50,6 +50,7 @@ const ShaderList = forwardRef(function ShaderList(
     showPreview = true,
     renderActions,
     onContextMenu,
+    onThumbnailError,
     drag = true,
     emptyMessage = "No shaders found.",
     showEmptyCreate = false,
@@ -206,13 +207,14 @@ const ShaderList = forwardRef(function ShaderList(
                 {section.cards.map((card) => {
                   const item = (
                     <ShaderListItem
-                      src={card.thumbnailUrl}
+                      src={card.thumbnailSmallUrl || card.thumbnailUrl}
                       label={card.name}
                       layout={layout}
                       showPreview={showPreview}
                       published={card.origin === "public"}
                       figmaLinked={Boolean(card.figmaLinked)}
                       actions={renderActions?.(card)}
+                      onThumbnailError={() => onThumbnailError?.(card)}
                     />
                   );
 

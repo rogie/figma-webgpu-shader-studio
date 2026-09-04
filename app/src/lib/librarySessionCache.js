@@ -1,7 +1,8 @@
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CACHE_PREFIX = "figma-shader-studio:library-session";
 
 export const LIBRARY_THUMBNAIL_URL_TTL_MS = 50 * 60_000;
+export const LIBRARY_ROW_CACHE_FRESH_MS = 5 * 60_000;
 
 const LIBRARY_ROW_KEYS = [
   "id",
@@ -11,6 +12,8 @@ const LIBRARY_ROW_KEYS = [
   "kind",
   "is_public",
   "thumbnail_path",
+  "thumbnail_small_path",
+  "thumbnail_bucket",
   "features",
   "figma_shader_id",
   "figma_shader_kind",
@@ -30,7 +33,7 @@ function cacheKey(scope) {
 
 function defaultStorage() {
   try {
-    return globalThis.sessionStorage || null;
+    return globalThis.localStorage || null;
   } catch {
     return null;
   }
@@ -90,6 +93,14 @@ export function libraryRefreshIsCurrent(startEpoch, currentEpoch) {
   return startEpoch === currentEpoch;
 }
 
+export function libraryCacheIsFresh(savedAt, now = Date.now()) {
+  return (
+    Number.isFinite(savedAt) &&
+    savedAt > 0 &&
+    now - savedAt < LIBRARY_ROW_CACHE_FRESH_MS
+  );
+}
+
 export function readLibrarySessionCache({
   scope,
   storage = defaultStorage(),
@@ -110,6 +121,7 @@ export function readLibrarySessionCache({
     const shaders = sanitizeLibraryShaders(parsed.shaders);
     const shaderById = new Map(shaders.map((shader) => [shader.id, shader]));
     const thumbnails = {};
+    const smallThumbnails = {};
     const thumbnailPaths = {};
     const thumbnailExpiries = {};
     for (const [id, entry] of Object.entries(parsed.thumbnails || {})) {
@@ -126,12 +138,20 @@ export function readLibrarySessionCache({
         continue;
       }
       thumbnails[id] = entry.url;
+      if (
+        entry.smallPath === shader.thumbnail_small_path &&
+        typeof entry.smallUrl === "string" &&
+        entry.smallUrl
+      ) {
+        smallThumbnails[id] = entry.smallUrl;
+      }
       thumbnailPaths[id] = entry.path;
       thumbnailExpiries[id] = entry.expiresAt;
     }
     return {
       shaders,
       thumbnails,
+      smallThumbnails,
       thumbnailPaths,
       thumbnailExpiries,
       savedAt: Number(parsed.savedAt) || 0,
@@ -150,6 +170,7 @@ export function writeLibrarySessionCache({
   scope,
   shaders,
   thumbnails = {},
+  smallThumbnails = {},
   thumbnailPaths = {},
   thumbnailExpiries = {},
   storage = defaultStorage(),
@@ -171,6 +192,14 @@ export function writeLibrarySessionCache({
       expiresAt > now
     ) {
       entries[id] = { path, url, expiresAt };
+      if (
+        shader.thumbnail_small_path &&
+        typeof smallThumbnails[id] === "string" &&
+        smallThumbnails[id]
+      ) {
+        entries[id].smallPath = shader.thumbnail_small_path;
+        entries[id].smallUrl = smallThumbnails[id];
+      }
     }
   }
   try {

@@ -16,6 +16,7 @@ const {
   getShader,
   getShaderMaybe,
   getShadersByIds,
+  getThumbnailUrls,
   listPublicShaderGraphs,
   listShaders,
   updateShader,
@@ -127,6 +128,63 @@ test("an idempotent immutable upload accepts an existing object", async () => {
   assert.match(path, /^owner\/shader\/assets\/input-[a-f0-9]{64}\.png$/);
   assert.equal(calls[0][1], "shader-assets");
   assert.equal(calls[1][2].upsert, false);
+});
+
+test("thumbnail URLs are public and stable only for public bucket rows", async () => {
+  const calls = [];
+  const client = {
+    storage: {
+      from(bucket) {
+        return {
+          getPublicUrl(path) {
+            calls.push(["public", bucket, path]);
+            return { data: { publicUrl: `https://cdn.test/${path}` } };
+          },
+          async createSignedUrls(paths, expiresIn) {
+            calls.push(["signed", bucket, paths, expiresIn]);
+            return {
+              data: paths.map((path) => ({
+                path,
+                signedUrl: `https://signed.test/${path}`,
+              })),
+              error: null,
+            };
+          },
+        };
+      },
+    },
+  };
+
+  const urls = await getThumbnailUrls(
+    [
+      {
+        id: "public",
+        thumbnail_bucket: "shader-thumbnails",
+        thumbnail_path: "owner/public/assets/thumbnail-a.webp",
+        thumbnail_small_path: "owner/public/assets/thumbnail-small-b.webp",
+      },
+      {
+        id: "private",
+        thumbnail_bucket: "shader-assets",
+        thumbnail_path: "owner/private/assets/thumbnail-c.webp",
+      },
+    ],
+    { client },
+  );
+
+  assert.equal(
+    urls.full.public,
+    "https://cdn.test/owner/public/assets/thumbnail-a.webp",
+  );
+  assert.equal(
+    urls.small.public,
+    "https://cdn.test/owner/public/assets/thumbnail-small-b.webp",
+  );
+  assert.equal(
+    urls.full.private,
+    "https://signed.test/owner/private/assets/thumbnail-c.webp",
+  );
+  assert.equal(calls.filter(([kind]) => kind === "signed").length, 1);
 });
 
 test("buildSaveShaderStateRpcArgs includes complete visual state", () => {

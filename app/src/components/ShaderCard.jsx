@@ -23,11 +23,11 @@ export default function ShaderCard({
   animated = false,
   interactive = false,
   audio = false,
+  onThumbnailError,
 }) {
   const [previewActive, setPreviewActive] = useState(false);
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewReady, setPreviewReady] = useState(false);
   const cardRef = useRef(null);
   const previewCanvasRef = useRef(null);
   const previewControllerRef = useRef(null);
@@ -81,13 +81,11 @@ export default function ShaderCard({
         previewControllerRef.current = controller;
         controller?.setActive?.(previewActiveRef.current);
         setPreviewLoading(false);
-        setPreviewReady(true);
       })
       .catch(() => {
         setPreviewActive(false);
         setPreviewLoaded(false);
         setPreviewLoading(false);
-        setPreviewReady(false);
       });
     return () => {
       disposed = true;
@@ -127,13 +125,14 @@ export default function ShaderCard({
       onPointerLeave={() => setPreviewActive(false)}
     >
       <fig-preview class="shader-card-preview">
-        {src && !previewReady && (
+        {src && (
           <img
             className="shader-card-thumbnail"
             src={src}
             alt={label}
             loading="lazy"
             decoding="async"
+            onError={onThumbnailError}
           />
         )}
         {previewLoaded && previewId && (

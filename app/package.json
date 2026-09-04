@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "budget": "node scripts/check-bundle-budget.mjs",
+    "backfill:thumbnails": "node scripts/backfill-public-thumbnails.mjs",
     "test": "node --test",
     "test:embed": "playwright test",
     "verify": "npm test && npm run test:embed && npm run build && npm run budget",
@@ -55,6 +56,7 @@
     "@playwright/test": "^1.62.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@webgpu/types": "^0.1.52",
+    "sharp": "^0.34.5",
     "vite": "^5.4.11"
   }
 }

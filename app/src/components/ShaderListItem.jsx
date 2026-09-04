@@ -13,6 +13,7 @@ function ShaderListItem({
   published = false,
   figmaLinked = false,
   actions,
+  onThumbnailError,
 }) {
   if (layout === "grid") {
     const previewSrc = showPreview && src ? src : undefined;
@@ -23,6 +24,9 @@ function ShaderListItem({
           label={label}
           alt={label}
           aspect-ratio="1/1"
+          loading="lazy"
+          decoding="async"
+          onErrorCapture={onThumbnailError}
           dangerouslySetInnerHTML={opaqueContent}
         />
       );
@@ -43,6 +47,9 @@ function ShaderListItem({
           alt={label}
           fit="contain"
           aspect-ratio="1/1"
+          loading="lazy"
+          decoding="async"
+          onErrorCapture={onThumbnailError}
           dangerouslySetInnerHTML={opaqueContent}
         />
       )}

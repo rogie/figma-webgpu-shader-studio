@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { COMPOSITION_KIND } from "../lib/composition.js";
 import { buildShaderLibraryCards } from "../lib/shaderLibrary.js";
 import {
-  getAssetUrls,
+  getThumbnailUrls,
   getProfileByHandleOrId,
   getProfileShaderCounts,
   listProfileShaders,
@@ -75,9 +75,7 @@ export default function ProfileView({
           }),
           getProfileShaderCounts(nextProfile.id, { includePrivate: false }),
         ]);
-        const urls = await getAssetUrls(
-          result.shaders.map((shader) => shader.thumbnail_path),
-        );
+        const { full: urls } = await getThumbnailUrls(result.shaders);
         if (cancelled) return;
         setProfile(nextProfile);
         setShaders(result.shaders);
@@ -85,9 +83,7 @@ export default function ProfileView({
           Object.fromEntries(
             result.shaders.map((shader) => [
               shader.id,
-              shader.thumbnail_path
-                ? urls[shader.thumbnail_path] || null
-                : null,
+              urls[shader.id] || null,
             ]),
           ),
         );
@@ -153,18 +149,14 @@ export default function ProfileView({
         offset: shaders.length,
         limit: PAGE_SIZE,
       });
-      const urls = await getAssetUrls(
-        result.shaders.map((shader) => shader.thumbnail_path),
-      );
+      const { full: urls } = await getThumbnailUrls(result.shaders);
       setShaders((current) => [...current, ...result.shaders]);
       setThumbnailUrls((current) => ({
         ...current,
         ...Object.fromEntries(
           result.shaders.map((shader) => [
             shader.id,
-            shader.thumbnail_path
-              ? urls[shader.thumbnail_path] || null
-              : null,
+            urls[shader.id] || null,
           ]),
         ),
       }));

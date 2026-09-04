@@ -145,6 +145,8 @@ import {
 } from "./lib/shaderLibrary.js";
 import {
   LIBRARY_THUMBNAIL_URL_TTL_MS,
+  LIBRARY_ROW_CACHE_FRESH_MS,
+  libraryCacheIsFresh,
   libraryCacheScope,
   libraryRefreshIsCurrent,
   readLibrarySessionCache,
@@ -330,12 +332,14 @@ import { useShaderPersistence } from "./hooks/useShaderPersistence.js";
 import { useShaderRuntime } from "./hooks/useShaderRuntime.js";
 import { useShaderSession } from "./hooks/useShaderSession.js";
 import {
+  ASSET_BUCKET,
   createShader,
   deleteShader,
   downloadAsset,
   downloadShaderPlan,
   getAssetUrl,
   getAssetUrls,
+  getThumbnailUrls,
   getProfile,
   getShader,
   getShaderMaybe,
@@ -344,6 +348,7 @@ import {
   getAppRoute,
   getShaderRouteId,
   listShaderAssetPaths,
+  listShaderThumbnailPaths,
   listShaderVersions,
   listShaders,
   listPublicShaderGraphs,
@@ -354,14 +359,21 @@ import {
   makeShareUrl,
   makeViewUrl,
   MAX_MEDIA_BYTES,
+  THUMBNAIL_BUCKET,
   removeAssets,
+  removeThumbnailAssets,
   removeShaderPlan,
   restoreShaderVersion,
   saveShaderState,
   updateShader,
   uploadAsset,
+  uploadThumbnailAsset,
   uploadShaderPlan,
 } from "./services/shaders.js";
+import {
+  createThumbnailVariant,
+  THUMBNAIL_SIZE,
+} from "./lib/thumbnailVariants.js";
 
 const CodePane = lazy(() => import("./components/CodePane.jsx"));
 const Controls = lazy(() => import("./components/Controls.jsx"));
@@ -373,11 +385,49 @@ const ShaderChatSection = lazy(
 // wiping those nodes when the parent re-renders.
 const opaqueContent = { __html: "" };
 
-const THUMBNAIL_SIZE = 512;
 const THUMBNAIL_IDLE_MS = 4000;
 const BACKGROUND_AUTOSAVE_MS = 4000;
 const CLOUD_WRITE_BACKOFF_MS = 20_000;
 const FILL_ASSET_URL_CACHE_MS = 5 * 60_000;
+
+async function uploadThumbnailVariants({
+  ownerId,
+  shaderId,
+  blob,
+  public: usePublicBucket,
+}) {
+  const bucket = usePublicBucket ? THUMBNAIL_BUCKET : ASSET_BUCKET;
+  const thumbnailPath = await uploadThumbnailAsset({
+    ownerId,
+    shaderId,
+    role: "thumbnail",
+    blob,
+    fileName: "thumbnail.webp",
+    contentType: blob.type || "image/webp",
+    public: usePublicBucket,
+  });
+  let thumbnailSmallPath = null;
+  try {
+    const smallBlob = await createThumbnailVariant(blob);
+    thumbnailSmallPath = await uploadThumbnailAsset({
+      ownerId,
+      shaderId,
+      role: "thumbnail-small",
+      blob: smallBlob,
+      fileName: "thumbnail-small.webp",
+      contentType: smallBlob.type || "image/webp",
+      public: usePublicBucket,
+    });
+  } catch {
+    // The full thumbnail remains usable when local downscaling is unavailable.
+  }
+  return {
+    thumbnail_path: thumbnailPath,
+    thumbnail_small_path: thumbnailSmallPath,
+    thumbnail_bucket: bucket,
+  };
+}
+
 const fillAssetUrlCache = new Map();
 const fillAssetBatchPromises = new Map();
 const audioPrefetchPromises = new Map();
@@ -1342,6 +1392,7 @@ export default function App() {
   }, []);
   const [drafts, setDrafts] = useState(INITIAL_DRAFTS);
   const [cloudThumbnails, setCloudThumbnails] = useState({});
+  const [cloudSmallThumbnails, setCloudSmallThumbnails] = useState({});
   const [pendingMedia, setPendingMedia] = useState(null);
   const [autosaveRetryRevision, setAutosaveRetryRevision] = useState(0);
   const [migrationRetryRevision, setMigrationRetryRevision] = useState(0);
@@ -1648,10 +1699,12 @@ export default function App() {
   const draftsRef = useRef(drafts);
   const cloudShadersRef = useRef(cloudShaders);
   const cloudThumbnailsRef = useRef(cloudThumbnails);
+  const cloudSmallThumbnailsRef = useRef(cloudSmallThumbnails);
   const resolvedShadersRef = useRef(resolvedShaders);
   draftsRef.current = drafts;
   cloudShadersRef.current = cloudShaders;
   cloudThumbnailsRef.current = cloudThumbnails;
+  cloudSmallThumbnailsRef.current = cloudSmallThumbnails;
   resolvedShadersRef.current = resolvedShaders;
   const beginSessionResourceLoad = useCallback((sessionId) => {
     cancelAnimationFrame(loadingRevealFrameRef.current);
@@ -6015,17 +6068,22 @@ export default function App() {
   );
 
   const cloudThumbnailPathsRef = useRef({});
+  const cloudThumbnailBucketsRef = useRef({});
   const cloudThumbnailExpiriesRef = useRef({});
   const hydratedLibraryScopeRef = useRef(null);
   const skipNextLibraryCacheWriteRef = useRef(false);
+  const libraryRefreshRef = useRef(null);
+  const thumbnailRecoveryAttemptsRef = useRef(new Map());
   const libraryScope = libraryCacheScope(userId);
 
   const refreshLibrary = useCallback(async () => {
     if (!authConfigured) {
       cloudThumbnailPathsRef.current = {};
+      cloudThumbnailBucketsRef.current = {};
       cloudThumbnailExpiriesRef.current = {};
       setCloudShadersState([]);
       setCloudThumbnails({});
+      setCloudSmallThumbnails({});
       return;
     }
     const refreshEpoch = libraryMutationEpochRef.current;
@@ -6034,54 +6092,79 @@ export default function App() {
       // current user's private drafts when signed in.
       const shaders = await listShaders();
       const now = Date.now();
-      const pathsToRefresh = [];
+      const rowsToRefresh = [];
       for (const shader of shaders) {
         const id = shader.id;
         const path = shader.thumbnail_path || null;
+        const bucket = shader.thumbnail_bucket || ASSET_BUCKET;
+        const publicThumbnail = bucket === THUMBNAIL_BUCKET;
         const reusable =
           path &&
           cloudThumbnailPathsRef.current[id] === path &&
+          cloudThumbnailBucketsRef.current[id] === bucket &&
           cloudThumbnailsRef.current[id] &&
           cloudThumbnailExpiriesRef.current[id] > now;
-        if (path && !reusable) pathsToRefresh.push(path);
+        if (path && (publicThumbnail || !reusable)) rowsToRefresh.push(shader);
       }
-      const urlsByPath = await getAssetUrls(pathsToRefresh);
+      const { full: urlsById, small: smallUrlsById } =
+        await getThumbnailUrls(rowsToRefresh);
       if (
         !libraryRefreshIsCurrent(
           refreshEpoch,
           libraryMutationEpochRef.current,
         )
       ) {
+        window.setTimeout(() => libraryRefreshRef.current?.(), 0);
         return;
       }
       setCloudShadersState((current) =>
         reconcileLibraryShaders(current, shaders),
       );
       const previous = cloudThumbnailsRef.current;
+      const previousSmall = cloudSmallThumbnailsRef.current;
       const nextPathById = {};
+      const nextBucketById = {};
       const nextExpiryById = {};
       const next = {};
+      const nextSmall = {};
       let thumbnailsChanged =
         Object.keys(previous).length !== shaders.length;
       for (const shader of shaders) {
         const path = shader.thumbnail_path || null;
+        const bucket = shader.thumbnail_bucket || ASSET_BUCKET;
         nextPathById[shader.id] = path;
+        nextBucketById[shader.id] = bucket;
         if (
           path &&
           cloudThumbnailPathsRef.current[shader.id] === path &&
+          cloudThumbnailBucketsRef.current[shader.id] === bucket &&
           previous[shader.id] &&
           cloudThumbnailExpiriesRef.current[shader.id] > now
         ) {
           next[shader.id] = previous[shader.id];
+          nextSmall[shader.id] =
+            previousSmall[shader.id] || previous[shader.id];
           nextExpiryById[shader.id] =
             cloudThumbnailExpiriesRef.current[shader.id];
           continue;
         }
-        const url = path ? urlsByPath[path] || null : null;
+        const url = path
+          ? urlsById[shader.id] ||
+            (cloudThumbnailPathsRef.current[shader.id] === path
+              ? previous[shader.id] || null
+              : null)
+          : null;
         next[shader.id] = url;
+        nextSmall[shader.id] =
+          smallUrlsById[shader.id] ||
+          (cloudThumbnailPathsRef.current[shader.id] === path
+            ? previousSmall[shader.id] || url
+            : url);
         if (url) {
           nextExpiryById[shader.id] =
-            Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS;
+            bucket === THUMBNAIL_BUCKET
+              ? Number.MAX_SAFE_INTEGER
+              : Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS;
         }
         if (url !== previous[shader.id]) thumbnailsChanged = true;
       }
@@ -6090,13 +6173,17 @@ export default function App() {
       }
       const nextThumbnails = thumbnailsChanged ? next : previous;
       cloudThumbnailsRef.current = nextThumbnails;
+      cloudSmallThumbnailsRef.current = nextSmall;
       cloudThumbnailPathsRef.current = nextPathById;
+      cloudThumbnailBucketsRef.current = nextBucketById;
       cloudThumbnailExpiriesRef.current = nextExpiryById;
       setCloudThumbnails(nextThumbnails);
+      setCloudSmallThumbnails(nextSmall);
       writeLibrarySessionCache({
         scope: libraryScope,
         shaders,
         thumbnails: nextThumbnails,
+        smallThumbnails: nextSmall,
         thumbnailPaths: nextPathById,
         thumbnailExpiries: nextExpiryById,
       });
@@ -6108,19 +6195,73 @@ export default function App() {
       showNotice(message, { error: true });
     }
   }, [authConfigured, libraryScope, showNotice]);
+  libraryRefreshRef.current = refreshLibrary;
+
+  const recoverCloudThumbnail = useCallback((shaderId) => {
+    if (!shaderId) return;
+    const now = Date.now();
+    const previousAttempt =
+      thumbnailRecoveryAttemptsRef.current.get(shaderId) || 0;
+    if (now - previousAttempt < 15_000) return;
+    thumbnailRecoveryAttemptsRef.current.set(shaderId, now);
+    cloudThumbnailExpiriesRef.current[shaderId] = 0;
+    libraryRefreshRef.current?.();
+  }, []);
+
+  useEffect(() => {
+    if (routeEmbed || authLoading) return undefined;
+    const now = Date.now();
+    const expiries = Object.values(cloudThumbnailExpiriesRef.current).filter(
+      (expiry) => Number.isFinite(expiry) && expiry < Number.MAX_SAFE_INTEGER,
+    );
+    if (!expiries.length) return undefined;
+    const earliestExpiry = Math.min(...expiries);
+    const delay = Math.max(30_000, earliestExpiry - now - 60_000);
+    const timer = window.setTimeout(
+      () => libraryRefreshRef.current?.(),
+      delay,
+    );
+    return () => window.clearTimeout(timer);
+  }, [authLoading, cloudShaders, cloudThumbnails, routeEmbed]);
+
+  useEffect(() => {
+    if (routeEmbed || authLoading) return undefined;
+    const timer = window.setInterval(
+      () => libraryRefreshRef.current?.(),
+      LIBRARY_ROW_CACHE_FRESH_MS,
+    );
+    return () => window.clearInterval(timer);
+  }, [authLoading, routeEmbed]);
 
   useLayoutEffect(() => {
     if (routeEmbed || authLoading) return;
+    let cacheIsFresh = false;
     if (hydratedLibraryScopeRef.current !== libraryScope) {
       const cached = readLibrarySessionCache({ scope: libraryScope });
+      const cacheHasMissingThumbnails = (cached?.shaders || []).some(
+        (shader) => shader.thumbnail_path && !cached?.thumbnails?.[shader.id],
+      );
+      cacheIsFresh =
+        libraryCacheIsFresh(cached?.savedAt) && !cacheHasMissingThumbnails;
       hydratedLibraryScopeRef.current = libraryScope;
       skipNextLibraryCacheWriteRef.current = true;
       setCloudShadersState(cached?.shaders || []);
       setCloudThumbnails(cached?.thumbnails || {});
+      setCloudSmallThumbnails(
+        cached?.smallThumbnails || cached?.thumbnails || {},
+      );
+      cloudSmallThumbnailsRef.current =
+        cached?.smallThumbnails || cached?.thumbnails || {};
       cloudThumbnailPathsRef.current = cached?.thumbnailPaths || {};
+      cloudThumbnailBucketsRef.current = Object.fromEntries(
+        (cached?.shaders || []).map((shader) => [
+          shader.id,
+          shader.thumbnail_bucket || ASSET_BUCKET,
+        ]),
+      );
       cloudThumbnailExpiriesRef.current = cached?.thumbnailExpiries || {};
     }
-    refreshLibrary();
+    if (!cacheIsFresh) refreshLibrary();
   }, [authLoading, libraryScope, refreshLibrary, routeEmbed]);
 
   useEffect(() => {
@@ -6139,12 +6280,14 @@ export default function App() {
       scope: libraryScope,
       shaders: cloudShaders,
       thumbnails: cloudThumbnails,
+      smallThumbnails: cloudSmallThumbnails,
       thumbnailPaths: cloudThumbnailPathsRef.current,
       thumbnailExpiries: cloudThumbnailExpiriesRef.current,
     });
   }, [
     authLoading,
     cloudShaders,
+    cloudSmallThumbnails,
     cloudThumbnails,
     libraryScope,
     routeEmbed,
@@ -6422,14 +6565,12 @@ export default function App() {
             const thumbnailBlob = await fetch(thumbnailData).then((response) =>
               response.blob()
             );
-            assetChanges.thumbnail_path = await uploadAsset({
+            Object.assign(assetChanges, await uploadThumbnailVariants({
               ownerId: user.id,
               shaderId: saved.id,
-              role: "thumbnail",
               blob: thumbnailBlob,
-              fileName: "thumbnail.webp",
-              contentType: thumbnailBlob.type || "image/webp",
-            });
+              public: false,
+            }));
           }
 
           if (Object.keys(assetChanges).length) {
@@ -7983,6 +8124,10 @@ export default function App() {
           await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
         }
         const assetChanges = {};
+        const previousPublicThumbnailPaths =
+          saved.thumbnail_bucket === THUMBNAIL_BUCKET
+            ? [saved.thumbnail_path, saved.thumbnail_small_path].filter(Boolean)
+            : [];
 
         // Thumbnails are expensive (canvas capture + Storage RLS). Only refresh
         // them on explicit saves — background autosave only persists state.
@@ -8019,15 +8164,30 @@ export default function App() {
               }
             }
           }
+          if (
+            !thumbnailBlob &&
+            saved.is_public &&
+            saved.thumbnail_path &&
+            saved.thumbnail_bucket !== THUMBNAIL_BUCKET
+          ) {
+            try {
+              thumbnailBlob = await downloadAsset(saved.thumbnail_path);
+            } catch {
+              // Leave the existing private thumbnail in place until a later save.
+            }
+          }
           if (thumbnailBlob) {
-            assetChanges.thumbnail_path = await uploadAsset({
-              ownerId: user.id,
-              shaderId: saved.id,
-              role: "thumbnail",
-              blob: thumbnailBlob,
-              fileName: "thumbnail.webp",
-              contentType: thumbnailBlob.type || "image/webp",
-            });
+            Object.assign(
+              assetChanges,
+              await uploadThumbnailVariants({
+                ownerId: user.id,
+                shaderId: saved.id,
+                blob: thumbnailBlob,
+                public:
+                  saved.is_public ||
+                  saved.thumbnail_bucket === THUMBNAIL_BUCKET,
+              }),
+            );
           }
         }
 
@@ -8035,6 +8195,16 @@ export default function App() {
           saved = await updateShader(saved.id, assetChanges, {
             expectedStateRevision: saved.state_revision,
           });
+          const currentThumbnailPaths = new Set([
+            saved.thumbnail_path,
+            saved.thumbnail_small_path,
+          ]);
+          const staleThumbnailPaths = previousPublicThumbnailPaths.filter(
+            (path) => !currentThumbnailPaths.has(path),
+          );
+          if (staleThumbnailPaths.length) {
+            removeThumbnailAssets(staleThumbnailPaths).catch(() => {});
+          }
         }
 
         if (isDraftId(saveTargetId)) {
@@ -8068,18 +8238,31 @@ export default function App() {
         ]);
         if (saved.thumbnail_path) {
           try {
-            const url = await getAssetUrl(saved.thumbnail_path);
+            const { full, small } = await getThumbnailUrls([saved]);
+            const url = full[saved.id];
+            const smallUrl = small[saved.id] || url;
             cloudThumbnailPathsRef.current = {
               ...cloudThumbnailPathsRef.current,
               [saved.id]: saved.thumbnail_path,
             };
+            cloudThumbnailBucketsRef.current = {
+              ...cloudThumbnailBucketsRef.current,
+              [saved.id]: saved.thumbnail_bucket || ASSET_BUCKET,
+            };
             cloudThumbnailExpiriesRef.current = {
               ...cloudThumbnailExpiriesRef.current,
-              [saved.id]: Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS,
+              [saved.id]:
+                saved.thumbnail_bucket === THUMBNAIL_BUCKET
+                  ? Number.MAX_SAFE_INTEGER
+                  : Date.now() + LIBRARY_THUMBNAIL_URL_TTL_MS,
             };
             setCloudThumbnails((current) => ({
               ...current,
               [saved.id]: url,
+            }));
+            setCloudSmallThumbnails((current) => ({
+              ...current,
+              [saved.id]: smallUrl,
             }));
           } catch {
             // The durable thumbnail path is saved; its display URL can refresh
@@ -9417,8 +9600,9 @@ export default function App() {
             `Delete or unpublish the referencing ${parents.length === 1 ? "item" : "items"} first: ${parents.map((item) => item.name).join(", ")}.`
           );
         }
-        const [assetPaths, retainedAssets] = await Promise.all([
+        const [assetPaths, thumbnailPaths, retainedAssets] = await Promise.all([
           listShaderAssetPaths(shader.owner_id, shader.id),
+          listShaderThumbnailPaths(shader.owner_id, shader.id),
           listRetainedShaderAssetPaths(shader.id),
         ]);
         const retained = new Set(retainedAssets);
@@ -9429,6 +9613,7 @@ export default function App() {
         const cleanupResults = await Promise.allSettled([
           removeShaderPlan(shader.owner_id, shader.id),
           removeAssets(disposableAssets),
+          removeThumbnailAssets(thumbnailPaths),
         ]);
         setCloudShaders((current) =>
           current.filter((item) => item.id !== shader.id)
@@ -9874,6 +10059,7 @@ export default function App() {
         cloudShaders,
         thumbnails,
         cloudThumbnails,
+        cloudSmallThumbnails,
         liveNames: {
           [presetId]: shaderName,
         },
@@ -9881,6 +10067,7 @@ export default function App() {
       }),
     [
       cloudShaders,
+      cloudSmallThumbnails,
       cloudThumbnails,
       drafts,
       presetId,
@@ -9964,12 +10151,24 @@ export default function App() {
       buildShaderLibraryCards({
         drafts: drafts.filter((draft) => draft.kind !== COMPOSITION_KIND),
         cloudShaders,
+        thumbnails,
+        cloudThumbnails,
+        cloudSmallThumbnails,
         liveNames: {
           [presetId]: shaderName,
         },
         user,
       }),
-    [cloudShaders, drafts, presetId, shaderName, user]
+    [
+      cloudShaders,
+      cloudSmallThumbnails,
+      cloudThumbnails,
+      drafts,
+      presetId,
+      shaderName,
+      thumbnails,
+      user,
+    ]
   );
 
   const onCompositionChange = useCallback(
@@ -10620,6 +10819,9 @@ export default function App() {
           animated={Boolean(card.features?.isAnimated)}
           interactive={Boolean(card.features?.usesMouse)}
           audio={Boolean(card.features?.supportsAudio)}
+          onThumbnailError={() =>
+            recoverCloudThumbnail(card.cloud?.id)
+          }
           onAuthorClick={
             card.authorId
               ? () => openUserProfile(card.authorId, card.authorHandle)
@@ -11523,6 +11725,9 @@ export default function App() {
             }}
             onChoice={chooseItem}
             onContextMenu={onShaderContextMenu}
+            onThumbnailError={(card) =>
+              recoverCloudThumbnail(card.cloud?.id)
+            }
             onAdd={(kind) => {
               if (kind === "effect") createDraft("blank-effect");
               else if (kind === "fill") createDraft("blank-fill");

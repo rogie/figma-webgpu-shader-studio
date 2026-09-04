@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  LIBRARY_ROW_CACHE_FRESH_MS,
   LIBRARY_THUMBNAIL_URL_TTL_MS,
+  libraryCacheIsFresh,
   libraryCacheScope,
   libraryRefreshIsCurrent,
   readLibrarySessionCache,
@@ -27,6 +29,8 @@ function shader(overrides = {}) {
     kind: "effect",
     is_public: false,
     thumbnail_path: "user-1/shader-1/thumbnail.png",
+    thumbnail_small_path: "user-1/shader-1/thumbnail-small.png",
+    thumbnail_bucket: "shader-assets",
     state_revision: 2,
     updated_at: "2026-09-02T12:00:00Z",
     ...overrides,
@@ -81,6 +85,7 @@ test("thumbnail URLs expire independently from cached rows", () => {
     now: 100,
     shaders: [row],
     thumbnails: { [row.id]: "https://example.com/signed" },
+    smallThumbnails: { [row.id]: "https://example.com/signed-small" },
     thumbnailPaths: { [row.id]: row.thumbnail_path },
     thumbnailExpiries: { [row.id]: expiresAt },
   });
@@ -91,6 +96,10 @@ test("thumbnail URLs expire independently from cached rows", () => {
     now: expiresAt - 1,
   });
   assert.equal(valid.thumbnails[row.id], "https://example.com/signed");
+  assert.equal(
+    valid.smallThumbnails[row.id],
+    "https://example.com/signed-small",
+  );
   const expired = readLibrarySessionCache({
     storage,
     scope,
@@ -104,7 +113,7 @@ test("malformed cache entries fail closed", () => {
   const storage = memoryStorage();
   const scope = libraryCacheScope("user-1");
   storage.setItem(
-    "figma-shader-studio:library-session:v1:user:user-1",
+    "figma-shader-studio:library-session:v2:user:user-1",
     "{",
   );
   assert.equal(readLibrarySessionCache({ storage, scope }), null);
@@ -151,4 +160,15 @@ test("reconciliation preserves unchanged rows and invalidates per shader", () =>
 test("older refreshes are rejected after a local mutation epoch", () => {
   assert.equal(libraryRefreshIsCurrent(4, 4), true);
   assert.equal(libraryRefreshIsCurrent(4, 5), false);
+});
+
+test("row freshness has a bounded stale-while-revalidate window", () => {
+  assert.equal(
+    libraryCacheIsFresh(100, 100 + LIBRARY_ROW_CACHE_FRESH_MS - 1),
+    true,
+  );
+  assert.equal(
+    libraryCacheIsFresh(100, 100 + LIBRARY_ROW_CACHE_FRESH_MS),
+    false,
+  );
 });
