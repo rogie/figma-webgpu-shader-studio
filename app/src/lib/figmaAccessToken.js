@@ -1,5 +1,16 @@
+import { stripPersistedDraftThumbnails } from "./draftStorage.js";
+
 const STORAGE_KEY = "shader-studio.figmaAccessToken";
 const CHANGE_EVENT = "shader-studio:figma-access-token";
+
+function isStorageQuotaError(error) {
+  return (
+    error?.name === "QuotaExceededError" ||
+    error?.name === "NS_ERROR_DOM_QUOTA_REACHED" ||
+    error?.code === 22 ||
+    error?.code === 1014
+  );
+}
 
 function readStore() {
   try {
@@ -19,7 +30,25 @@ function readStore() {
 
 function writeStore(session) {
   if (session?.accessToken) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    const serialized = JSON.stringify(session);
+    try {
+      localStorage.setItem(STORAGE_KEY, serialized);
+    } catch (error) {
+      if (!isStorageQuotaError(error)) throw error;
+      stripPersistedDraftThumbnails(localStorage);
+      try {
+        localStorage.setItem(STORAGE_KEY, serialized);
+      } catch (retryError) {
+        if (!isStorageQuotaError(retryError)) throw retryError;
+        const storageError = new Error(
+          "Browser storage is full, so Shader Studio could not save your Figma connection. Your shader source was preserved. Remove old local drafts or chat history, then reconnect.",
+        );
+        storageError.name = "FigmaSessionStorageError";
+        storageError.code = "figma_session_storage_full";
+        storageError.cause = retryError;
+        throw storageError;
+      }
+    }
   } else {
     localStorage.removeItem(STORAGE_KEY);
   }

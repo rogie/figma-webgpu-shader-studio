@@ -57,7 +57,7 @@ function effectFillState(draft) {
   };
 }
 
-export function serializeDraft(draft, thumbnail = null) {
+export function serializeDraft(draft) {
   const storedEffectFills =
     draft.kind === "effect" ? effectFillState(draft) : null;
   return {
@@ -82,7 +82,6 @@ export function serializeDraft(draft, thumbnail = null) {
         ? draft.dependencySnapshots
         : {},
     isPublic: Boolean(draft.isPublic),
-    thumbnail: typeof thumbnail === "string" ? thumbnail : null,
     ...figmaShaderLink(draft),
   };
 }
@@ -147,26 +146,49 @@ export function readDrafts(storage = globalThis.localStorage) {
   }
 }
 
-/** Persist only serializable data: URLs (blob: URLs die on reload). */
+/**
+ * Removes regenerable thumbnail data while preserving every draft's source
+ * and settings. Replacing the existing value with a smaller one can recover
+ * from a full localStorage quota.
+ */
+export function stripPersistedDraftThumbnails(
+  storage = globalThis.localStorage,
+) {
+  try {
+    const raw = storage?.getItem(DRAFTS_STORAGE_KEY);
+    if (!raw) return 0;
+    const drafts = JSON.parse(raw);
+    if (!Array.isArray(drafts)) return 0;
+    let removed = 0;
+    const compacted = drafts.map((draft) => {
+      if (
+        !draft ||
+        typeof draft !== "object" ||
+        typeof draft.thumbnail !== "string" ||
+        !draft.thumbnail.startsWith("data:")
+      ) {
+        return draft;
+      }
+      removed += 1;
+      return { ...draft, thumbnail: null };
+    });
+    if (removed) {
+      storage.setItem(DRAFTS_STORAGE_KEY, JSON.stringify(compacted));
+    }
+    return removed;
+  } catch {
+    return 0;
+  }
+}
+
+/** Persist compact draft metadata; preview blobs live in IndexedDB. */
 export function writeDrafts(
   drafts,
-  thumbnailDataUrls = {},
+  _thumbnailDataUrls = {},
   storage = globalThis.localStorage,
 ) {
   storage?.setItem(
     DRAFTS_STORAGE_KEY,
-    JSON.stringify(
-      drafts.map((draft) => {
-        const stored = thumbnailDataUrls[draft.id];
-        const thumbnail =
-          typeof stored === "string" && stored.startsWith("data:")
-            ? stored
-            : typeof draft.thumbnail === "string" &&
-                draft.thumbnail.startsWith("data:")
-              ? draft.thumbnail
-              : null;
-        return serializeDraft(draft, thumbnail);
-      }),
-    ),
+    JSON.stringify(drafts.map((draft) => serializeDraft(draft))),
   );
 }

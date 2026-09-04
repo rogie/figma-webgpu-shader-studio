@@ -179,6 +179,7 @@ import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
   ACTIVE_DRAFT_STORAGE_KEY,
   readDrafts as savedDrafts,
+  stripPersistedDraftThumbnails,
   writeDrafts,
 } from "./lib/draftStorage.js";
 import { orderDraftsForMigration } from "./lib/draftContinuity.js";
@@ -1604,6 +1605,75 @@ export default function App() {
   const thumbnailCaptureGenRef = useRef(0);
   const thumbnailPreviewTimerRef = useRef(0);
   const [thumbnailRefreshRevision, setThumbnailRefreshRevision] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadedUrls = [];
+
+    Promise.all(
+      INITIAL_DRAFTS.map(async (draft) => {
+        try {
+          let record = await draftMediaStore.get(draft.id, "thumbnail");
+          if (!record && draft.thumbnail?.startsWith("data:")) {
+            const file = await fileFromBlobUrl(
+              draft.thumbnail,
+              `${draft.id}-thumbnail.png`,
+            );
+            if (file) {
+              record = await draftMediaStore.put({
+                draftId: draft.id,
+                roleId: "thumbnail",
+                blob: file,
+                fileName: file.name,
+                lastModified: file.lastModified,
+              });
+            }
+          }
+          if (!record?.blob) return null;
+          const url = URL.createObjectURL(record.blob);
+          loadedUrls.push(url);
+          let dataUrl = "";
+          try {
+            dataUrl = await blobToDataUrl(record.blob);
+          } catch {
+            // The object URL still provides the local card preview.
+          }
+          return { draftId: draft.id, url, dataUrl };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((loaded) => {
+      if (cancelled) {
+        loadedUrls.forEach(revokeThumbnailUrl);
+        return;
+      }
+      const entries = loaded.filter(Boolean);
+      for (const entry of entries) {
+        if (entry.dataUrl) {
+          thumbnailDataUrlsRef.current[entry.draftId] = entry.dataUrl;
+        }
+      }
+      if (entries.length) {
+        setThumbnails((current) => {
+          const next = { ...current };
+          for (const entry of entries) {
+            if (current[entry.draftId] !== entry.url) {
+              revokeThumbnailUrl(current[entry.draftId]);
+            }
+            next[entry.draftId] = entry.url;
+          }
+          return next;
+        });
+      }
+      stripPersistedDraftThumbnails();
+    });
+
+    return () => {
+      cancelled = true;
+      loadedUrls.forEach(revokeThumbnailUrl);
+    };
+  }, []);
 
   const canvasRef = useRef(null);
   const htmlInputRef = useRef(null);
@@ -10046,6 +10116,14 @@ export default function App() {
           if (!blob || gen !== thumbnailCaptureGenRef.current) return;
           const url = URL.createObjectURL(blob);
           try {
+            if (isDraftId(targetId)) {
+              await draftMediaStore.put({
+                draftId: targetId,
+                roleId: "thumbnail",
+                blob,
+                fileName: `${targetId}-thumbnail.png`,
+              });
+            }
             const dataUrl = await blobToDataUrl(blob);
             if (gen !== thumbnailCaptureGenRef.current) {
               URL.revokeObjectURL(url);

@@ -4,6 +4,7 @@ import {
   DRAFTS_STORAGE_KEY,
   readDrafts,
   serializeDraft,
+  stripPersistedDraftThumbnails,
   writeDrafts,
 } from "./draftStorage.js";
 
@@ -66,7 +67,7 @@ test("readDrafts filters invalid rows and normalizes legacy values", () => {
   ]);
 });
 
-test("writeDrafts persists data thumbnails but discards blob URLs", () => {
+test("writeDrafts keeps preview data out of localStorage", () => {
   const storage = memoryStorage();
   const draft = {
     id: "draft:one",
@@ -80,14 +81,43 @@ test("writeDrafts persists data thumbnails but discards blob URLs", () => {
 
   writeDrafts([draft], { "draft:one": "data:image/png;base64,kept" }, storage);
   const stored = JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY));
-  assert.equal(stored[0].thumbnail, "data:image/png;base64,kept");
+  assert.equal(stored[0].thumbnail, undefined);
   assert.equal(stored[0].description, "A smooth gradient fill.");
 
   writeDrafts([draft], {}, storage);
   assert.equal(
     JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY))[0].thumbnail,
-    null,
+    undefined,
   );
+});
+
+test("stripPersistedDraftThumbnails preserves draft source and settings", () => {
+  const storage = memoryStorage({
+    [DRAFTS_STORAGE_KEY]: JSON.stringify([
+      {
+        id: "draft:one",
+        name: "One",
+        kind: "fill",
+        source: "export function render() {}",
+        values: { amount: 2 },
+        thumbnail: "data:image/png;base64,large-preview",
+      },
+      {
+        id: "draft:two",
+        name: "Two",
+        kind: "effect",
+        source: "export function render() {}",
+        thumbnail: null,
+      },
+    ]),
+  });
+
+  assert.equal(stripPersistedDraftThumbnails(storage), 1);
+  const stored = JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY));
+  assert.equal(stored[0].thumbnail, null);
+  assert.equal(stored[0].source, "export function render() {}");
+  assert.deepEqual(stored[0].values, { amount: 2 });
+  assert.equal(stored[1].thumbnail, null);
 });
 
 test("readDrafts round-trips composition drafts", () => {
