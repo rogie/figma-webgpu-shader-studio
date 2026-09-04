@@ -11,6 +11,7 @@ import {
   isPaintFillType,
   paintFillAlpha,
   paintImageSource,
+  portablePaintFill,
   resolvePaintFill,
   sampleFallbackPaint,
 } from "./paintFill.js";
@@ -170,6 +171,39 @@ test("reads image and webcam media from either picker shape", () => {
       image: { url: "https://example.com/a.png", scaleMode: "tile", scale: 25 },
     }).scaleMode,
     "tile"
+  );
+});
+
+test("removes session-only state from portable webcam fills", () => {
+  assert.deepEqual(
+    portablePaintFill({
+      type: "webcam",
+      webcam: {
+        live: true,
+        deviceId: "camera-from-another-browser",
+        snapshot: "blob:http://localhost/dead-preview",
+        scaleMode: "fill",
+        opacity: 0.8,
+      },
+    }),
+    {
+      type: "webcam",
+      webcam: {
+        live: true,
+        scaleMode: "fill",
+        opacity: 0.8,
+      },
+    },
+  );
+  assert.equal(
+    portablePaintFill({
+      type: "webcam",
+      webcam: {
+        live: false,
+        snapshot: "data:image/png;base64,captured",
+      },
+    }).webcam.snapshot,
+    "data:image/png;base64,captured",
   );
 });
 

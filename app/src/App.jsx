@@ -285,6 +285,7 @@ import {
   resolvePaintFill,
   sampleFallbackPaint,
 } from "./lib/paintFill.js";
+import { acquireWebcamStream } from "./lib/webcam.js";
 import {
   audioPlaybackSettings,
   enabledAudioFileInput,
@@ -3315,10 +3316,8 @@ export default function App() {
               owned: stream !== pickerStream,
             };
           } else if (navigator.mediaDevices?.getUserMedia) {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: wantedDevice
-                ? { deviceId: { exact: wantedDevice } }
-                : true,
+            stream = await acquireWebcamStream({
+              deviceId: wantedDevice,
               audio:
                 experimentalAudioRef.current && supportsAudioRef.current,
             });
@@ -4068,10 +4067,8 @@ export default function App() {
           throw new Error("Webcam is not available in this browser.");
         }
         try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: wantedDevice
-              ? { deviceId: { exact: wantedDevice } }
-              : true,
+          stream = await acquireWebcamStream({
+            deviceId: wantedDevice,
             audio: experimentalAudioRef.current && supportsAudioRef.current,
           });
           ownsStream = true;

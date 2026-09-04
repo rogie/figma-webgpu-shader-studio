@@ -72,6 +72,38 @@ test("preserves explicit composition paint instead of applying legacy input", ()
   );
 });
 
+test("drops browser-specific webcam state from saved compositions", () => {
+  const graph = cloudCompositionGraph({
+    kind: COMPOSITION_KIND,
+    composition: {
+      fills: [
+        {
+          id: "webcam",
+          type: "video",
+          enabled: true,
+          paint: {
+            type: "webcam",
+            webcam: {
+              live: true,
+              deviceId: "stale-camera",
+              snapshot: "blob:http://localhost/dead-preview",
+              scaleMode: "fill",
+              opacity: 1,
+            },
+          },
+        },
+      ],
+      effects: [],
+    },
+  });
+
+  assert.deepEqual(graph.fills[0].paint.webcam, {
+    live: true,
+    scaleMode: "fill",
+    opacity: 1,
+  });
+});
+
 test("preserves document audio inputs on effect graphs", () => {
   const graph = cloudCompositionGraph({
     kind: "effect",

@@ -16,6 +16,7 @@ import {
   resolvePaintFill,
   sampleFallbackPaint,
 } from "./lib/paintFill.js";
+import { acquireWebcamStream } from "./lib/webcam.js";
 import defaultInputUrl from "./assets/default-input.png";
 import defaultVideoUrl from "./assets/default-input.mp4";
 import { audioPlaybackSettings, enabledAudioFileInput } from "./lib/documentInputs.js";
@@ -348,12 +349,12 @@ async function loadPaintLayer(fill, canvas, host, resources) {
   }
 
   if (paint.type === "webcam" && paint.webcam?.live !== false) {
-    const stream = await navigator.mediaDevices?.getUserMedia?.({
-      video: paint.webcam?.deviceId
-        ? { deviceId: { exact: paint.webcam.deviceId } }
-        : true,
-      audio: false,
-    });
+    const stream = navigator.mediaDevices?.getUserMedia
+      ? await acquireWebcamStream({
+          deviceId: paint.webcam?.deviceId || "",
+          audio: false,
+        })
+      : null;
     if (stream) {
       const video = createVideo("", stream);
       await waitForVideo(video);

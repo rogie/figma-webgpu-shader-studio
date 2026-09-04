@@ -3,7 +3,14 @@ import {
   normalizeComposition,
   readEffectFillsFromComposition,
 } from "./composition.js";
-import { isPaintFillType } from "./paintFill.js";
+import { isPaintFillType, portablePaintFill } from "./paintFill.js";
+
+function portableWebcamFills(fills) {
+  return fills.map((fill) => {
+    const paint = portablePaintFill(fill.paint);
+    return paint === fill.paint ? fill : { ...fill, paint };
+  });
+}
 
 function legacyInputPaint(row, defaultImageUrl) {
   if (!row.input_path) {
@@ -22,7 +29,9 @@ function legacyInputPaint(row, defaultImageUrl) {
 
 export function cloudCompositionGraph(row, { defaultImageUrl = "" } = {}) {
   if (row.kind !== COMPOSITION_KIND) {
-    let fills = readEffectFillsFromComposition(row.composition);
+    let fills = portableWebcamFills(
+      readEffectFillsFromComposition(row.composition),
+    );
     if (!fills.length) {
       fills = [
         {
@@ -41,7 +50,11 @@ export function cloudCompositionGraph(row, { defaultImageUrl = "" } = {}) {
     });
   }
 
-  const graph = normalizeComposition(row.composition);
+  const savedGraph = normalizeComposition(row.composition);
+  const graph = normalizeComposition({
+    ...savedGraph,
+    fills: portableWebcamFills(savedGraph.fills),
+  });
   if (
     !row.input_path ||
     graph.fills.some(

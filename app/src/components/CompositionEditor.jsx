@@ -22,7 +22,12 @@ import {
   audioPlaybackSettings,
   normalizeDocumentInputs,
 } from "../lib/documentInputs.js";
-import { graphTypeForPaint, isPaintFillType, resolvePaintFill } from "../lib/paintFill.js";
+import {
+  graphTypeForPaint,
+  isPaintFillType,
+  portablePaintFill,
+  resolvePaintFill,
+} from "../lib/paintFill.js";
 import { portalToFigOverlay } from "../lib/figOverlay.js";
 import { popupProtectedFromHandleDismiss } from "../lib/canvasHandlePopupGuard.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
@@ -1657,6 +1662,7 @@ export default function CompositionEditor({
       }
       imageFillTargetIdRef.current = fillId;
       if (persist) {
+        const portablePaint = portablePaintFill(paint);
         update({
           ...normalized,
           fills: normalized.fills.map((fill) =>
@@ -1665,7 +1671,7 @@ export default function CompositionEditor({
                   ...fill,
                   type: graphTypeForPaint(paint.type),
                   shaderId: null,
-                  paint,
+                  paint: portablePaint,
                 }
               : fill
           ),

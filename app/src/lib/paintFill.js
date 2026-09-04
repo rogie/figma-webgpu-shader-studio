@@ -101,6 +101,33 @@ export function resolvePaintFill(
   return fill;
 }
 
+export function portablePaintFill(fill) {
+  if (
+    fill?.type !== "webcam" ||
+    !fill.webcam ||
+    typeof fill.webcam !== "object" ||
+    Array.isArray(fill.webcam)
+  ) {
+    return fill;
+  }
+  const webcam = { ...fill.webcam };
+  let changed = false;
+  if (Object.prototype.hasOwnProperty.call(webcam, "deviceId")) {
+    delete webcam.deviceId;
+    changed = true;
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(webcam, "snapshot") &&
+    (webcam.live !== false ||
+      (typeof webcam.snapshot === "string" &&
+        webcam.snapshot.startsWith("blob:")))
+  ) {
+    delete webcam.snapshot;
+    changed = true;
+  }
+  return changed ? { ...fill, webcam } : fill;
+}
+
 export function paintFillAlpha(fill) {
   if (fill?.alpha != null && fill.alpha !== "") {
     const alpha = Number(fill.alpha);

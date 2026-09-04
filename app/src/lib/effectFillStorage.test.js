@@ -151,6 +151,29 @@ test("asset-backed media and live webcam intents are durable", () => {
   assert.equal(effectFillIsDurable(webcam), true);
 });
 
+test("persistable webcam fills omit browser-specific camera state", () => {
+  const [stored] = persistableEffectFills([
+    {
+      id: "webcam",
+      type: "video",
+      paint: {
+        type: "webcam",
+        webcam: {
+          live: true,
+          deviceId: "camera-1",
+          snapshot: "blob:http://localhost/live-preview",
+          scaleMode: "fill",
+        },
+      },
+    },
+  ]);
+
+  assert.deepEqual(stored.paint.webcam, {
+    live: true,
+    scaleMode: "fill",
+  });
+});
+
 test("persistableEffectFills strips ephemeral media independently across layers", () => {
   const stored = persistableEffectFills([
     {
@@ -398,7 +421,7 @@ test("resolveSessionEffectFills prefers an ordered document stack over a legacy 
   ]);
 });
 
-test("resolveSessionEffectFills restores asset-backed video and webcam document fills", () => {
+test("resolveSessionEffectFills restores portable video and webcam document fills", () => {
   const resolved = resolveSessionEffectFills({
     sessionId: "cloud:media",
     storage: memoryStorage(),
@@ -432,7 +455,7 @@ test("resolveSessionEffectFills restores asset-backed video and webcam document 
     resolved[0].paint.video.assetPath,
     "owner/shader/fill-video.mp4",
   );
-  assert.equal(resolved[1].paint.webcam.deviceId, "camera-1");
+  assert.equal(resolved[1].paint.webcam.deviceId, undefined);
 });
 
 test("resolveSessionEffectFills keeps incomplete layers above durable stored fills", () => {

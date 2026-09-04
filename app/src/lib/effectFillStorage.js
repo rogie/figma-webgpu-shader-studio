@@ -6,6 +6,7 @@ import {
 } from "./composition.js";
 import {
   bundledDefaultAssetKind,
+  portablePaintFill,
   resolvePaintFill,
 } from "./paintFill.js";
 
@@ -77,8 +78,14 @@ function normalizeEffectFills(fills) {
   return [];
 }
 
+function withoutEphemeralWebcamState(fill) {
+  const paint = portablePaintFill(fill?.paint);
+  return paint === fill?.paint ? fill : { ...fill, paint };
+}
+
 function persistableNormalizedEffectFill(normalized) {
-  const paint = normalized.paint;
+  const portable = withoutEphemeralWebcamState(normalized);
+  const paint = portable.paint;
   if (!paint || typeof paint !== "object") return normalized;
   const nextPaint = { ...paint };
   let changed = false;
@@ -108,7 +115,7 @@ function persistableNormalizedEffectFill(normalized) {
     }
     nextPaint.video = video;
   }
-  return changed ? { ...normalized, paint: nextPaint } : normalized;
+  return changed ? { ...portable, paint: nextPaint } : portable;
 }
 
 export function persistableEffectFills(fills) {
@@ -137,7 +144,10 @@ function storedEffectFills(shaderId, storage) {
     if (!Object.prototype.hasOwnProperty.call(map, key)) continue;
     const stored = map[key];
     if (Array.isArray(stored) || (stored && typeof stored === "object")) {
-      return { found: true, fills: normalizeEffectFills(stored) };
+      return {
+        found: true,
+        fills: normalizeEffectFills(stored).map(withoutEphemeralWebcamState),
+      };
     }
   }
   return { found: false, fills: [] };
@@ -287,7 +297,7 @@ export function resolveSessionEffectFills({
         : documentFill
           ? [documentFill]
           : [],
-    ),
+    ).map(withoutEphemeralWebcamState),
     sampleUrls,
   );
   const storedDefaultPhoto = isLegacyDefaultSample(storedFills, sampleUrls);
