@@ -119,6 +119,8 @@ import {
   makePresentUrl,
   presentChannelName,
   presentMessage,
+  presentParameterLayers,
+  presentStructureKey,
   readPresentSessionId,
 } from "./lib/presentWindow.js";
 import {
@@ -1489,6 +1491,7 @@ export default function App() {
   const presentStateRef = useRef(null);
   const presentPlaybackRef = useRef(null);
   const presentApplyGenerationRef = useRef(0);
+  const presentAppliedStructureRef = useRef("");
   const [presentWindowOpen, setPresentWindowOpen] = useState(false);
   const [homeQuery, setHomeQuery] = useState("");
   const [editorQuery, setEditorQuery] = useState("");
@@ -5266,10 +5269,10 @@ export default function App() {
     queuePresentState();
   }, [buildPresentState, queuePresentState]);
 
-  const syncPresentPlayback = useCallback((playback) => {
+  const syncPresentPlayback = useCallback((playback, { seek = true } = {}) => {
     const host = hostRef.current;
     if (!host?.ready) return;
-    if (playback) host.seek(playback.time, { present: "frame" });
+    if (playback && seek) host.seek(playback.time, { present: "frame" });
     host.setActive(true);
     host.play();
     setRunning(true);
@@ -5303,6 +5306,35 @@ export default function App() {
         setCanvasTheme(payload.canvasTheme);
       }
       document.title = `${payload.name || "Shader"} — Present`;
+      const structureKey = presentStructureKey(payload);
+      const host = hostRef.current;
+      if (
+        structureKey === presentAppliedStructureRef.current &&
+        host?.ready
+      ) {
+        const parameterValues = documentState.parameterValues || {};
+        const compositionLayerIds = new Set(
+          (host.compositionLayers || []).map((layer) => layer.id),
+        );
+        for (const layer of presentParameterLayers(payload)) {
+          if (compositionLayerIds.has(layer.id)) {
+            host.setCompositionLayerParams(layer.id, layer.values);
+          }
+        }
+        if (compositionLayerIds.has(EFFECT_PREVIEW_LAYER_ID)) {
+          host.setCompositionLayerParams(
+            EFFECT_PREVIEW_LAYER_ID,
+            parameterValues,
+          );
+        } else if (nextKind !== COMPOSITION_KIND) {
+          host.setParams(parameterValues);
+        }
+        valuesRef.current = parameterValues;
+        setValues(parameterValues);
+        syncPresentPlayback(presentPlaybackRef.current, { seek: false });
+        setEmbedStatus("ready");
+        return;
+      }
       setEmbedStatus("loading");
       await activateShaderSession({
         sessionId: `present:${presentSessionId}`,
@@ -5333,6 +5365,7 @@ export default function App() {
         persistPrevious: false,
       });
       if (generation !== presentApplyGenerationRef.current) return;
+      presentAppliedStructureRef.current = structureKey;
       syncPresentPlayback(presentPlaybackRef.current);
       setEmbedStatus("ready");
     },
@@ -5361,6 +5394,7 @@ export default function App() {
     channel.addEventListener("message", (event) => {
       if (isPresentMessage(event.data, "closed")) {
         presentApplyGenerationRef.current += 1;
+        presentAppliedStructureRef.current = "";
         hostRef.current?.pause();
         setRunning(false);
         setEmbedStatus("unavailable");
@@ -5383,6 +5417,7 @@ export default function App() {
     }, 5000);
     return () => {
       disposed = true;
+      presentAppliedStructureRef.current = "";
       window.removeEventListener("pagehide", announcePopupClosed);
       window.clearInterval(readyTimer);
       window.clearTimeout(unavailableTimer);

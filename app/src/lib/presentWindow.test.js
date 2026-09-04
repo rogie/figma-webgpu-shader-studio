@@ -6,6 +6,8 @@ import {
   makePresentUrl,
   presentChannelName,
   presentMessage,
+  presentParameterLayers,
+  presentStructureKey,
   readPresentSessionId,
 } from "./presentWindow.js";
 
@@ -31,6 +33,56 @@ test("builds a session-scoped embed URL and channel name", () => {
     readPresentSessionId(new URL(url)),
     "12345678123412341234123456789abc",
   );
+});
+
+test("presentation structure ignores live parameters but detects graph changes", () => {
+  const payload = {
+    id: "shader-1",
+    sessionId: "cloud:shader-1",
+    document: {
+      kind: "composition",
+      source: "",
+      parameterValues: { amount: 0.2 },
+      composition: {
+        fills: [{ id: "fill-1", enabled: true, values: { scale: 1 } }],
+        effects: [{ id: "effect-1", enabled: true, values: { amount: 0.2 } }],
+      },
+      dependencySnapshots: {},
+    },
+  };
+  const initial = presentStructureKey(payload);
+  const parameterChange = presentStructureKey({
+    ...payload,
+    document: {
+      ...payload.document,
+      parameterValues: { amount: 0.8 },
+      composition: {
+        ...payload.document.composition,
+        effects: [
+          { id: "effect-1", enabled: true, values: { amount: 0.8 } },
+        ],
+      },
+    },
+  });
+  const graphChange = presentStructureKey({
+    ...payload,
+    document: {
+      ...payload.document,
+      composition: {
+        ...payload.document.composition,
+        effects: [
+          { id: "effect-1", enabled: false, values: { amount: 0.2 } },
+        ],
+      },
+    },
+  });
+
+  assert.equal(parameterChange, initial);
+  assert.notEqual(graphChange, initial);
+  assert.deepEqual(presentParameterLayers(payload), [
+    { id: "fill-1", values: { scale: 1 } },
+    { id: "effect-1", values: { amount: 0.2 } },
+  ]);
 });
 
 test("rejects malformed presentation sessions and messages", () => {

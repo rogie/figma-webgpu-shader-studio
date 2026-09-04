@@ -58,7 +58,11 @@
 }
 
 #root
-  .embed-view.shader-view-page:is(:hover, :focus-within)
+  .embed-view.shader-view-page:is(
+    :hover,
+    :focus-within,
+    :has(fig-select[open])
+  )
   .view-properties-overlay {
   visibility: visible;
   opacity: 1;
