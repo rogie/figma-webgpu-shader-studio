@@ -229,6 +229,15 @@ const ChatComposer = memo(function ChatComposer({
     [],
   );
 
+  const modelOptionsKey = useMemo(
+    () =>
+      modelGroups
+        .flatMap((group) => group.models)
+        .map(chatModelValue)
+        .join("|"),
+    [modelGroups]
+  );
+
   const onKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -299,7 +308,7 @@ const ChatComposer = memo(function ChatComposer({
                 value={chatModelValue(model)}
                 disabled={streaming ? "" : undefined}
               >
-                <fig-select-options>
+                <fig-select-options key={modelOptionsKey}>
                   {modelGroups.map((group) => (
                     <Fragment key={group.label}>
                       <fig-separator label={group.label} />

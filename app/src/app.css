@@ -33,6 +33,15 @@ body,
   --viewer-radius: 0.5rem;
 }
 
+fig-header[borderless] + fig-header {
+  padding-top: 0;
+  margin-top: calc(var(--spacer-1) * -1);
+}
+
+fig-header[borderless]:has(+ fig-header) {
+  padding-bottom: 0;
+}
+
 @property --library-slide {
   syntax: "<length>";
   inherits: false;
@@ -218,19 +227,33 @@ body,
       margin-right: calc(-1 * var(--spacer-1));
     }
 
-    fig-header.app-nav-library-filters {
+    .app-nav-headers {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+    }
+
+    fig-header.app-nav-library-filters,
+    fig-header.app-nav-library-search {
       padding-inline: var(--spacer-2);
+    }
+
+    fig-header.app-nav-library-search {
       .app-nav-search {
         flex: 1 1 auto;
         width: 100%;
         min-width: 0;
         max-width: none;
       }
+    }
 
-      .app-nav-library-toggles {
-        flex: 0 0 auto;
-        --hstack-gap: var(--spacer-1);
-      }
+    .app-nav-library-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      margin: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     > fig-footer {

@@ -362,6 +362,22 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   spacing. Existing groups pick this up automatically.
 - No README/API changes and no app wiring or CSS changes are required.
 
+## 8.9.45 notes
+
+- Docs-only: shipped `.cursor/skills/` split catalogs into `components.md`
+  (and core `react.md`). Runtime JS/CSS/README APIs are unchanged from 8.9.44.
+- No app wiring or CSS changes are required. App integrations still follow
+  this repo's `/update` skill.
+
+## 8.9.46 notes
+
+- Patch-only: `fig-header` title styles (`flex`, ellipsis, `padding-left`)
+  apply to every direct `h1`/`h2`/`h3` child, not only `:first-child`.
+  README/JS APIs are unchanged.
+- This app already authors header titles as the first heading child (section
+  labels, dialog titles, properties/code/chat headers). No app wiring or CSS
+  changes are required.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

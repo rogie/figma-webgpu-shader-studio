@@ -24,6 +24,7 @@ export const MODELS: ModelOption[] = [
   // OpenAI
   { provider: "openai", id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
   { provider: "openai", id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+  { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
 
   // Anthropic
   { provider: "anthropic", id: "claude-fable-5", label: "Claude Fable 5" },

@@ -58,8 +58,11 @@ import {
   decodeExportPcm,
   resolveExportSoundtrack,
 } from "./runtime/exportAudio.js";
-import { ShaderHost } from "./runtime/host.js";
-import { subscribePreviewPixelRatioMode } from "./runtime/dpi.js";
+import { ShaderHost, VIEW_MAX_DIM } from "./runtime/host.js";
+import {
+  PREVIEW_PIXEL_RATIO_NATIVE,
+  subscribePreviewPixelRatioMode,
+} from "./runtime/dpi.js";
 import { loadModule } from "./runtime/loader.js";
 import { measurePerf, perfNow, recordPerf } from "./runtime/perf.js";
 import {
@@ -114,7 +117,6 @@ import {
   shaderDocumentFingerprint,
 } from "./lib/shaderDocument.js";
 import {
-  createPresentSessionId,
   isPresentMessage,
   makePresentUrl,
   presentChannelName,
@@ -4539,9 +4541,10 @@ export default function App() {
   useEffect(
     () =>
       subscribePreviewPixelRatioMode((mode) => {
+        if (viewMode === "view") return;
         hostRef.current?.setPreviewPixelRatioMode(mode);
       }),
-    []
+    [viewMode]
   );
 
   useEffect(() => {
@@ -4564,6 +4567,9 @@ export default function App() {
           setRunning(false);
         }
       },
+      previewPixelRatioMode:
+        viewMode === "view" ? PREVIEW_PIXEL_RATIO_NATIVE : undefined,
+      maxDimension: viewMode === "view" ? VIEW_MAX_DIM : undefined,
     });
     hostRef.current = host;
     const audioBus = new AudioInputBus();
@@ -5608,67 +5614,32 @@ export default function App() {
   );
 
   const openPresentWindow = useCallback(() => {
-    if (presentSessionId) return;
-    if (typeof BroadcastChannel !== "function") {
-      reportAppError("This browser cannot open a live Present window.");
-      return;
-    }
-    const existing = presentWindowRef.current;
-    if (existing && !existing.closed && presentChannelRef.current) {
-      setEditorPreviewSuspended(true);
-      existing.focus();
-      postPresentState();
-      return;
-    }
-
-    presentChannelRef.current?.close();
-    presentReadyRef.current = false;
-    const sessionId = createPresentSessionId();
-    const channel = new BroadcastChannel(presentChannelName(sessionId));
-    presentChannelRef.current = channel;
-    channel.addEventListener("message", (event) => {
-      if (isPresentMessage(event.data, "popup-closed")) {
-        stopPresentWindow(channel);
-        return;
-      }
-      if (!isPresentMessage(event.data, "ready")) return;
-      presentReadyRef.current = true;
-      postPresentState();
-    });
-    const currentState = buildPresentState();
-    const url = makePresentUrl(
-      makeEmbedUrl(currentState.id, currentState.document.kind),
-      sessionId,
-    );
+    persistActiveDraft();
+    const itemId =
+      routeId ||
+      currentShader?.id ||
+      (presetId.startsWith("cloud:")
+        ? presetId.slice("cloud:".length)
+        : presetId);
+    if (!itemId) return;
     const popup = window.open(
-      url,
-      "shader-studio-present",
+      makeViewUrl(itemId, sessionKindRef.current),
+      "shader-studio-view",
       "popup=yes,width=1280,height=800",
     );
     if (!popup) {
-      channel.close();
-      presentChannelRef.current = null;
       reportAppError(
         "The Present window was blocked. Allow popups and try again.",
       );
       return;
     }
-    presentWindowRef.current = popup;
-    setEditorPreviewSuspended(true);
-    if (presentWindowPollRef.current) {
-      window.clearInterval(presentWindowPollRef.current);
-    }
-    presentWindowPollRef.current = window.setInterval(() => {
-      if (popup.closed) stopPresentWindow(channel);
-    }, 500);
     popup.focus();
   }, [
-    buildPresentState,
-    postPresentState,
-    presentSessionId,
+    currentShader?.id,
+    persistActiveDraft,
+    presetId,
     reportAppError,
-    setEditorPreviewSuspended,
-    stopPresentWindow,
+    routeId,
   ]);
 
   const openDraft = useCallback(
@@ -10944,7 +10915,7 @@ export default function App() {
       );
     });
 
-  const newShaderMenuRef = useFigMenuChange((value) => {
+  const handleCreateMenu = (value) => {
     if (value === "effect") {
       createDraft("blank-effect");
     } else if (value === "fill") {
@@ -10954,7 +10925,9 @@ export default function App() {
     } else if (value === "from-figma") {
       setFigmaImportOpen(true);
     }
-  });
+  };
+  const newShaderMenuRef = useFigMenuChange(handleCreateMenu);
+  const libraryCreateMenuRef = useFigMenuChange(handleCreateMenu);
 
   const persistCurrentFigmaLink = useCallback(
     async (link) => {
@@ -11357,26 +11330,24 @@ export default function App() {
         dialog-header=""
         borderless={minimized ? "" : undefined}
       >
-        {!minimized && (
-          <hstack>
-            {showCurrentAuthor && (
-              <AuthorAvatar
-                tooltip={currentAuthorName}
-                src={currentAuthorAvatarUrl}
-                name={currentAuthorName}
-                isYou={currentAuthorIsYou}
-                onClick={
-                  currentShader?.owner_id
-                    ? () =>
-                        openUserProfile(
-                          currentShader.owner_id,
-                          currentShader.author_handle,
-                        )
-                    : undefined
-                }
-              />
-            )}
-            <h3>{shaderName}</h3>
+        {!minimized && <h3>{shaderName}</h3>}
+        {!minimized && showCurrentAuthor && (
+          <hstack style={{ order: -1, flexShrink: 0 }}>
+            <AuthorAvatar
+              tooltip={currentAuthorName}
+              src={currentAuthorAvatarUrl}
+              name={currentAuthorName}
+              isYou={currentAuthorIsYou}
+              onClick={
+                currentShader?.owner_id
+                  ? () =>
+                      openUserProfile(
+                        currentShader.owner_id,
+                        currentShader.author_handle,
+                      )
+                  : undefined
+              }
+            />
           </hstack>
         )}
         {(isOwner && currentShader) || toggle ? (
@@ -11490,7 +11461,7 @@ export default function App() {
           canvasTheme={canvasTheme}
           interactive={!routeEmbed}
           loading={previewResourcesLoading}
-          plain={Boolean(presentSessionId)}
+          plain={Boolean(presentSessionId) || viewMode === "view"}
         />
       )}
     </>
@@ -11507,7 +11478,9 @@ export default function App() {
       previewZoom={previewZoom}
       onPreviewZoomChange={requestPreviewZoom}
       showFps={!isComposerView || compositionPlayable}
-      initialPixelRatioMode={viewMode === "view" ? "1x" : undefined}
+      initialPixelRatioMode={
+        viewMode === "view" ? PREVIEW_PIXEL_RATIO_NATIVE : undefined
+      }
       showCanvasHandles={showCanvasHandles}
       onToggleCanvasHandles={() =>
         setShowCanvasHandles((visible) => !visible)
@@ -11521,19 +11494,8 @@ export default function App() {
 
   const editorPreviewContent = (
     <>
-      <div
-        className="editor-preview-runtime"
-        style={{ display: presentWindowOpen ? "none" : "contents" }}
-        aria-hidden={presentWindowOpen ? "true" : undefined}
-      >
-        {previewCanvas}
-        {!previewResourcesLoading ? previewTools : null}
-      </div>
-      {presentWindowOpen ? (
-        <div className="embed-state" role="status" aria-live="polite">
-          Preview is open in the Present window.
-        </div>
-      ) : null}
+      {previewCanvas}
+      {!previewResourcesLoading ? previewTools : null}
     </>
   );
 
@@ -11762,21 +11724,37 @@ export default function App() {
           }}
         >
           <div className="app-nav-headers">
-            <fig-header class="app-nav-library-filters">
-              <fig-tooltip text="Home">
+            <fig-header class="app-nav-library-filters" borderless="">
+              <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
+                <fig-tooltip text="Home">
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Home"
+                    onClick={() => {
+                      setActiveNavItem("home");
+                      openHome();
+                    }}
+                  >
+                    <fig-icon name="arrow-left" />
+                  </fig-button>
+                </fig-tooltip>
+                <h2 className="app-nav-library-title">Editor</h2>
+              </hstack>
+              <fig-tooltip text="Hide library">
                 <fig-button
                   type="button"
                   variant="ghost"
                   icon="true"
-                  aria-label="Home"
-                  onClick={() => {
-                    setActiveNavItem("home");
-                    openHome();
-                  }}
+                  aria-label="Hide library"
+                  onClick={hideLibraryNav}
                 >
-                  <fig-icon name="arrow-left" />
+                  <ToggleSidebarIcon />
                 </fig-button>
               </fig-tooltip>
+            </fig-header>
+            <fig-header class="app-nav-library-search">
               <fig-input-text
                 class="app-nav-search"
                 type="search"
@@ -11786,7 +11764,7 @@ export default function App() {
                 onInput={(event) => setEditorQuery(event.target.value)}
                 dangerouslySetInnerHTML={opaqueContent}
               />
-              <hstack class="app-nav-library-toggles">
+              <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
                 <LibraryFilterMenu
                   kind={editorKind}
                   onKindChange={setEditorKind}
@@ -11798,17 +11776,28 @@ export default function App() {
                   view={libraryView}
                   onViewChange={setLibraryView}
                 />
-                <fig-tooltip text="Hide library">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Hide library"
-                    onClick={hideLibraryNav}
-                  >
-                    <ToggleSidebarIcon />
-                  </fig-button>
-                </fig-tooltip>
+                <fig-menu ref={libraryCreateMenuRef} position="bottom right">
+                  <fig-tooltip text="Add">
+                    <fig-button
+                      fig-menu-trigger=""
+                      type="button"
+                      variant="ghost"
+                      icon="true"
+                      aria-label="Add"
+                    >
+                      <fig-icon name="add" />
+                    </fig-button>
+                  </fig-tooltip>
+                  <fig-menu-item value="effect">Shader effect</fig-menu-item>
+                  <fig-menu-item value="fill">Shader fill</fig-menu-item>
+                  <fig-menu-item value="composition">Composition</fig-menu-item>
+                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured ? (
+                    <>
+                      <fig-separator />
+                      <fig-menu-item value="from-figma">From Figma…</fig-menu-item>
+                    </>
+                  ) : null}
+                </fig-menu>
               </hstack>
             </fig-header>
           </div>

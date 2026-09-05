@@ -26,6 +26,8 @@ export const CANVAS_CONTROLS_STORAGE_KEY =
   "figma-shader-studio:show-canvas-handles";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
+export const LIBRARY_SECTIONS_STORAGE_KEY =
+  "figma-shader-studio:library-sections";
 export const APP_NAV_COLLAPSED_STORAGE_KEY =
   "figma-shader-studio:app-nav-collapsed";
 export const EDITOR_FILTERS_STORAGE_KEY =
@@ -120,6 +122,51 @@ export function readLibraryView(storage = globalThis.localStorage) {
   return storage?.getItem(LIBRARY_VIEW_STORAGE_KEY) === "grid"
     ? "grid"
     : "list";
+}
+
+function readLibrarySectionState(storage = globalThis.localStorage) {
+  try {
+    const parsed = JSON.parse(
+      storage?.getItem(LIBRARY_SECTIONS_STORAGE_KEY) || "{}",
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return parsed;
+  } catch {
+    return {};
+  }
+}
+
+export function readLibrarySectionOpen(
+  sectionId,
+  storage = globalThis.localStorage,
+) {
+  if (!sectionId) return true;
+  return readLibrarySectionState(storage)[sectionId] !== false;
+}
+
+export function writeLibrarySectionOpen(
+  sectionId,
+  open,
+  storage = globalThis.localStorage,
+) {
+  if (!sectionId) return;
+  try {
+    const parsed = readLibrarySectionState(storage);
+    if (open) delete parsed[sectionId];
+    else parsed[sectionId] = false;
+    if (Object.keys(parsed).length === 0) {
+      storage?.removeItem(LIBRARY_SECTIONS_STORAGE_KEY);
+    } else {
+      storage?.setItem(
+        LIBRARY_SECTIONS_STORAGE_KEY,
+        JSON.stringify(parsed),
+      );
+    }
+  } catch {
+    // Library should continue when storage is unavailable.
+  }
 }
 
 export function readAppNavCollapsed(storage = globalThis.localStorage) {

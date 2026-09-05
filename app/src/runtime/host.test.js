@@ -899,6 +899,68 @@ test("setSize defers canvas resize while a capture is in progress", async () => 
   assert.equal(host.canvas.height, 16);
 });
 
+test("native fill sizing is not clamped by the editor 2048 cap", () => {
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    writable: true,
+    value: { devicePixelRatio: 2 },
+  });
+  try {
+    const host = new ShaderHost(
+      {
+        addEventListener() {},
+        removeEventListener() {},
+        style: { width: "", height: "" },
+      },
+      { previewPixelRatioMode: "native", maxDimension: 8192 }
+    );
+    const size = host.setFillSize(1280, 800);
+    assert.equal(host.logicalOutputSize.width, 2560);
+    assert.equal(host.logicalOutputSize.height, 1600);
+    assert.equal(size, true);
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
+test("native preview pixel ratio uses the display instead of 1x/2x", () => {
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    writable: true,
+    value: { devicePixelRatio: 3 },
+  });
+  try {
+    const host = new ShaderHost(
+      {
+        addEventListener() {},
+        removeEventListener() {},
+      },
+      { previewPixelRatioMode: "native" }
+    );
+    host.ready = true;
+    assert.equal(host.previewPixelRatioMode, "native");
+    assert.equal(host._previewPixelRatio(), 3);
+    host.setPreviewPixelRatioMode("1x");
+    assert.equal(host.previewPixelRatioMode, "1x");
+    assert.equal(host._previewPixelRatio(), 1);
+    host.setPreviewPixelRatioMode("native");
+    assert.equal(host.previewPixelRatioMode, "native");
+    assert.equal(host._previewPixelRatio(), 3);
+  } finally {
+    if (previousWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = previousWindow;
+    }
+  }
+});
+
 test("preview pixel ratio changes resize fill previews", () => {
   const host = makeHost();
   host.ready = true;

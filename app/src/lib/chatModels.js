@@ -7,6 +7,7 @@ export const CHAT_MODEL_GROUPS = [
     models: [
       { provider: "openai", id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
       { provider: "openai", id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
     ],
   },
   {
@@ -66,6 +67,7 @@ const CURSOR_MODEL_SHORTLIST = [
   ["GPT-5.6 Luna"],
   ["GPT-5.6 Sol"],
   ["GPT-5.6 Terra"],
+  ["GPT-6 Astra"],
   ["Kimi K3"],
 ];
 

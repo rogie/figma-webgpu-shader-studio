@@ -12,14 +12,29 @@ import {
   readExperimentalAudio,
   readAppNavCollapsed,
   readLibraryView,
+  readLibrarySectionOpen,
   readPlayState,
   readPreviewHeight,
   readSidebarSections,
   readTheme,
+  writeLibrarySectionOpen,
 } from "./layoutStorage.js";
 
 function storage(values = {}) {
   return { getItem: (key) => values[key] ?? null };
+}
+
+function writableStorage(values = {}) {
+  const data = { ...values };
+  return {
+    getItem: (key) => data[key] ?? null,
+    setItem: (key, value) => {
+      data[key] = String(value);
+    },
+    removeItem: (key) => {
+      delete data[key];
+    },
+  };
 }
 
 test("layout readers validate persisted numeric bounds", () => {
@@ -126,4 +141,48 @@ test("editor filters default to your items and restore saved choices", () => {
     ),
     { kind: "all", origin: "all", author: "me" },
   );
+});
+
+test("library sections default open and persist closed per section", () => {
+  assert.equal(readLibrarySectionOpen("composition", storage()), true);
+  assert.equal(
+    readLibrarySectionOpen(
+      "composition",
+      storage({
+        "figma-shader-studio:library-sections": JSON.stringify({
+          composition: false,
+        }),
+      }),
+    ),
+    false,
+  );
+  assert.equal(
+    readLibrarySectionOpen(
+      "effect",
+      storage({
+        "figma-shader-studio:library-sections": JSON.stringify({
+          composition: false,
+        }),
+      }),
+    ),
+    true,
+  );
+  assert.equal(
+    readLibrarySectionOpen(
+      "composition",
+      storage({ "figma-shader-studio:library-sections": "{" }),
+    ),
+    true,
+  );
+
+  const saved = writableStorage();
+  writeLibrarySectionOpen("composition", false, saved);
+  assert.equal(readLibrarySectionOpen("composition", saved), false);
+  writeLibrarySectionOpen("effect", false, saved);
+  assert.equal(readLibrarySectionOpen("effect", saved), false);
+  writeLibrarySectionOpen("composition", true, saved);
+  assert.equal(readLibrarySectionOpen("composition", saved), true);
+  assert.equal(readLibrarySectionOpen("effect", saved), false);
+  writeLibrarySectionOpen("effect", true, saved);
+  assert.equal(saved.getItem("figma-shader-studio:library-sections"), null);
 });

@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState } from "react";
 import {
+  PREVIEW_PIXEL_RATIO_NATIVE,
   readPreviewPixelRatioMode,
   subscribePreviewPixelRatioMode,
 } from "../runtime/dpi.js";
@@ -48,13 +49,12 @@ function PreviewFps({
     return () => control.removeEventListener("change", updateZoom);
   }, [onPreviewZoomChange]);
 
-  useEffect(
-    () =>
-      subscribePreviewPixelRatioMode((mode) => {
-        hostRef.current?.setPreviewPixelRatioMode?.(mode);
-      }),
-    [hostRef]
-  );
+  useEffect(() => {
+    if (initialPixelRatioMode === PREVIEW_PIXEL_RATIO_NATIVE) return undefined;
+    return subscribePreviewPixelRatioMode((mode) => {
+      hostRef.current?.setPreviewPixelRatioMode?.(mode);
+    });
+  }, [hostRef, initialPixelRatioMode]);
 
   useEffect(() => {
     const mode = initialPixelRatioMode || readPreviewPixelRatioMode();

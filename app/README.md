@@ -114,7 +114,7 @@ OpenAI, Anthropic, Gemini, or Grok API key.
 
    The function reads `x-user-api-key` from each request. No platform
    provider secrets are required.
-3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-5.6, Claude,
+3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-6 Astra / GPT-5.6, Claude,
    Gemini 3.x, or Grok 4.x), send a message, and
    when the model returns a full TypeScript fence it is applied to the editor
    (with Undo apply).

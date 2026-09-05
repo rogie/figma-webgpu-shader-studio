@@ -5,6 +5,8 @@
 import {
   adaptiveRenderScale,
   cssSizeToDevicePixels,
+  normalizePreviewPixelRatioMode,
+  previewPixelRatioForMode,
   readPreviewPixelRatioMode,
 } from "./dpi.js";
 import { measurePerf, perfNow, recordPerf } from "./perf.js";
@@ -14,6 +16,7 @@ import {
 } from "./audioInput.js";
 
 const MAX_DIM = 2048;
+export const VIEW_MAX_DIM = 8192;
 const DEFAULT_FILL_CSS = 512;
 const SOURCE_FILL_TYPES = new Set(["image", "video", "webcam", "html"]);
 
@@ -79,10 +82,11 @@ export class ShaderHost {
     this.effectVisible = true;
     this.active = true;
     this.previewZoom = 1;
-    this.previewPixelRatioMode =
-      previewPixelRatioMode === "1x" || previewPixelRatioMode === "2x"
-        ? previewPixelRatioMode
-        : readPreviewPixelRatioMode();
+    this.previewPixelRatioMode = previewPixelRatioMode
+      ? normalizePreviewPixelRatioMode(previewPixelRatioMode, {
+          allowNative: true,
+        })
+      : readPreviewPixelRatioMode();
     this.logicalOutputSize = { width: 1, height: 1 };
     this.outputCssSize = null;
     this._zoomResizeTimer = 0;
@@ -175,6 +179,10 @@ export class ShaderHost {
     adapter ||= await navigator.gpu.requestAdapter();
     if (!adapter) throw new Error("Failed to acquire a WebGPU adapter.");
     this.device = await adapter.requestDevice();
+    const deviceMax = this.device.limits?.maxTextureDimension2D;
+    if (deviceMax) {
+      this.maxDimension = Math.min(this.maxDimension, deviceMax);
+    }
     this.format = navigator.gpu.getPreferredCanvasFormat();
     this.context = this.canvas.getContext("webgpu");
     this.context.configure({
@@ -405,11 +413,11 @@ export class ShaderHost {
   }
 
   _previewPixelRatio() {
-    return this.previewPixelRatioMode === "1x" ? 1 : 2;
+    return previewPixelRatioForMode(this.previewPixelRatioMode);
   }
 
   setPreviewPixelRatioMode(mode) {
-    const nextMode = mode === "1x" ? "1x" : "2x";
+    const nextMode = normalizePreviewPixelRatioMode(mode, { allowNative: true });
     if (nextMode === this.previewPixelRatioMode) return false;
     this.previewPixelRatioMode = nextMode;
     if (!this.ready) return false;

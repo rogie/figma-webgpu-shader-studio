@@ -8,7 +8,7 @@
   overflow-y: auto;
   padding-bottom: var(--spacer-2);
 
-  .shader-list-section {
+  fig-group.shader-list-section {
     padding: 0;
   }
 
@@ -35,8 +35,13 @@
     z-index: 2;
     background: var(--figma-color-bg-secondary);
 
-    h3{
-      color: var(--figma-color-text-secondary);
+    h3,
+    .shader-list-header-count {
+      color: var(--figma-color-text-tertiary);
+    }
+
+    .shader-list-header-count {
+      margin-right: var(--spacer-2);
     }
 
     .shader-list-header-add {

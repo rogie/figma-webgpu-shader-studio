@@ -17,19 +17,47 @@
 #root
   .composer-viewer.shader-view-page
   .composer-preview.shader-viewer-visualizer,
-#root .composer-viewer.shader-view-page .canvas-stage {
+#root
+  .composer-viewer.shader-view-page
+  :is(.canvas-stage, .present-canvas-stage) {
   border: 0 !important;
   border-radius: 0 !important;
   outline: 0 !important;
   box-shadow: none !important;
 }
 
-#root .composer-viewer.shader-view-page .canvas-stage::before,
-#root .composer-viewer.shader-view-page .canvas-stage::after {
+#root
+  .composer-viewer.shader-view-page
+  :is(.canvas-stage, .present-canvas-stage)::before,
+#root
+  .composer-viewer.shader-view-page
+  :is(.canvas-stage, .present-canvas-stage)::after {
   border: 0 !important;
   border-radius: 0 !important;
   outline: 0 !important;
   box-shadow: none !important;
+}
+
+#root .composer-viewer.shader-view-page:has(.canvas-stage--light),
+#root
+  .composer-viewer.shader-view-page:has(.canvas-stage--light)
+  .composer-preview.shader-viewer-visualizer.background--light,
+#root
+  .composer-viewer.shader-view-page
+  :is(.canvas-stage, .present-canvas-stage).canvas-stage--light {
+  --canvas-stage-color: #ffffff;
+  background-color: #ffffff;
+}
+
+#root .composer-viewer.shader-view-page:has(.canvas-stage--dark),
+#root
+  .composer-viewer.shader-view-page:has(.canvas-stage--dark)
+  .composer-preview.shader-viewer-visualizer.background--light,
+#root
+  .composer-viewer.shader-view-page
+  :is(.canvas-stage, .present-canvas-stage).canvas-stage--dark {
+  --canvas-stage-color: #000000;
+  background-color: #000000;
 }
 
 #root .shader-view-page .view-properties-overlay {
@@ -64,6 +92,25 @@
     :has(fig-select[open])
   )
   .view-properties-overlay {
+  visibility: visible;
+  opacity: 1;
+}
+
+#root .composer-viewer.shader-view-page.is-window-blurred .tools,
+#root
+  .composer-viewer.shader-view-page.is-window-blurred
+  .view-properties-overlay {
+  visibility: hidden;
+  opacity: 0;
+}
+
+#root
+  .composer-viewer.shader-view-page:has(
+    fig-select[open],
+    fig-menu[open],
+    fig-popup[open]
+  )
+  :is(.tools, .view-properties-overlay) {
   visibility: visible;
   opacity: 1;
 }

@@ -15,6 +15,7 @@ test("keeps only the shader-focused model shortlist", () => {
   assert.deepEqual(CHAT_MODELS.map((model) => model.id), [
     "gpt-5.6-sol",
     "gpt-5.6-terra",
+    "gpt-6-astra",
     "claude-fable-5",
     "claude-opus-5",
     "claude-sonnet-5",
@@ -33,6 +34,7 @@ test("filters OpenAI models by availability in curated order", () => {
   const groups = groupsForAvailableOpenAIModels([
     { id: "gpt-5.6-terra" },
     { id: "not-in-the-catalog" },
+    { id: "gpt-6-astra" },
     { id: "gpt-5.6-sol" },
   ]);
   const openaiIds = groups
@@ -40,7 +42,7 @@ test("filters OpenAI models by availability in curated order", () => {
     .filter((model) => model.provider === "openai")
     .map((model) => model.id);
 
-  assert.deepEqual(openaiIds, ["gpt-5.6-sol", "gpt-5.6-terra"]);
+  assert.deepEqual(openaiIds, ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"]);
   assert.ok(groups.some((group) => group.label === "Anthropic"));
   assert.ok(groups.some((group) => group.label === "Gemini"));
   assert.ok(groups.some((group) => group.label === "Grok"));
@@ -109,6 +111,7 @@ test("keeps the newest model in each Cursor family", () => {
       { id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
       { id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
       { id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+      { id: "gpt-6-astra", label: "GPT-6 Astra" },
       { id: "kimi-k3", label: "Kimi K3" },
     ],
   });
@@ -131,6 +134,7 @@ test("keeps the newest model in each Cursor family", () => {
     "gpt-5.6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
+    "gpt-6-astra",
     "kimi-k3",
   ]);
   assert.ok(groups.some((group) => group.label === "OpenAI"));

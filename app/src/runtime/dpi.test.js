@@ -3,6 +3,8 @@ import test from "node:test";
 import {
   adaptiveRenderScale,
   cssSizeToDevicePixels,
+  normalizePreviewPixelRatioMode,
+  previewPixelRatioForMode,
   readPreviewPixelRatioMode,
   subscribePreviewPixelRatioMode,
   writePreviewPixelRatioMode,
@@ -33,6 +35,15 @@ test("preview pixel ratio changes notify mounted controls", () => {
   writePreviewPixelRatioMode("1x", null);
 
   assert.deepEqual(modes, ["1x", "2x"]);
+});
+
+test("native preview pixel ratio follows the display, not the 1x/2x preference", () => {
+  assert.equal(normalizePreviewPixelRatioMode("native", { allowNative: true }), "native");
+  assert.equal(normalizePreviewPixelRatioMode("native"), "2x");
+  assert.equal(previewPixelRatioForMode("1x", 3), 1);
+  assert.equal(previewPixelRatioForMode("2x", 3), 2);
+  assert.equal(previewPixelRatioForMode("native", 3), 3);
+  assert.equal(previewPixelRatioForMode("native", 1.5), 1.5);
 });
 
 test("CSS size conversion accepts a 1x preview override", () => {

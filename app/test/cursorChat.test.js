@@ -193,5 +193,6 @@ test("allows Cursor catalog ids that are not in the curated shortlist", () => {
   assert.equal(isAllowedModel("cursor", "composer-2.5"), true);
   assert.equal(isAllowedModel("cursor", "claude-4.6-sonnet-thinking"), true);
   assert.equal(isAllowedModel("cursor", "not a model"), false);
+  assert.equal(isAllowedModel("openai", "gpt-6-astra"), true);
   assert.equal(isAllowedModel("openai", "claude-4.6-sonnet-thinking"), false);
 });

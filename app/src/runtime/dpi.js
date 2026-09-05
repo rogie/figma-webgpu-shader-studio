@@ -2,10 +2,33 @@ export const PREVIEW_PIXEL_RATIO_STORAGE_KEY = "figma-shader-preview-pixel-ratio
 
 const previewPixelRatioListeners = new Set();
 
+/** Follow the display instead of the app's 1x/2x preview preference. */
+export const PREVIEW_PIXEL_RATIO_NATIVE = "native";
+
 /** Current device pixel ratio (1 on non-retina, often 2/3 on retina). */
 export function getDevicePixelRatio() {
-  if (typeof window === "undefined") return 1;
-  return Math.max(1, Number(window.devicePixelRatio) || 1);
+  const pixelRatio = globalThis.window?.devicePixelRatio;
+  return Math.max(1, Number(pixelRatio) || 1);
+}
+
+export function normalizePreviewPixelRatioMode(mode, { allowNative = false } = {}) {
+  if (mode === "1x") return "1x";
+  if (allowNative && mode === PREVIEW_PIXEL_RATIO_NATIVE) {
+    return PREVIEW_PIXEL_RATIO_NATIVE;
+  }
+  return "2x";
+}
+
+/** Buffer scale for a preview mode. Native tracks the display, not app settings. */
+export function previewPixelRatioForMode(
+  mode,
+  pixelRatio = getDevicePixelRatio()
+) {
+  if (mode === "1x") return 1;
+  if (mode === PREVIEW_PIXEL_RATIO_NATIVE) {
+    return Math.max(1, Number(pixelRatio) || 1);
+  }
+  return 2;
 }
 
 export function readPreviewPixelRatioMode(

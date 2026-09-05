@@ -6,9 +6,14 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
 } from "react";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
+import {
+  readLibrarySectionOpen,
+  writeLibrarySectionOpen,
+} from "../lib/layoutStorage.js";
 import { visibleLibrarySelection } from "../lib/shaderLibrary.js";
 import "./ShaderList.css";
 import ShaderListItem from "./ShaderListItem.jsx";
@@ -37,6 +42,128 @@ function librarySections(cards) {
     sections[sections.length - 1].cards.push(card);
   }
   return sections.filter((section) => section.cards.length > 0);
+}
+
+function librarySectionId(section) {
+  return section.kind || section.key;
+}
+
+function ShaderListSection({
+  section,
+  value,
+  onAdd,
+  layout,
+  showPreview,
+  renderActions,
+  onContextMenu,
+  onThumbnailError,
+  drag,
+}) {
+  const labeled = Boolean(section.label);
+  const sectionId = librarySectionId(section);
+  const groupRef = useRef(null);
+  const addButtonRef = useRef(null);
+  const [open, setOpen] = useState(() => readLibrarySectionOpen(sectionId));
+  const sectionValue = visibleLibrarySelection(section.cards, value);
+  const addLabel = section.kind ? ADD_LABELS[section.kind] : null;
+  const grid = layout === "grid";
+
+  useEffect(() => {
+    if (!labeled) return undefined;
+    const group = groupRef.current;
+    if (!group) return undefined;
+    const handleOpenChange = (event) => {
+      if (event.target !== group) return;
+      const nextOpen = Boolean(event.detail?.open);
+      setOpen(nextOpen);
+      writeLibrarySectionOpen(sectionId, nextOpen);
+    };
+    group.addEventListener("openchange", handleOpenChange);
+    return () => group.removeEventListener("openchange", handleOpenChange);
+  }, [labeled, sectionId]);
+
+  useEffect(() => {
+    const button = addButtonRef.current;
+    if (!button || !onAdd || !section.kind) return undefined;
+    const handleClick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      onAdd(section.kind);
+    };
+    button.addEventListener("click", handleClick);
+    return () => button.removeEventListener("click", handleClick);
+  }, [onAdd, open, section.kind]);
+
+  return (
+    <fig-group
+      ref={groupRef}
+      class="shader-list-section"
+      collapsible={labeled ? "" : undefined}
+      open={labeled ? (open ? "" : "false") : undefined}
+    >
+      {labeled ? (
+        <fig-header class="shader-list-header" borderless="">
+          <h3>{section.label}</h3>
+          {!open ? (
+            <span className="shader-list-header-count">{section.cards.length}</span>
+          ) : onAdd && addLabel ? (
+            <fig-tooltip text={addLabel}>
+              <fig-button
+                ref={addButtonRef}
+                class="shader-list-header-add"
+                type="button"
+                variant="ghost"
+                icon="true"
+                aria-label={addLabel}
+              >
+                <fig-icon name="add" />
+              </fig-button>
+            </fig-tooltip>
+          ) : null}
+        </fig-header>
+      ) : null}
+      {section.cards.length ? (
+        <fig-chooser
+          class="shader-list-chooser"
+          value={sectionValue}
+          layout={grid ? "grid" : "vertical"}
+          columns={grid ? "2" : undefined}
+          overflow="scrollbar"
+          drag={drag ? "true" : "false"}
+          loop=""
+          auto-scroll="false"
+          scroll-behavior="auto"
+        >
+          {section.cards.map((card) => {
+            const item = (
+              <ShaderListItem
+                src={card.thumbnailSmallUrl || card.thumbnailUrl}
+                label={card.name}
+                layout={layout}
+                showPreview={showPreview}
+                published={card.origin === "public"}
+                figmaLinked={Boolean(card.figmaLinked)}
+                actions={renderActions?.(card)}
+                onThumbnailError={() => onThumbnailError?.(card)}
+              />
+            );
+
+            return (
+              <fig-choice
+                key={card.key}
+                value={card.key}
+                selected={card.key === value ? "" : undefined}
+                aria-label={card.name}
+                onContextMenu={(event) => onContextMenu?.(card, event)}
+              >
+                {item}
+              </fig-choice>
+            );
+          })}
+        </fig-chooser>
+      ) : null}
+    </fig-group>
+  );
 }
 
 const ShaderList = forwardRef(function ShaderList(
@@ -164,77 +291,20 @@ const ShaderList = forwardRef(function ShaderList(
           ) : null}
         </div>
       ) : null}
-      {sections.map((section) => {
-        const sectionValue = visibleLibrarySelection(section.cards, value);
-        const addLabel = section.kind ? ADD_LABELS[section.kind] : null;
-        return (
-          <section key={section.key} className="shader-list-section">
-            {section.label ? (
-              <fig-header class="shader-list-header" borderless="">
-                <h3>{section.label}</h3>
-                {onAdd && addLabel ? (
-                  <fig-tooltip text={addLabel}>
-                    <fig-button
-                      class="shader-list-header-add"
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label={addLabel}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        onAdd(section.kind);
-                      }}
-                    >
-                      <fig-icon name="add" />
-                    </fig-button>
-                  </fig-tooltip>
-                ) : null}
-              </fig-header>
-            ) : null}
-            {section.cards.length ? (
-              <fig-chooser
-                class="shader-list-chooser"
-                value={sectionValue}
-                layout={grid ? "grid" : "vertical"}
-                columns={grid ? "2" : undefined}
-                overflow="scrollbar"
-                drag={drag ? "true" : "false"}
-                loop=""
-                auto-scroll="false"
-                scroll-behavior="auto"
-              >
-                {section.cards.map((card) => {
-                  const item = (
-                    <ShaderListItem
-                      src={card.thumbnailSmallUrl || card.thumbnailUrl}
-                      label={card.name}
-                      layout={layout}
-                      showPreview={showPreview}
-                      published={card.origin === "public"}
-                      figmaLinked={Boolean(card.figmaLinked)}
-                      actions={renderActions?.(card)}
-                      onThumbnailError={() => onThumbnailError?.(card)}
-                    />
-                  );
-
-                  return (
-                    <fig-choice
-                      key={card.key}
-                      value={card.key}
-                      selected={card.key === value ? "" : undefined}
-                      aria-label={card.name}
-                      onContextMenu={(event) => onContextMenu?.(card, event)}
-                    >
-                      {item}
-                    </fig-choice>
-                  );
-                })}
-              </fig-chooser>
-            ) : null}
-          </section>
-        );
-      })}
+      {sections.map((section) => (
+        <ShaderListSection
+          key={section.key}
+          section={section}
+          value={value}
+          onAdd={onAdd}
+          layout={layout}
+          showPreview={showPreview}
+          renderActions={renderActions}
+          onContextMenu={onContextMenu}
+          onThumbnailError={onThumbnailError}
+          drag={drag}
+        />
+      ))}
     </div>
   );
 });
