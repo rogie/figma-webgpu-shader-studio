@@ -378,6 +378,27 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   labels, dialog titles, properties/code/chat headers). No app wiring or CSS
   changes are required.
 
+## 8.9.47 notes
+
+- Dynamic children in `fig-select-options` now trigger overflow resync and keep
+  navigation buttons at the panel edges. `ChatPane` no longer needs to key and
+  remount the model options wrapper when available models change.
+- `fig-tabs` and `fig-chooser` also restore their overflow navigation buttons
+  to the first and last child positions after authored children change.
+- `fig-handle` adds `precision` (default `2`) for percentage values and pixel
+  coordinates. This is the standalone-handle foundation; `fig-canvas-control`
+  still rounded composite values to whole percentages in this release.
+
+## 8.9.48 notes
+
+- `fig-canvas-control` adds `precision` (default `2`) and applies it to
+  positions, radius, angle, serialized values, tooltips, and internal handles.
+  On-canvas shader controls now gain finer positioning automatically; no app
+  attribute or value-conversion change is required.
+- Radius and angle lines use a transparent halo at rest and a white halo on
+  hover. `CanvasControlsOverlay` has no local overrides for these variables, so
+  the improved interaction styling applies automatically.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

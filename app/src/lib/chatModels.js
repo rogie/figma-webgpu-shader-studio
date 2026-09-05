@@ -52,23 +52,12 @@ function modelId(entry) {
 }
 
 const CURSOR_MODEL_SHORTLIST = [
-  ["Auto (default)", "Auto"],
-  ["Claude Haiku 4.5"],
   ["Claude Opus 5"],
-  ["Claude Sonnet 5"],
-  ["Codex 5.3"],
+  ["Claude Fable 5"],
+  ["GPT-5.6 Sol"],
   ["Composer 2.5"],
   ["Cursor Grok 4.6"],
-  ["Gemini 3.1 Pro"],
-  ["Gemini 3.5 Flash"],
-  ["GPT-5.4 Mini"],
-  ["GPT-5.4 Nano"],
-  ["GPT-5.5"],
-  ["GPT-5.6 Luna"],
-  ["GPT-5.6 Sol"],
-  ["GPT-5.6 Terra"],
-  ["GPT-6 Astra"],
-  ["Kimi K3"],
+  ["Gemini 3.6 Flash"],
 ];
 
 function cursorModelLabel(id, label) {

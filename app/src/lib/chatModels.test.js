@@ -84,13 +84,14 @@ test("reconciles an unavailable saved model to the first available option", () =
   assert.equal(next.id, "gpt-5.6-terra");
 });
 
-test("keeps the newest model in each Cursor family", () => {
+test("keeps only the shader-focused Cursor model shortlist", () => {
   const groups = groupsForAvailableProviderModels({
     cursor: [
       { id: "auto", label: "Auto" },
       { id: "auto-default", label: "Auto (default)" },
       { id: "claude-4.5-haiku", label: "Claude Haiku 4.5" },
       { id: "claude-4.8-opus", label: "Claude Opus 4.8" },
+      { id: "claude-5-fable", label: "Claude Fable 5" },
       { id: "claude-5-opus", label: "Claude Opus 5" },
       { id: "claude-5-sonnet", label: "Claude Sonnet 5" },
       { id: "codex-5.3", label: "Codex 5.3" },
@@ -104,6 +105,7 @@ test("keeps the newest model in each Cursor family", () => {
       { id: "gemini-3-flash", label: "Gemini 3 Flash" },
       { id: "gemini-3.1-pro", label: "Gemini 3.1 Pro" },
       { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
       { id: "gpt-5-mini", label: "GPT-5 Mini" },
       { id: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
       { id: "gpt-5.4-nano", label: "GPT-5.4 Nano" },
@@ -119,23 +121,12 @@ test("keeps the newest model in each Cursor family", () => {
   const cursorIds = cursorModels.map((model) => model.id);
 
   assert.deepEqual(cursorIds, [
-    "auto-default",
-    "claude-4.5-haiku",
     "claude-5-opus",
-    "claude-5-sonnet",
-    "codex-5.3",
+    "claude-5-fable",
+    "gpt-5.6-sol",
     "composer-2",
     "grok-4.6",
-    "gemini-3.1-pro",
-    "gemini-3.5-flash",
-    "gpt-5.4-mini",
-    "gpt-5.4-nano",
-    "gpt-5.5",
-    "gpt-5.6-luna",
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-6-astra",
-    "kimi-k3",
+    "gemini-3.6-flash",
   ]);
   assert.ok(groups.some((group) => group.label === "OpenAI"));
 });
