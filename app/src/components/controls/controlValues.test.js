@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   formatSelectOptions,
   readNumber,
+  readPropskitEventValue,
   readPropskitSliderNumber,
   sliderTypeForProperty,
 } from "./controlValues.js";
@@ -16,6 +17,23 @@ test("reads native and propskit numeric event shapes", () => {
   assert.equal(
     readPropskitSliderNumber({ nativeEvent: { detail: 7 } }),
     7,
+  );
+});
+
+test("unwraps legacy and shared PropsKit event values", () => {
+  assert.deepEqual(
+    readPropskitEventValue({
+      detail: {
+        control: "propskit-position",
+        value: { x: 25, y: 75, units: "percent" },
+      },
+    }),
+    { x: 25, y: 75, units: "percent" },
+  );
+  assert.equal(readPropskitEventValue({ detail: "legacy" }), "legacy");
+  assert.equal(
+    readPropskitEventValue({ detail: undefined, target: { value: "host" } }),
+    "host",
   );
 });
 

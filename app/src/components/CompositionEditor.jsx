@@ -38,6 +38,7 @@ import { valuesMatchDefaults } from "../runtime/params.js";
 import defaultInputUrl from "../assets/default-input.png";
 import { defaultVideoUrl } from "../runtime/sample.js";
 import Controls from "./Controls.jsx";
+import { readPropskitEventValue } from "./controls/controlValues.js";
 import MicrophoneIcon from "./MicrophoneIcon.jsx";
 import VolumeIcon from "./VolumeIcon.jsx";
 import ShaderPicker, {
@@ -563,7 +564,15 @@ function ImageFillInput({
     if (!node || !onChange) return undefined;
     const picker = node.querySelector("fig-fill-picker") || node;
     const handleValue = (event) => {
-      const detail = event.detail;
+      const rawDetail = readPropskitEventValue(event);
+      let detail = rawDetail;
+      if (typeof rawDetail === "string") {
+        try {
+          detail = JSON.parse(rawDetail);
+        } catch {
+          return;
+        }
+      }
       if (!detail || typeof detail !== "object") return;
       if (detail.type) setTypeLabel(fillTypeLabel(detail.type));
       if (detail.type === "shader") {
@@ -697,8 +706,6 @@ function ImageFillInput({
     <propskit-fill
       ref={ref}
       label={typeLabel}
-      direction="horizontal"
-      size="large"
       mode={allowShader ? FILL_SHADER_MODES : FILL_PAINT_MODES}
       value={value}
       disabled={disabled ? "" : undefined}

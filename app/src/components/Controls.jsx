@@ -13,6 +13,7 @@ import {
 import {
   formatSelectOptions,
   readNumber,
+  readPropskitEventValue,
   readPropskitSliderNumber,
   sliderTypeForProperty,
 } from "./controls/controlValues.js";
@@ -59,8 +60,6 @@ function PropskitNumberControl({ name, def, value, onChange }) {
     <propskit-number
       ref={numberRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       value={value ?? def.defaultValue ?? 0}
       default={def.defaultValue ?? 0}
       min={def.min}
@@ -79,11 +78,7 @@ function PropskitTextControl({ name, def, value, onChange }) {
     const control = textRef.current;
     if (!control) return;
     const handleValue = (event) => {
-      const detail = event.detail;
-      const next =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target.value);
+      const next = readPropskitEventValue(event);
       onChange(name, String(next ?? ""));
     };
     control.addEventListener("input", handleValue);
@@ -98,8 +93,6 @@ function PropskitTextControl({ name, def, value, onChange }) {
     <propskit-text
       ref={textRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       value={value ?? def.defaultValue ?? ""}
       default={def.defaultValue ?? ""}
       dangerouslySetInnerHTML={opaqueContent}
@@ -168,8 +161,6 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
     <propskit-slider
       ref={sliderRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       default={def.defaultValue}
       min={min}
       max={max}
@@ -190,7 +181,7 @@ function SwitchControl({ name, def, value, onChange }) {
     const control = switchRef.current;
     if (!control) return;
     const handleValue = (event) => {
-      const next = event.detail?.checked ?? control.checked;
+      const next = readPropskitEventValue(event) ?? control.checked;
       onChange(name, Boolean(next));
     };
     control.addEventListener("input", handleValue);
@@ -206,8 +197,6 @@ function SwitchControl({ name, def, value, onChange }) {
     <propskit-switch
       ref={switchRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       {...(checked ? { checked: "" } : {})}
       {...(defaultChecked ? { default: "" } : {})}
       dangerouslySetInnerHTML={opaqueContent}
@@ -237,19 +226,14 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
       onPreview(name, selectedValueRef.current);
     };
     const handleValue = (event) => {
-      // propskit-select forwards fig-select detail as the raw string value.
-      const detail = event.detail;
-      const raw =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target.value);
+      const raw = readPropskitEventValue(event);
       const next = readValue(raw);
       selectedValueRef.current = next;
       hoveredValueRef.current = null;
       onChange(name, next);
     };
     const handleOptionHover = (event) => {
-      const next = readValue(event.detail);
+      const next = readValue(readPropskitEventValue(event));
       if (Object.is(hoveredValueRef.current, next)) return;
       hoveredValueRef.current = next;
       onPreview(name, next);
@@ -280,8 +264,6 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
     <propskit-select
       ref={selectRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       value={current == null ? "" : String(current)}
       default={defaultValue}
       options={formatSelectOptions(options)}
@@ -291,7 +273,7 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
 }
 
 function readPropskitColorEvent(event, host) {
-  const detail = event.detail;
+  const detail = readPropskitEventValue(event);
   if (typeof detail === "string" && detail.trim()) {
     return hexToColor(detail);
   }
@@ -345,8 +327,6 @@ function PropskitColorControl({ name, def, value, onChange }) {
     <propskit-color
       ref={colorRef}
       label={def.label || name}
-      direction="horizontal"
-      size="large"
       value={colorToHex(current)}
       default={colorToHex(defaultColor)}
       alpha="true"
@@ -378,7 +358,7 @@ function parsePropskitRadius(raw) {
 }
 
 function readPropskitDetail(event) {
-  const detail = event.detail;
+  const detail = readPropskitEventValue(event);
   if (typeof detail === "string") {
     try {
       return JSON.parse(detail);
@@ -488,7 +468,6 @@ function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
     <propskit-position
       ref={controlRef}
       label={def.label || name}
-      size="large"
       default={JSON.stringify({
         x: defaults.x ?? 50,
         y: defaults.y ?? 50,
@@ -537,7 +516,6 @@ function PropskitPointRadiusControl({
     <propskit-point-radius
       ref={controlRef}
       label={def.label || name}
-      size="large"
       {...(units ? { units } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
@@ -585,7 +563,6 @@ function PropskitPointRadiusAngleControl({
     <propskit-point-radius-angle
       ref={controlRef}
       label={def.label || name}
-      size="large"
       {...(units ? { units } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
@@ -633,7 +610,6 @@ function PropskitPointPointControl({
     <propskit-point-point
       ref={controlRef}
       label={def.label || name}
-      size="large"
       {...(units ? { units } : {})}
       dangerouslySetInnerHTML={opaqueContent}
     />
@@ -714,7 +690,6 @@ function PropskitColorPointControl({
     <propskit-color-point
       ref={controlRef}
       label={def.label || name}
-      size="large"
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -755,7 +730,7 @@ function PropskitGradientControl({
     const control = gradientRef.current;
     if (!control) return;
     const readValue = (event) => {
-      let detail = event.detail;
+      let detail = readPropskitEventValue(event);
       if (typeof detail === "string") {
         try {
           detail = JSON.parse(detail);
@@ -800,10 +775,8 @@ function PropskitGradientControl({
     <propskit-gradient
       ref={gradientRef}
       label={def.label || name}
-      direction="horizontal"
       value={serialized}
       default={serializedDefault}
-      size="large"
       edit="picker"
       dangerouslySetInnerHTML={opaqueContent}
     />

@@ -399,6 +399,24 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   hover. `CanvasControlsOverlay` has no local overrides for these variables, so
   the improved interaction styling applies automatically.
 
+## 8.10.1 notes
+
+- PropsKit `input`, `change`, and `optionhover` events now use
+  `{ control, value, name? }` in `event.detail`. `Controls`,
+  `CompositionEditor`, and `PlayControls` unwrap `detail.value` while retaining
+  compatibility with legacy event shapes.
+- PropsKit controls now use plain shared surfaces. The removed `direction`,
+  `size`, and `variant="minimal"` attributes were dropped from app markup.
+  `propskit-switch` now renders `fig-switch` by default instead of an Off/On
+  segmented control.
+- The preview time wheel's obsolete `--propskit-wheel-horizontal-padding`
+  override was migrated to `--propskit-wheel-padding-inline`.
+- New `propskit-palette`, `propskit-joystick`, `propskit-origin`,
+  `propskit-easing`, and `propskit-spring` controls are not adopted because the
+  app's current shader property schema has no corresponding property types.
+- `fig-select` adds `subtle` for secondary option hover/focus styling. Existing
+  selects retain their current appearance.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

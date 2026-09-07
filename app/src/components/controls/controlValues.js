@@ -3,13 +3,15 @@ export function readNumber(event) {
   return Number(value);
 }
 
-export function readPropskitSliderNumber(event) {
+export function readPropskitEventValue(event) {
   const detail = event.nativeEvent?.detail ?? event.detail;
-  const value =
-    detail && typeof detail === "object" && "value" in detail
-      ? detail.value
-      : detail;
-  return Number(value);
+  return detail && typeof detail === "object" && "value" in detail
+    ? detail.value
+    : (detail ?? event.target?.value);
+}
+
+export function readPropskitSliderNumber(event) {
+  return Number(readPropskitEventValue(event));
 }
 
 export function isSymmetricDeltaRange(min, max) {
