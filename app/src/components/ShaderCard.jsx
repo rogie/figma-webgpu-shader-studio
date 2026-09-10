@@ -107,6 +107,8 @@ export default function ShaderCard({
   ].filter(Boolean);
   const showStatus =
     statusLabels.length > 0 || (!published && Boolean(sublabel));
+  const livePreviewVisible =
+    previewActive && previewLoaded && !previewLoading;
 
   return (
     <fig-card
@@ -124,7 +126,13 @@ export default function ShaderCard({
       }}
       onPointerLeave={() => setPreviewActive(false)}
     >
-      <fig-preview class="shader-card-preview">
+      <fig-preview
+        class={
+          livePreviewVisible
+            ? "shader-card-preview is-live-preview"
+            : "shader-card-preview"
+        }
+      >
         {src && (
           <img
             className="shader-card-thumbnail"

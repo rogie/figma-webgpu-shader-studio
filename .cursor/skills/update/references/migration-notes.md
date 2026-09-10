@@ -417,6 +417,21 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - `fig-select` adds `subtle` for secondary option hover/focus styling. Existing
   selects retain their current appearance.
 
+## 8.11.1 notes
+
+- Adds `propskit-image`, a labeled image chooser with upload, selection, and
+  removal. It is not adopted here: composition media already uses
+  `propskit-fill`, and the shader property schema has no image property type.
+- Adds `propskit-editable-select` for mutable option lists. Existing shader enum
+  options are authored by `defineProperties` and remain read-only, so
+  `propskit-select` is still the correct control.
+- `fig-input-text` adds `size="large"` for a 32px input. The shader-name editor
+  already requests this size; account and search fields keep the default size.
+- Medium `fig-icon name="checkmark"` now uses the 24px asset. The app's
+  checkmark icon explicitly uses `size="small"`, so no markup change is needed.
+- PropsKit nested secondary buttons share subfield styling. Existing controls
+  pick this up automatically without app CSS changes.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

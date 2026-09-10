@@ -829,7 +829,7 @@ fig-header[borderless]:has(+ fig-header) {
           strong {
             min-width: 2ch;
             text-align: right;
-            font-size: var(--font-size-small);
+            font-size: inherit;
             line-height: 1;
           }
 

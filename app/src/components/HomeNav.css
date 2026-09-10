@@ -139,7 +139,18 @@
 
       .shader-card-preview-canvas {
         display: block;
+        visibility: hidden;
         background: transparent;
+      }
+
+      .shader-card-preview.is-live-preview {
+        .shader-card-thumbnail {
+          visibility: hidden;
+        }
+
+        .shader-card-preview-canvas {
+          visibility: visible;
+        }
       }
 
       > fig-footer {
