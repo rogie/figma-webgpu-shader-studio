@@ -88,7 +88,6 @@ export default function PreviewToolbar({
           <fig-swatch
             ref={canvasColorSwatchRef}
             background={canvasColor}
-            size="medium"
           />
         </fig-tooltip>
       </fig-fill-picker>

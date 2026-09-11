@@ -255,7 +255,6 @@ import {
   paintForInputSource,
   resolvedLibraryKind,
   fillTypeForDroppedMedia,
-  isCompositionPlayable,
   isDocumentPlayable,
   isLiveWebcamFill,
   liveWebcamFillCount,
@@ -2090,12 +2089,6 @@ export default function App() {
       presetId,
       resolvedByKey,
     ],
-  );
-  const compositionPlayable = useMemo(
-    () =>
-      kind === COMPOSITION_KIND &&
-      isCompositionPlayable(composition, pinAwareResolvedByKey),
-    [composition, kind, pinAwareResolvedByKey]
   );
   const previewPlayable = useMemo(
     () =>
@@ -11526,7 +11519,7 @@ export default function App() {
       hostRef={hostRef}
       previewZoom={previewZoom}
       onPreviewZoomChange={requestPreviewZoom}
-      showFps={!isComposerView || compositionPlayable}
+      showFps={previewPlayable}
       initialPixelRatioMode={
         viewMode === "view" ? PREVIEW_PIXEL_RATIO_NATIVE : undefined
       }
