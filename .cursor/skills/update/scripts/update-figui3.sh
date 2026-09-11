@@ -16,6 +16,10 @@ previous="$(
     console.log(direct ? direct.replace(/^[^0-9]*/, '') : '');
   "
 )"
+previousPropskit="$(
+  cd "$APP"
+  npm list @rogieking/propskit2 --depth=0 2>/dev/null | sed -n 's/.*@rogieking\/propskit2@//p'
+)"
 
 echo "Installing latest @rogieking/figui3 in app/..."
 (
@@ -23,15 +27,29 @@ echo "Installing latest @rogieking/figui3 in app/..."
   npm install @rogieking/figui3@latest
 )
 
+echo "Installing latest @rogieking/propskit2 in app/..."
+(
+  cd "$APP"
+  npm install github:rogie/propskit2#main
+)
+
 current="$(
   cd "$APP"
   npm list @rogieking/figui3 --depth=0 2>/dev/null | sed -n 's/.*@rogieking\/figui3@//p'
 )"
+currentPropskit="$(
+  cd "$APP"
+  npm list @rogieking/propskit2 --depth=0 2>/dev/null | sed -n 's/.*@rogieking\/propskit2@//p'
+)"
 
 echo "FigUI3: ${previous:-unknown} -> ${current:-unknown}"
+echo "PropsKit2: ${previousPropskit:-unknown} -> ${currentPropskit:-unknown}"
 
 if [[ -n "$previous" && -n "$current" && "$previous" == "$current" ]]; then
-  echo "Already on latest installed version."
+  echo "FigUI3 already on latest installed version."
+fi
+if [[ -n "$previousPropskit" && -n "$currentPropskit" && "$previousPropskit" == "$currentPropskit" ]]; then
+  echo "PropsKit2 already on latest installed version."
 fi
 
 echo "Clearing Vite cache..."

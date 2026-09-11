@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  canvasColorFillValue,
+  canvasColorFromControlEvent,
+  DEFAULT_DARK_CANVAS_COLOR,
+  DEFAULT_CANVAS_COLOR,
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   readAppNavWidth,
+  readCanvasColor,
+  readCanvasColorOverride,
   readCanvasControlsVisible,
-  readCanvasTheme,
   readChatHeight,
   readCodeWidth,
   readEditorFilters,
@@ -17,6 +22,7 @@ import {
   readPreviewHeight,
   readSidebarSections,
   readTheme,
+  resolveTheme,
   writeLibrarySectionOpen,
 } from "./layoutStorage.js";
 
@@ -65,20 +71,43 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
     { codeCollapsed: false, chatCollapsed: false },
   );
   assert.equal(
-    readTheme(storage(), () => ({ matches: true })),
-    "dark",
+    readTheme(storage()),
+    "system",
   );
   assert.equal(
-    readTheme(
-      storage({ "figma-shader-studio:theme": "light" }),
-      () => ({ matches: true }),
-    ),
+    readTheme(storage({ "figma-shader-studio:theme": "light" })),
     "light",
   );
-  assert.equal(readCanvasTheme(storage()), "light");
   assert.equal(
-    readCanvasTheme(storage({ "figma-shader-studio:canvas-theme": "dark" })),
-    "dark",
+    readTheme(storage({ "figma-shader-studio:theme": "system" })),
+    "system",
+  );
+  assert.equal(resolveTheme("system", () => ({ matches: true })), "dark");
+  assert.equal(resolveTheme("system", () => ({ matches: false })), "light");
+  assert.equal(resolveTheme("light", () => ({ matches: true })), "light");
+  assert.equal(readCanvasColor(storage()), DEFAULT_CANVAS_COLOR);
+  assert.equal(
+    readCanvasColor(storage(), "dark"),
+    DEFAULT_DARK_CANVAS_COLOR,
+  );
+  assert.equal(readCanvasColorOverride(storage()), null);
+  assert.equal(
+    readCanvasColor(
+      storage({ "figma-shader-studio:canvas-color": "#12345678" }),
+    ),
+    "#12345678",
+  );
+  assert.equal(
+    readCanvasColorOverride(
+      storage({ "figma-shader-studio:canvas-color": "#FFFFFFB8" }),
+    ),
+    null,
+  );
+  assert.equal(
+    readCanvasColor(
+      storage({ "figma-shader-studio:canvas-theme": "dark" }),
+    ),
+    DEFAULT_DARK_CANVAS_COLOR,
   );
   assert.equal(readCanvasControlsVisible(storage()), true);
   assert.equal(
@@ -115,6 +144,30 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
     ),
     true,
   );
+});
+
+test("canvas color controls normalize color and alpha", () => {
+  assert.equal(
+    canvasColorFromControlEvent({
+      detail: { type: "solid", color: "#aabbcc", alpha: 0.5 },
+    }),
+    "#AABBCC80",
+  );
+  assert.equal(
+    canvasColorFromControlEvent({
+      detail: { color: "#123456", opacity: 25 },
+    }),
+    "#12345640",
+  );
+  assert.equal(
+    canvasColorFromControlEvent({ target: { value: "#abc" } }),
+    "#AABBCCFF",
+  );
+  assert.deepEqual(JSON.parse(canvasColorFillValue("#AABBCC80")), {
+    type: "solid",
+    color: "#AABBCC",
+    alpha: 128 / 255,
+  });
 });
 
 test("editor filters default to your items and restore saved choices", () => {

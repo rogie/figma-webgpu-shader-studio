@@ -38,28 +38,6 @@
   box-shadow: none !important;
 }
 
-#root .composer-viewer.shader-view-page:has(.canvas-stage--light),
-#root
-  .composer-viewer.shader-view-page:has(.canvas-stage--light)
-  .composer-preview.shader-viewer-visualizer.background--light,
-#root
-  .composer-viewer.shader-view-page
-  :is(.canvas-stage, .present-canvas-stage).canvas-stage--light {
-  --canvas-stage-color: #ffffff;
-  background-color: #ffffff;
-}
-
-#root .composer-viewer.shader-view-page:has(.canvas-stage--dark),
-#root
-  .composer-viewer.shader-view-page:has(.canvas-stage--dark)
-  .composer-preview.shader-viewer-visualizer.background--light,
-#root
-  .composer-viewer.shader-view-page
-  :is(.canvas-stage, .present-canvas-stage).canvas-stage--dark {
-  --canvas-stage-color: #000000;
-  background-color: #000000;
-}
-
 #root .shader-view-page .view-properties-overlay {
   position: absolute;
   z-index: 11;

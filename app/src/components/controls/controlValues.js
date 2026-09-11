@@ -50,8 +50,8 @@ export function sliderTypeForProperty(name, min, max, step) {
   return null;
 }
 
-// Match figui3 /propskit/lab: options attr is comma-separated, newline, or JSON
-// array of strings / { value, label } objects (same as fig-options / fig-select).
+// Match PropsKit2 / fig-select: options attr is comma-separated, newline, or
+// JSON array of strings / { value, label } objects.
 export function formatSelectOptions(options) {
   return JSON.stringify(
     options.map((option) => ({

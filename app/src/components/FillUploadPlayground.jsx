@@ -77,7 +77,8 @@ function StateStage({ overlay = false, loading = false }) {
       style={{ position: "relative", width: "100%", height: "12rem" }}
     >
       <fig-preview
-        class={`canvas-stage canvas-stage--light${overlay ? " is-dragging" : ""}`}
+        class={`canvas-stage${overlay ? " is-dragging" : ""}`}
+        style={{ "--canvas-stage-color": "#FFFFFF33" }}
         full=""
         checkerboard=""
         aspect-ratio="auto"
@@ -162,7 +163,7 @@ export default function FillUploadPlayground() {
                   onDropError={setResult}
                   dropTarget="fill"
                   showCanvasControls={false}
-                  canvasTheme="light"
+                  canvasColor="#FFFFFF33"
                 />
               </div>
               <p aria-live="polite">{result}</p>

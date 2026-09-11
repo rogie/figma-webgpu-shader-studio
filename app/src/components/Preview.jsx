@@ -52,6 +52,7 @@ function PreviewStage({
   plain,
   stageRef,
   stageClass,
+  stageStyle,
   loading,
   interactionProps,
   children,
@@ -61,6 +62,7 @@ function PreviewStage({
       <div
         ref={stageRef}
         className={stageClass}
+        style={stageStyle}
         aria-busy={loading ? "true" : undefined}
         {...interactionProps}
       >
@@ -72,6 +74,7 @@ function PreviewStage({
     <fig-preview
       ref={stageRef}
       class={stageClass}
+      style={stageStyle}
       full=""
       checkerboard=""
       aspect-ratio="auto"
@@ -99,7 +102,7 @@ function Preview({
   onPointerSurface,
   inputSource = "image",
   htmlInputRef,
-  canvasTheme = "light",
+  canvasColor = "#FFFFFF33",
   interactive = true,
   loading = false,
   plain = false,
@@ -359,11 +362,10 @@ function Preview({
       });
   };
 
-  const stageClass = `${
-    plain ? "present-canvas-stage" : "canvas-stage"
-  } canvas-stage--${canvasTheme}${
+  const stageClass = `${plain ? "present-canvas-stage" : "canvas-stage"}${
     dragging ? " is-dragging" : ""
   }${loading ? " is-loading" : ""}`;
+  const stageStyle = { "--canvas-stage-color": canvasColor };
   const interactionProps = {
     onDrop: interactive ? onDrop : undefined,
     onDragEnter: interactive
@@ -400,6 +402,7 @@ function Preview({
       plain={plain}
       stageRef={stageRef}
       stageClass={stageClass}
+      stageStyle={stageStyle}
       loading={loading}
       interactionProps={interactionProps}
     >

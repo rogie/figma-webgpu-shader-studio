@@ -28,11 +28,11 @@ Then follow **Review changelog & migrate** below. Finish with verification.
 Copy and track progress:
 
 ```
-- [ ] Record current @rogieking/figui3 version
-- [ ] Install latest figui3 in app/
+- [ ] Record current @rogieking/figui3 and @rogieking/propskit2 versions
+- [ ] Install latest figui3 and propskit2 in app/
 - [ ] Rebuild Vite cache (script does this)
 - [ ] Restart Vite in a background Shell session and confirm http://localhost:5173/ responds
-- [ ] Review FigUI3 changes since previous version
+- [ ] Review FigUI3 and PropsKit2 changes since previous versions
 - [ ] Apply needed integrations in app/src
 - [ ] Run npm test && npm run build in app/
 - [ ] Summarize version jump + code changes for the user
@@ -49,7 +49,8 @@ Always run from repo root:
 The script:
 
 - installs `@rogieking/figui3@latest` in `app/`
-- prints old → new version
+- installs latest `@rogieking/propskit2` from `github:rogie/propskit2#main`
+- prints old → new versions
 - deletes `app/node_modules/.vite`
 
 It does **not** restart the dev server. In Cursor, detached `nohup`/`setsid` processes do not survive after the script exits, so the agent must restart Vite in a background Shell session (see next step).
@@ -76,18 +77,21 @@ Or watch the background terminal log for `ready in`. Do not continue until `curl
 
 FigUI3 does not ship a separate CHANGELOG file. Derive changes from the version jump:
 
-1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 --depth=0` in `app/`).
-2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3.
+1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/propskit2 --depth=0` in `app/`).
+2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and PropsKit2.
 3. Inspect the installed package docs:
    - `app/node_modules/@rogieking/figui3/README.md` — component APIs, attributes, events
-   - `app/node_modules/@rogieking/figui3/fig-lab.js` / `fig-lab.css` — lab/propskit/chat components
+   - `app/node_modules/@rogieking/figui3/fig-lab.js` / `fig-lab.css` — lab/chat/canvas components
    - `app/node_modules/@rogieking/figui3/fig-editor.js` — editor/fill-picker components
+   - `app/node_modules/@rogieking/propskit2/README.md` and `.cursor/skills/propskit2/` — `propskit-*` controls
 4. Search for newly relevant symbols:
 
 ```bash
 rg -n "propskit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
   app/node_modules/@rogieking/figui3/README.md \
-  app/node_modules/@rogieking/figui3/fig-lab.js
+  app/node_modules/@rogieking/figui3/fig-lab.js \
+  app/node_modules/@rogieking/propskit2/README.md \
+  app/node_modules/@rogieking/propskit2/skills/propskit2
 ```
 
 5. Cross-check `app/src` for places still using raw FigUI3 primitives where a newer propskit or attachment wrapper exists.
@@ -128,6 +132,7 @@ Confirm `curl -sf http://localhost:5173/` succeeds and the dev server log shows 
 Tell the user:
 
 - previous and new figui3 versions
+- previous and new propskit2 versions
 - whether any app code changed (list files)
 - anything noted in README/API that was **not** adopted yet
 - test/build result

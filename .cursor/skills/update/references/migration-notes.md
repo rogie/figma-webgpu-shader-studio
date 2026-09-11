@@ -432,6 +432,29 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - PropsKit nested secondary buttons share subfield styling. Existing controls
   pick this up automatically without app CSS changes.
 
+## 9.0.8 + PropsKit2 0.3.0 notes
+
+- FigUI3 9.0 removed the Lab `propskit-*` wrappers. Property controls now live
+  in `@rogieking/propskit2` (`github:rogie/propskit2#main`). The custom-element
+  API is unchanged: import `propskit.css` + `propskit.js`.
+- `propskit.js` registers FigUI3 core, editor, and lab via
+  `@rogieking/figui3/src/*`. `mainApp.jsx` therefore imports FigUI3 **CSS**
+  plus the PropsKit2 bundle, and does not import `fig.js` / `fig-editor.js` /
+  `fig-lab.js` a second time.
+- PropsKit2 events remain `{ control, value, name? }`. Existing
+  `readPropskitEventValue` unwrapping still applies.
+- `propskit-fill` still `replaceChildren`s its light DOM after moving authored
+  `mode-*` slots onto the inner picker. Keep appending the shader slot to
+  `fig-fill-picker` from `CompositionEditor` after mount.
+- `propskit-color-point` still omits `alpha` on its inner `propskit-color`;
+  keep the post-mount enable workaround in `Controls.jsx`.
+- Declarative `usePropsKit` / `PropsKitRoot` is unused. Shader
+  `defineProperties` already drives `Controls.jsx`.
+- New PropsKit2-only tags (`propskit-transition`, `propskit-3d-transform`) are
+  not adopted; the shader property schema has no matching types.
+- FigUI3 `.fig-overflow-fade` is unused; this app keeps its JS
+  `overflow-fade` helper.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

@@ -1,3 +1,8 @@
+import { useEffect, useRef } from "react";
+import {
+  canvasColorFillValue,
+  canvasColorFromControlEvent,
+} from "../lib/layoutStorage.js";
 import CanvasControlsIcon from "./CanvasControlsIcon.jsx";
 import PlayControls from "./PlayControls.jsx";
 import PreviewFps from "./PreviewFps.jsx";
@@ -15,14 +20,25 @@ export default function PreviewToolbar({
   initialPixelRatioMode,
   showCanvasHandles,
   onToggleCanvasHandles,
-  canvasTheme,
-  onCanvasThemeChange,
+  canvasColor,
+  onCanvasColorChange,
 }) {
+  const canvasColorPickerRef = useRef(null);
+  const canvasColorSwatchRef = useRef(null);
   const canvasControlsLabel = showCanvasHandles
     ? "Hide canvas handles"
     : "Show canvas handles";
-  const canvasThemeLabel =
-    canvasTheme === "dark" ? "Use light canvas" : "Use dark canvas";
+
+  useEffect(() => {
+    const picker = canvasColorPickerRef.current;
+    if (!picker) return undefined;
+    picker.anchorElement = canvasColorSwatchRef.current;
+    const updateCanvasColor = (event) => {
+      onCanvasColorChange?.(canvasColorFromControlEvent(event, canvasColor));
+    };
+    picker.addEventListener("input", updateCanvasColor);
+    return () => picker.removeEventListener("input", updateCanvasColor);
+  }, [canvasColor, onCanvasColorChange]);
 
   return (
     <div className="tools background--light">
@@ -61,16 +77,21 @@ export default function PreviewToolbar({
         </fig-button>
       </fig-tooltip>
       <fig-separator direction="vertical" />
-      <fig-tooltip text={canvasThemeLabel}>
-        <fig-button
-          variant="ghost"
-          icon="true"
-          aria-label={canvasThemeLabel}
-          onClick={onCanvasThemeChange}
-        >
-          <fig-icon name={canvasTheme === "dark" ? "moon" : "sun"} />
-        </fig-button>
-      </fig-tooltip>
+      <fig-fill-picker
+        ref={canvasColorPickerRef}
+        mode="solid"
+        dialog-position="top center"
+        value={canvasColorFillValue(canvasColor)}
+        aria-label="Canvas color"
+      >
+        <fig-tooltip text="Canvas color">
+          <fig-swatch
+            ref={canvasColorSwatchRef}
+            background={canvasColor}
+            size="medium"
+          />
+        </fig-tooltip>
+      </fig-fill-picker>
     </div>
   );
 }

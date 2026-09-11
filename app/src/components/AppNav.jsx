@@ -55,8 +55,8 @@ export default function AppNav({
   onAuthOpenChange,
   theme,
   onThemeChange,
-  canvasTheme,
-  onCanvasThemeChange,
+  canvasColor,
+  onCanvasColorChange,
   settingsOpen,
   onSettingsOpenChange,
   onProfileChange,
@@ -151,8 +151,8 @@ export default function AppNav({
             onOpenChange={onAuthOpenChange}
             theme={theme}
             onThemeChange={onThemeChange}
-            canvasTheme={canvasTheme}
-            onCanvasThemeChange={onCanvasThemeChange}
+            canvasColor={canvasColor}
+            onCanvasColorChange={onCanvasColorChange}
             settingsOpen={settingsOpen}
             onSettingsOpenChange={onSettingsOpenChange}
             onProfileChange={onProfileChange}

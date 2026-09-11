@@ -209,8 +209,8 @@ import {
 } from "./lib/mediaFiles.js";
 import { createRafCssWriter } from "./lib/panelResize.js";
 import {
+  CANVAS_COLOR_STORAGE_KEY,
   CANVAS_CONTROLS_STORAGE_KEY,
-  CANVAS_THEME_STORAGE_KEY,
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   defaultCodeWidth,
@@ -226,14 +226,17 @@ import {
   MIN_PREVIEW_WIDTH,
   MIN_STACKED_SIDEBAR,
   PLAY_STORAGE_KEY,
+  defaultCanvasColorForTheme,
+  normalizeCanvasColor,
   readCanvasControlsVisible as savedCanvasControlsVisible,
-  readCanvasTheme as savedCanvasTheme,
+  readCanvasColorOverride as savedCanvasColorOverride,
   readEditorFilters as savedEditorFilters,
   readLibraryView as savedLibraryView,
   readAppNavCollapsed as savedAppNavCollapsed,
   readPlayState as savedPlayState,
   readSidebarSections as savedSidebarSections,
   readTheme as savedTheme,
+  resolveTheme,
   readExperimentalAudio as savedExperimentalAudio,
   subscribeExperimentalAudio,
   SIDEBAR_SECTIONS_STORAGE_KEY,
@@ -1467,7 +1470,15 @@ export default function App() {
     savePreviewHeight,
   } = usePanelLayout(editorViewRef);
   const [theme, setTheme] = useState(savedTheme);
-  const [canvasTheme, setCanvasTheme] = useState(savedCanvasTheme);
+  const [systemTheme, setSystemTheme] = useState(() =>
+    resolveTheme("system")
+  );
+  const resolvedTheme = theme === "system" ? systemTheme : theme;
+  const [canvasColorOverride, setCanvasColor] = useState(
+    savedCanvasColorOverride,
+  );
+  const canvasColor =
+    canvasColorOverride ?? defaultCanvasColorForTheme(resolvedTheme);
   const [showCanvasHandles, setShowCanvasHandles] = useState(
     savedCanvasControlsVisible,
   );
@@ -2271,15 +2282,49 @@ export default function App() {
   }, [protectedPreview, renaming]);
 
   useEffect(() => {
+    const query = globalThis.matchMedia?.("(prefers-color-scheme: dark)");
+    if (!query) return undefined;
+    const updateSystemTheme = (event) => {
+      setSystemTheme(event.matches ? "dark" : "light");
+    };
+    updateSystemTheme(query);
+    if (typeof query.addEventListener === "function") {
+      query.addEventListener("change", updateSystemTheme);
+      return () => query.removeEventListener("change", updateSystemTheme);
+    }
+    query.addListener?.(updateSystemTheme);
+    return () => query.removeListener?.(updateSystemTheme);
+  }, []);
+
+  const changeTheme = useCallback((nextTheme) => {
+    if (
+      nextTheme !== "system" &&
+      nextTheme !== "light" &&
+      nextTheme !== "dark"
+    ) {
+      return;
+    }
+    document.documentElement.style.colorScheme =
+      nextTheme === "system" ? "light dark" : nextTheme;
+    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+    setTheme(nextTheme);
+  }, []);
+
+  useLayoutEffect(() => {
     if (routeEmbed) return;
-    document.documentElement.style.colorScheme = theme;
+    document.documentElement.style.colorScheme =
+      theme === "system" ? "light dark" : theme;
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [routeEmbed, theme]);
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(CANVAS_THEME_STORAGE_KEY, canvasTheme);
-  }, [canvasTheme, routeEmbed]);
+    if (canvasColorOverride) {
+      localStorage.setItem(CANVAS_COLOR_STORAGE_KEY, canvasColorOverride);
+    } else {
+      localStorage.removeItem(CANVAS_COLOR_STORAGE_KEY);
+    }
+  }, [canvasColorOverride, routeEmbed]);
 
   useEffect(() => {
     if (routeEmbed) return;
@@ -5290,10 +5335,10 @@ export default function App() {
       pendingMedia,
       running,
       time: hostRef.current?.frame?.time || 0,
-      canvasTheme,
+      canvasColor,
     };
   }, [
-    canvasTheme,
+    canvasColor,
     captureDocumentSnapshot,
     composition,
     currentShader?.id,
@@ -5375,8 +5420,12 @@ export default function App() {
         time: Number.isFinite(payload.time) ? Math.max(0, payload.time) : 0,
       };
       playPreferenceRef.current = Boolean(payload.running);
-      if (payload.canvasTheme === "dark" || payload.canvasTheme === "light") {
-        setCanvasTheme(payload.canvasTheme);
+      if (typeof payload.canvasColor === "string") {
+        setCanvasColor(normalizeCanvasColor(payload.canvasColor));
+      } else if (payload.canvasTheme === "dark") {
+        setCanvasColor("#00000033");
+      } else if (payload.canvasTheme === "light") {
+        setCanvasColor("#FFFFFF33");
       }
       document.title = `${payload.name || "Shader"} — Present`;
       const structureKey = presentStructureKey(payload);
@@ -11458,7 +11507,7 @@ export default function App() {
             showCanvasHandles &&
             (!isComposerView || compositionPropsLayerId != null)
           }
-          canvasTheme={canvasTheme}
+          canvasColor={canvasColor}
           interactive={!routeEmbed}
           loading={previewResourcesLoading}
           plain={Boolean(presentSessionId) || viewMode === "view"}
@@ -11485,10 +11534,8 @@ export default function App() {
       onToggleCanvasHandles={() =>
         setShowCanvasHandles((visible) => !visible)
       }
-      canvasTheme={canvasTheme}
-      onCanvasThemeChange={() =>
-        setCanvasTheme(canvasTheme === "dark" ? "light" : "dark")
-      }
+      canvasColor={canvasColor}
+      onCanvasColorChange={setCanvasColor}
     />
   );
 
@@ -11663,9 +11710,9 @@ export default function App() {
         authOpen={authOpen}
         onAuthOpenChange={setAuthOpen}
         theme={theme}
-        onThemeChange={setTheme}
-        canvasTheme={canvasTheme}
-        onCanvasThemeChange={setCanvasTheme}
+        onThemeChange={changeTheme}
+        canvasColor={canvasColor}
+        onCanvasColorChange={setCanvasColor}
         settingsOpen={settingsOpen}
         onSettingsOpenChange={setSettingsOpen}
         onProfileChange={onAccountProfileChange}
@@ -11869,9 +11916,9 @@ export default function App() {
               open={authOpen}
               onOpenChange={setAuthOpen}
               theme={theme}
-              onThemeChange={setTheme}
-              canvasTheme={canvasTheme}
-              onCanvasThemeChange={setCanvasTheme}
+              onThemeChange={changeTheme}
+              canvasColor={canvasColor}
+              onCanvasColorChange={setCanvasColor}
               settingsOpen={settingsOpen}
               onSettingsOpenChange={setSettingsOpen}
               onProfileChange={onAccountProfileChange}
@@ -12008,7 +12055,7 @@ export default function App() {
                     <Suspense fallback={null}>
                       <CodePane
                         source={source}
-                        theme={theme}
+                        theme={resolvedTheme}
                         error={error}
                         readOnly={protectedPreview}
                         onSourceChange={onSourceChange}

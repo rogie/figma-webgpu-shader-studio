@@ -6,7 +6,8 @@ const preserveFiguiRegistrations = {
   enforce: "pre",
   transform(code, id) {
     if (
-      id.includes("/@rogieking/figui3/dist/") &&
+      (id.includes("/@rogieking/figui3/") ||
+        id.includes("/@rogieking/propskit2/")) &&
       id.endsWith(".js")
     ) {
       return { code, map: null, moduleSideEffects: "no-treeshake" };
@@ -23,14 +24,20 @@ export default defineConfig({
       ? "/figma-webgpu-shader-studio/"
       : "/",
   plugins: [preserveFiguiRegistrations, react()],
-  // FigUI3 registers custom elements as import side effects; keep it out of
-  // Vite's dependency optimizer so upgrades aren't served from a stale prebundle.
+  // FigUI3 and PropsKit2 register custom elements as import side effects;
+  // keep them out of Vite's dependency optimizer so upgrades aren't served
+  // from a stale prebundle.
   optimizeDeps: {
     exclude: [
       "@rogieking/figui3/fig.js",
       "@rogieking/figui3/fig-lab.js",
       "@rogieking/figui3/fig-editor.js",
       "@rogieking/figui3/fig-layer.js",
+      "@rogieking/figui3/src/fig.js",
+      "@rogieking/figui3/src/fig-lab.js",
+      "@rogieking/figui3/src/fig-editor.js",
+      "@rogieking/figui3/src/fig-layer.js",
+      "@rogieking/propskit2/propskit.js",
     ],
   },
   build: {

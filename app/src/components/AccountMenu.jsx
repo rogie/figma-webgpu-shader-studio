@@ -34,6 +34,7 @@ import {
   writePreviewPixelRatioMode,
 } from "../runtime/dpi.js";
 import {
+  canvasColorFromControlEvent,
   readExperimentalAudio,
   subscribeExperimentalAudio,
   writeExperimentalAudio,
@@ -48,13 +49,20 @@ function accountDisplayName(user) {
   );
 }
 
+function controlValue(event) {
+  const detail = event.detail;
+  return detail && typeof detail === "object" && "value" in detail
+    ? detail.value
+    : (detail ?? event.target.value);
+}
+
 export default function AccountMenu({
   open,
   onOpenChange,
   theme,
   onThemeChange,
-  canvasTheme,
-  onCanvasThemeChange,
+  canvasColor,
+  onCanvasColorChange,
   settingsOpen = false,
   onSettingsOpenChange,
   onProfileChange,
@@ -82,7 +90,7 @@ export default function AccountMenu({
   });
   const themeControlRef = useRef(null);
   const pixelRatioControlRef = useRef(null);
-  const canvasThemeControlRef = useRef(null);
+  const canvasColorControlRef = useRef(null);
   const [sending, setSending] = useState(
     /** @type {"" | "figma" | "github"} */ ("")
   );
@@ -210,22 +218,24 @@ export default function AccountMenu({
     const control = themeControlRef.current;
     if (!control) return;
     const updateTheme = (event) => {
-      const value = event.detail ?? event.target.value;
-      if (value === "light" || value === "dark") onThemeChange(value);
+      const value = controlValue(event);
+      if (value === "system" || value === "light" || value === "dark") {
+        onThemeChange(value);
+      }
     };
     control.addEventListener("input", updateTheme);
-    return () => control.removeEventListener("input", updateTheme);
+    control.addEventListener("change", updateTheme);
+    return () => {
+      control.removeEventListener("input", updateTheme);
+      control.removeEventListener("change", updateTheme);
+    };
   }, [onThemeChange]);
 
   useEffect(() => {
     const control = pixelRatioControlRef.current;
     if (!control) return;
     const updatePixelRatio = (event) => {
-      const detail = event.detail;
-      const value =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target.value);
+      const value = controlValue(event);
       writePreviewPixelRatioMode(value);
     };
     control.addEventListener("input", updatePixelRatio);
@@ -233,17 +243,14 @@ export default function AccountMenu({
   }, []);
 
   useEffect(() => {
-    const control = canvasThemeControlRef.current;
+    const control = canvasColorControlRef.current;
     if (!control) return;
-    const updateCanvasTheme = (event) => {
-      const value = event.detail ?? event.target.value;
-      if (value === "light" || value === "dark") {
-        onCanvasThemeChange?.(value);
-      }
+    const updateCanvasColor = (event) => {
+      onCanvasColorChange?.(canvasColorFromControlEvent(event, canvasColor));
     };
-    control.addEventListener("input", updateCanvasTheme);
-    return () => control.removeEventListener("input", updateCanvasTheme);
-  }, [onCanvasThemeChange]);
+    control.addEventListener("input", updateCanvasColor);
+    return () => control.removeEventListener("input", updateCanvasColor);
+  }, [canvasColor, onCanvasColorChange]);
 
   const close = () => {
     onOpenChange(false);
@@ -536,6 +543,12 @@ export default function AccountMenu({
                 value={theme}
               >
                 <fig-segment
+                  value="system"
+                  selected={theme === "system"}
+                >
+                  System
+                </fig-segment>
+                <fig-segment
                   value="light"
                   selected={theme === "light"}
                 >
@@ -573,26 +586,15 @@ export default function AccountMenu({
               </fig-segmented-control>
             </fig-field>
             <fig-field direction="horizontal">
-              <label>Canvas theme</label>
-              <fig-segmented-control
-                ref={canvasThemeControlRef}
+              <label>Canvas color</label>
+              <fig-input-color
+                ref={canvasColorControlRef}
                 full=""
-                sizing="equal"
-                value={canvasTheme}
-              >
-                <fig-segment
-                  value="light"
-                  selected={canvasTheme === "light"}
-                >
-                  Light
-                </fig-segment>
-                <fig-segment
-                  value="dark"
-                  selected={canvasTheme === "dark"}
-                >
-                  Dark
-                </fig-segment>
-              </fig-segmented-control>
+                value={canvasColor}
+                alpha="true"
+                aria-label="Canvas color"
+                dangerouslySetInnerHTML={{ __html: "" }}
+              />
             </fig-field>
           </fig-group>
 

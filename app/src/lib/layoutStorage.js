@@ -21,7 +21,12 @@ export const PREVIEW_HEIGHT_STORAGE_KEY =
 export const SIDEBAR_SECTIONS_STORAGE_KEY =
   "figma-shader-studio:sidebar-sections";
 export const THEME_STORAGE_KEY = "figma-shader-studio:theme";
-export const CANVAS_THEME_STORAGE_KEY = "figma-shader-studio:canvas-theme";
+export const CANVAS_COLOR_STORAGE_KEY = "figma-shader-studio:canvas-color";
+export const DEFAULT_LIGHT_CANVAS_COLOR = "#FFFFFF33";
+export const DEFAULT_DARK_CANVAS_COLOR = "#00000033";
+export const DEFAULT_CANVAS_COLOR = DEFAULT_LIGHT_CANVAS_COLOR;
+const LEGACY_CANVAS_THEME_STORAGE_KEY =
+  "figma-shader-studio:canvas-theme";
 export const CANVAS_CONTROLS_STORAGE_KEY =
   "figma-shader-studio:show-canvas-handles";
 export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
@@ -92,19 +97,107 @@ export function isStackedLayout(
   return Boolean(matchMedia?.(STACKED_MEDIA_QUERY).matches);
 }
 
-export function readTheme(
-  storage = globalThis.localStorage,
+export function readTheme(storage = globalThis.localStorage) {
+  const stored = storage?.getItem(THEME_STORAGE_KEY);
+  if (stored === "system" || stored === "light" || stored === "dark") {
+    return stored;
+  }
+  return "system";
+}
+
+export function resolveTheme(
+  theme,
   matchMedia = globalThis.matchMedia?.bind(globalThis),
 ) {
-  const stored = storage?.getItem(THEME_STORAGE_KEY);
-  if (stored === "light" || stored === "dark") return stored;
+  if (theme === "light" || theme === "dark") return theme;
   return matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-export function readCanvasTheme(storage = globalThis.localStorage) {
-  return storage?.getItem(CANVAS_THEME_STORAGE_KEY) === "dark"
-    ? "dark"
-    : "light";
+export function defaultCanvasColorForTheme(theme) {
+  return theme === "dark"
+    ? DEFAULT_DARK_CANVAS_COLOR
+    : DEFAULT_LIGHT_CANVAS_COLOR;
+}
+
+export function normalizeCanvasColor(value, fallback = DEFAULT_CANVAS_COLOR) {
+  const match = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i.exec(
+    String(value || "").trim(),
+  );
+  if (!match) return fallback;
+  let hex = match[1];
+  if (hex.length <= 4) {
+    hex = [...hex].map((digit) => `${digit}${digit}`).join("");
+  }
+  if (hex.length === 6) hex += "FF";
+  return `#${hex.toUpperCase()}`;
+}
+
+export function canvasColorFromControlEvent(
+  event,
+  fallback = DEFAULT_CANVAS_COLOR,
+) {
+  const rawDetail = event?.nativeEvent?.detail ?? event?.detail;
+  const detail =
+    rawDetail &&
+    typeof rawDetail === "object" &&
+    "value" in rawDetail
+      ? rawDetail.value
+      : rawDetail;
+  if (typeof detail === "string") {
+    return normalizeCanvasColor(detail, fallback);
+  }
+  if (!detail || typeof detail !== "object") {
+    return normalizeCanvasColor(event?.target?.value, fallback);
+  }
+
+  const color = normalizeCanvasColor(
+    detail.color ?? detail.hex ?? detail.rgba,
+    fallback,
+  );
+  const alpha =
+    Number.isFinite(Number(detail.alpha))
+      ? Math.max(0, Math.min(1, Number(detail.alpha)))
+      : Number.isFinite(Number(detail.opacity))
+        ? Math.max(0, Math.min(100, Number(detail.opacity))) / 100
+        : Number.parseInt(color.slice(7, 9), 16) / 255;
+  const alphaHex = Math.round(alpha * 255)
+    .toString(16)
+    .padStart(2, "0")
+    .toUpperCase();
+  return `${color.slice(0, 7)}${alphaHex}`;
+}
+
+export function canvasColorFillValue(color) {
+  const normalized = normalizeCanvasColor(color);
+  return JSON.stringify({
+    type: "solid",
+    color: normalized.slice(0, 7),
+    alpha: Number.parseInt(normalized.slice(7, 9), 16) / 255,
+  });
+}
+
+export function readCanvasColorOverride(storage = globalThis.localStorage) {
+  const stored = normalizeCanvasColor(
+    storage?.getItem(CANVAS_COLOR_STORAGE_KEY),
+    null,
+  );
+  if (stored === "#FFFFFFB8" || stored === "#0000008F") return null;
+  if (stored) return stored;
+  const legacyTheme = storage?.getItem(LEGACY_CANVAS_THEME_STORAGE_KEY);
+  if (legacyTheme === "dark" || legacyTheme === "light") {
+    return defaultCanvasColorForTheme(legacyTheme);
+  }
+  return null;
+}
+
+export function readCanvasColor(
+  storage = globalThis.localStorage,
+  theme = resolveTheme(readTheme(storage)),
+) {
+  return (
+    readCanvasColorOverride(storage) ||
+    defaultCanvasColorForTheme(theme)
+  );
 }
 
 export function readCanvasControlsVisible(storage = globalThis.localStorage) {

@@ -6,12 +6,10 @@ import { AuthProvider } from "./contexts/AuthContext.jsx";
 import { isFigmaOAuthCallback } from "./services/figmaShaders.js";
 import "reset-css";
 import "@rogieking/figui3/fig.css";
-import "@rogieking/figui3/fig.js";
 import "@rogieking/figui3/fig-editor.css";
-import "@rogieking/figui3/fig-editor.js";
-// 8.1+ no longer pulls lab styles through fig-editor.css — import explicitly.
 import "@rogieking/figui3/fig-lab.css";
-import "@rogieking/figui3/fig-lab.js";
+import "@rogieking/propskit2/propskit.css";
+import "@rogieking/propskit2/propskit.js";
 import { installCanvasHandlePopupGuard } from "./lib/canvasHandlePopupGuard.js";
 import "./app.css";
 
