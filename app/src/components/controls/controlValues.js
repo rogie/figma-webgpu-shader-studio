@@ -3,15 +3,15 @@ export function readNumber(event) {
   return Number(value);
 }
 
-export function readPropskitEventValue(event) {
+export function readToolkitEventValue(event) {
   const detail = event.nativeEvent?.detail ?? event.detail;
   return detail && typeof detail === "object" && "value" in detail
     ? detail.value
     : (detail ?? event.target?.value);
 }
 
-export function readPropskitSliderNumber(event) {
-  return Number(readPropskitEventValue(event));
+export function readToolkitSliderNumber(event) {
+  return Number(readToolkitEventValue(event));
 }
 
 export function isSymmetricDeltaRange(min, max) {
@@ -50,7 +50,7 @@ export function sliderTypeForProperty(name, min, max, step) {
   return null;
 }
 
-// Match PropsKit2 / fig-select: options attr is comma-separated, newline, or
+// Match ToolKit / fig-select: options attr is comma-separated, newline, or
 // JSON array of strings / { value, label } objects.
 export function formatSelectOptions(options) {
   return JSON.stringify(

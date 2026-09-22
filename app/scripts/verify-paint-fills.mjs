@@ -252,10 +252,10 @@ async function rasterizeInPage(page) {
 }
 
 async function applyFill(page, detail) {
-  await page.waitForSelector("propskit-fill, fig-input-fill", { timeout: 20000 });
+  await page.waitForSelector("toolkit-fill, fig-input-fill", { timeout: 20000 });
   await page.evaluate((value) => {
     const node =
-      document.querySelector("propskit-fill") ||
+      document.querySelector("toolkit-fill") ||
       document.querySelector("fig-input-fill");
     if (!node) throw new Error("fill control missing");
     node.value = value;
@@ -271,7 +271,7 @@ async function applyFill(page, detail) {
 async function readFillValue(page) {
   return page.evaluate(() => {
     const node =
-      document.querySelector("propskit-fill") ||
+      document.querySelector("toolkit-fill") ||
       document.querySelector("fig-input-fill");
     if (!node) return null;
     try {
@@ -319,7 +319,7 @@ async function openSeededEditor(page, path) {
     { key: DRAFTS_KEY, drafts: [composerDraft, effectDraft] }
   );
   await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("propskit-fill, fig-input-fill", { timeout: 25000 });
+  await page.waitForSelector("toolkit-fill, fig-input-fill", { timeout: 25000 });
   await page.waitForSelector("canvas.preview-canvas", { timeout: 25000 });
   await page.waitForTimeout(1200);
 }
@@ -383,9 +383,9 @@ async function exerciseFills(page, label) {
   await page.waitForTimeout(2000);
   const videoMeta = await page.evaluate(() => {
     const node =
-      document.querySelector("propskit-fill") ||
+      document.querySelector("toolkit-fill") ||
       document.querySelector("fig-input-fill");
-    const swatch = node?.querySelector("fig-swatch");
+    const swatch = node?.querySelector("tk-swatch");
     const background = swatch?.getAttribute("background") || "";
     const value =
       typeof node?.value === "string"
@@ -430,7 +430,7 @@ async function exerciseFills(page, label) {
     return {
       fillType: (() => {
         const node =
-          document.querySelector("propskit-fill") ||
+          document.querySelector("toolkit-fill") ||
           document.querySelector("fig-input-fill");
         const value =
           typeof node?.value === "string"

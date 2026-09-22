@@ -13,8 +13,8 @@ import {
 import {
   formatSelectOptions,
   readNumber,
-  readPropskitEventValue,
-  readPropskitSliderNumber,
+  readToolkitEventValue,
+  readToolkitSliderNumber,
   sliderTypeForProperty,
 } from "./controls/controlValues.js";
 import { useCoalescedPropertyCallback } from "./controls/useCoalescedPropertyCallback.js";
@@ -38,7 +38,7 @@ function NumberControl({ def, value, onChange }) {
   );
 }
 
-function PropskitNumberControl({ name, def, value, onChange }) {
+function ToolkitNumberControl({ name, def, value, onChange }) {
   const numberRef = useRef(null);
 
   useEffect(() => {
@@ -57,7 +57,7 @@ function PropskitNumberControl({ name, def, value, onChange }) {
   }, [name, onChange]);
 
   return (
-    <propskit-number
+    <toolkit-number
       ref={numberRef}
       label={def.label || name}
       value={value ?? def.defaultValue ?? 0}
@@ -71,14 +71,14 @@ function PropskitNumberControl({ name, def, value, onChange }) {
   );
 }
 
-function PropskitTextControl({ name, def, value, onChange }) {
+function ToolkitTextControl({ name, def, value, onChange }) {
   const textRef = useRef(null);
 
   useEffect(() => {
     const control = textRef.current;
     if (!control) return;
     const handleValue = (event) => {
-      const next = readPropskitEventValue(event);
+      const next = readToolkitEventValue(event);
       onChange(name, String(next ?? ""));
     };
     control.addEventListener("input", handleValue);
@@ -90,7 +90,7 @@ function PropskitTextControl({ name, def, value, onChange }) {
   }, [name, onChange]);
 
   return (
-    <propskit-text
+    <toolkit-text
       ref={textRef}
       label={def.label || name}
       value={value ?? def.defaultValue ?? ""}
@@ -100,7 +100,7 @@ function PropskitTextControl({ name, def, value, onChange }) {
   );
 }
 
-function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
+function ToolkitSliderControl({ name, def, value, onInputValue, onCommit }) {
   const sliderRef = useRef(null);
   const draggingRef = useRef(false);
   const latestValue = value ?? def.defaultValue ?? 0;
@@ -114,7 +114,7 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
     const slider = sliderRef.current;
     if (!slider) return;
     const readNext = (event) => {
-      const next = readPropskitSliderNumber(event);
+      const next = readToolkitSliderNumber(event);
       return Number.isFinite(next) ? next : null;
     };
     const handleInput = (event) => {
@@ -143,7 +143,7 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   }, [name, onCommit, onInputValue]);
 
   // Keep `value` off the React props path. Rewriting the attribute from React
-  // while scrubbing re-enters propskit's attr sync / fig-slider value path.
+  // while scrubbing re-enters ToolKit's attr sync / fig-slider value path.
   useLayoutEffect(() => {
     const slider = sliderRef.current;
     if (!slider || draggingRef.current) return;
@@ -158,7 +158,7 @@ function PropskitSliderControl({ name, def, value, onInputValue, onCommit }) {
   }, [latestValue]);
 
   return (
-    <propskit-slider
+    <toolkit-slider
       ref={sliderRef}
       label={def.label || name}
       default={def.defaultValue}
@@ -181,7 +181,7 @@ function SwitchControl({ name, def, value, onChange }) {
     const control = switchRef.current;
     if (!control) return;
     const handleValue = (event) => {
-      const next = readPropskitEventValue(event) ?? control.checked;
+      const next = readToolkitEventValue(event) ?? control.checked;
       onChange(name, Boolean(next));
     };
     control.addEventListener("input", handleValue);
@@ -194,7 +194,7 @@ function SwitchControl({ name, def, value, onChange }) {
 
   const defaultChecked = Boolean(def.defaultValue);
   return (
-    <propskit-switch
+    <toolkit-switch
       ref={switchRef}
       label={def.label || name}
       {...(checked ? { checked: "" } : {})}
@@ -226,14 +226,14 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
       onPreview(name, selectedValueRef.current);
     };
     const handleValue = (event) => {
-      const raw = readPropskitEventValue(event);
+      const raw = readToolkitEventValue(event);
       const next = readValue(raw);
       selectedValueRef.current = next;
       hoveredValueRef.current = null;
       onChange(name, next);
     };
     const handleOptionHover = (event) => {
-      const next = readValue(readPropskitEventValue(event));
+      const next = readValue(readToolkitEventValue(event));
       if (Object.is(hoveredValueRef.current, next)) return;
       hoveredValueRef.current = next;
       onPreview(name, next);
@@ -261,7 +261,7 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
   const defaultValue =
     def.defaultValue == null ? "" : String(def.defaultValue);
   return (
-    <propskit-select
+    <toolkit-select
       ref={selectRef}
       label={def.label || name}
       value={current == null ? "" : String(current)}
@@ -272,8 +272,8 @@ function SelectControl({ name, def, value, onChange, onPreview }) {
   );
 }
 
-function readPropskitColorEvent(event, host) {
-  const detail = readPropskitEventValue(event);
+function readToolkitColorEvent(event, host) {
+  const detail = readToolkitEventValue(event);
   if (typeof detail === "string" && detail.trim()) {
     return hexToColor(detail);
   }
@@ -300,7 +300,7 @@ function readPropskitColorEvent(event, host) {
   return raw ? hexToColor(raw) : null;
 }
 
-function PropskitColorControl({ name, def, value, onChange }) {
+function ToolkitColorControl({ name, def, value, onChange }) {
   const colorRef = useRef(null);
   const current =
     value || def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
@@ -309,7 +309,7 @@ function PropskitColorControl({ name, def, value, onChange }) {
     const control = colorRef.current;
     if (!control) return;
     const handleValue = (event) => {
-      const next = readPropskitColorEvent(event, control);
+      const next = readToolkitColorEvent(event, control);
       if (!next) return;
       onChange(name, next);
     };
@@ -324,7 +324,7 @@ function PropskitColorControl({ name, def, value, onChange }) {
   const defaultColor =
     def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
   return (
-    <propskit-color
+    <toolkit-color
       ref={colorRef}
       label={def.label || name}
       value={colorToHex(current)}
@@ -335,30 +335,30 @@ function PropskitColorControl({ name, def, value, onChange }) {
   );
 }
 
-function propskitPositionUnits(def) {
+function toolkitPositionUnits(def) {
   const unit = def?.positionUnit || def?.unit || "%";
   return unit === "%" || unit === "percent" ? "percent" : undefined;
 }
 
-function propskitRadiusUnits(def) {
+function toolkitRadiusUnits(def) {
   const unit = def?.radiusUnit || def?.positionUnit || def?.unit || "%";
   return unit === "%" || unit === "percent" ? "percent" : undefined;
 }
 
-function serializePropskitRadius(radius, percentUnits) {
+function serializeToolkitRadius(radius, percentUnits) {
   const number = Number(radius ?? 0);
   return percentUnits ? `${number}%` : number;
 }
 
-function parsePropskitRadius(raw) {
+function parseToolkitRadius(raw) {
   if (typeof raw === "string" && raw.trim().endsWith("%")) {
     return Number.parseFloat(raw);
   }
   return Number(raw ?? 0);
 }
 
-function readPropskitDetail(event) {
-  const detail = readPropskitEventValue(event);
+function readToolkitDetail(event) {
+  const detail = readToolkitEventValue(event);
   if (typeof detail === "string") {
     try {
       return JSON.parse(detail);
@@ -369,7 +369,7 @@ function readPropskitDetail(event) {
   return detail && typeof detail === "object" ? detail : null;
 }
 
-function usePropskitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) {
+function useToolkitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) {
   const mapDetailRef = useRef(mapDetail);
   const onInputRef = useRef(onInputValue);
   const onCommitRef = useRef(onCommit);
@@ -385,13 +385,13 @@ function usePropskitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) 
     if (!control) return;
     const handleInput = (event) => {
       draggingRef.current = true;
-      const detail = readPropskitDetail(event);
+      const detail = readToolkitDetail(event);
       const next = detail ? mapDetailRef.current(detail) : null;
       if (next) onInputRef.current(name, next);
     };
     const handleChange = (event) => {
       draggingRef.current = false;
-      const detail = readPropskitDetail(event);
+      const detail = readToolkitDetail(event);
       const next = detail ? mapDetailRef.current(detail) : null;
       if (next) onCommitRef.current(name, next);
     };
@@ -414,7 +414,7 @@ function usePropskitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) 
 }
 
 /** Avoid rewriting attrs while the control is being scrubbed (same as slider). */
-function useSyncPropskitValueAttr(ref, serialized, draggingRef) {
+function useSyncToolkitValueAttr(ref, serialized, draggingRef) {
   useLayoutEffect(() => {
     const control = ref.current;
     if (!control || draggingRef.current) return;
@@ -424,7 +424,7 @@ function useSyncPropskitValueAttr(ref, serialized, draggingRef) {
   }, [draggingRef, ref, serialized]);
 }
 
-function useSyncPropskitPositionAttrs(ref, x, y, draggingRef) {
+function useSyncToolkitPositionAttrs(ref, x, y, draggingRef) {
   useLayoutEffect(() => {
     const control = ref.current;
     if (!control || draggingRef.current) return;
@@ -436,13 +436,13 @@ function useSyncPropskitPositionAttrs(ref, x, y, draggingRef) {
   }, [draggingRef, ref, x, y]);
 }
 
-function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
+function ToolkitPositionControl({ name, def, value, onInputValue, onCommit }) {
   const controlRef = useRef(null);
   const current = value || def.defaultValue || { x: 50, y: 50 };
   const currentRef = useRef(current);
   currentRef.current = current;
   const defaults = def.defaultValue || { x: 50, y: 50 };
-  const units = propskitPositionUnits(def);
+  const units = toolkitPositionUnits(def);
   const mapDetail = useCallback(
     (detail) => ({
       x: Number(detail.x ?? currentRef.current.x ?? 50),
@@ -450,14 +450,14 @@ function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
     }),
     []
   );
-  const draggingRef = usePropskitSpatialEvents(
+  const draggingRef = useToolkitSpatialEvents(
     controlRef,
     name,
     mapDetail,
     onInputValue,
     onCommit
   );
-  useSyncPropskitPositionAttrs(
+  useSyncToolkitPositionAttrs(
     controlRef,
     current.x ?? 50,
     current.y ?? 50,
@@ -465,7 +465,7 @@ function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
   );
 
   return (
-    <propskit-position
+    <toolkit-position
       ref={controlRef}
       label={def.label || name}
       default={JSON.stringify({
@@ -478,7 +478,7 @@ function PropskitPositionControl({ name, def, value, onInputValue, onCommit }) {
   );
 }
 
-function PropskitPointRadiusControl({
+function ToolkitPointRadiusControl({
   name,
   def,
   value,
@@ -489,31 +489,31 @@ function PropskitPointRadiusControl({
   const current = value || def.defaultValue || { x: 50, y: 50, radius: 0 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const units = propskitRadiusUnits(def);
+  const units = toolkitRadiusUnits(def);
   const serialized = JSON.stringify({
     x: current.x ?? 50,
     y: current.y ?? 50,
-    radius: serializePropskitRadius(current.radius, units === "percent"),
+    radius: serializeToolkitRadius(current.radius, units === "percent"),
   });
   const mapDetail = useCallback(
     (detail) => ({
       x: Number(detail.x ?? currentRef.current.x ?? 50),
       y: Number(detail.y ?? currentRef.current.y ?? 50),
-      radius: parsePropskitRadius(detail.radius ?? currentRef.current.radius),
+      radius: parseToolkitRadius(detail.radius ?? currentRef.current.radius),
     }),
     []
   );
-  const draggingRef = usePropskitSpatialEvents(
+  const draggingRef = useToolkitSpatialEvents(
     controlRef,
     name,
     mapDetail,
     onInputValue,
     onCommit
   );
-  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
 
   return (
-    <propskit-point-radius
+    <toolkit-point-radius
       ref={controlRef}
       label={def.label || name}
       {...(units ? { units } : {})}
@@ -522,7 +522,7 @@ function PropskitPointRadiusControl({
   );
 }
 
-function PropskitPointRadiusAngleControl({
+function ToolkitPointRadiusAngleControl({
   name,
   def,
   value,
@@ -534,33 +534,33 @@ function PropskitPointRadiusAngleControl({
     value || def.defaultValue || { x: 50, y: 50, radius: 0, angle: 0 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const units = propskitRadiusUnits(def);
+  const units = toolkitRadiusUnits(def);
   const serialized = JSON.stringify({
     x: current.x ?? 50,
     y: current.y ?? 50,
-    radius: serializePropskitRadius(current.radius, units === "percent"),
+    radius: serializeToolkitRadius(current.radius, units === "percent"),
     angle: current.angle ?? 0,
   });
   const mapDetail = useCallback(
     (detail) => ({
       x: Number(detail.x ?? currentRef.current.x ?? 50),
       y: Number(detail.y ?? currentRef.current.y ?? 50),
-      radius: parsePropskitRadius(detail.radius ?? currentRef.current.radius),
+      radius: parseToolkitRadius(detail.radius ?? currentRef.current.radius),
       angle: Number(detail.angle ?? currentRef.current.angle ?? 0),
     }),
     []
   );
-  const draggingRef = usePropskitSpatialEvents(
+  const draggingRef = useToolkitSpatialEvents(
     controlRef,
     name,
     mapDetail,
     onInputValue,
     onCommit
   );
-  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
 
   return (
-    <propskit-point-radius-angle
+    <toolkit-point-radius-angle
       ref={controlRef}
       label={def.label || name}
       {...(units ? { units } : {})}
@@ -569,7 +569,7 @@ function PropskitPointRadiusAngleControl({
   );
 }
 
-function PropskitPointPointControl({
+function ToolkitPointPointControl({
   name,
   def,
   value,
@@ -581,7 +581,7 @@ function PropskitPointPointControl({
     value || def.defaultValue || { x: 25, y: 25, x2: 75, y2: 75 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const units = propskitPositionUnits(def);
+  const units = toolkitPositionUnits(def);
   const serialized = JSON.stringify({
     x: current.x ?? 25,
     y: current.y ?? 25,
@@ -597,17 +597,17 @@ function PropskitPointPointControl({
     }),
     []
   );
-  const draggingRef = usePropskitSpatialEvents(
+  const draggingRef = useToolkitSpatialEvents(
     controlRef,
     name,
     mapDetail,
     onInputValue,
     onCommit
   );
-  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
 
   return (
-    <propskit-point-point
+    <toolkit-point-point
       ref={controlRef}
       label={def.label || name}
       {...(units ? { units } : {})}
@@ -616,7 +616,7 @@ function PropskitPointPointControl({
   );
 }
 
-function PropskitColorPointControl({
+function ToolkitColorPointControl({
   name,
   def,
   value,
@@ -666,28 +666,28 @@ function PropskitColorPointControl({
       color,
     };
   }, []);
-  const draggingRef = usePropskitSpatialEvents(
+  const draggingRef = useToolkitSpatialEvents(
     controlRef,
     name,
     mapDetail,
     onInputValue,
     onCommit
   );
-  useSyncPropskitValueAttr(controlRef, serialized, draggingRef);
+  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
 
-  // propskit-color-point's inner color control omits alpha; enable it so the
+  // toolkit-color-point's inner color control omits alpha; enable it so the
   // panel can show/edit opacity that canvas color handles emit.
   useLayoutEffect(() => {
     const host = controlRef.current;
     if (!host) return;
-    const color = host.querySelector?.("propskit-color");
+    const color = host.querySelector?.("toolkit-color");
     if (color && color.getAttribute("alpha") !== "true") {
       color.setAttribute("alpha", "true");
     }
   }, []);
 
   return (
-    <propskit-color-point
+    <toolkit-color-point
       ref={controlRef}
       label={def.label || name}
       dangerouslySetInnerHTML={opaqueContent}
@@ -714,7 +714,7 @@ function serializeGradient(stops) {
   });
 }
 
-function PropskitGradientControl({
+function ToolkitGradientControl({
   name,
   def,
   value,
@@ -730,7 +730,7 @@ function PropskitGradientControl({
     const control = gradientRef.current;
     if (!control) return;
     const readValue = (event) => {
-      let detail = readPropskitEventValue(event);
+      let detail = readToolkitEventValue(event);
       if (typeof detail === "string") {
         try {
           detail = JSON.parse(detail);
@@ -772,7 +772,7 @@ function PropskitGradientControl({
   }, [name, onCommit, onInputValue]);
 
   return (
-    <propskit-gradient
+    <toolkit-gradient
       ref={gradientRef}
       label={def.label || name}
       value={serialized}
@@ -815,7 +815,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     )}`;
     if (def.type === "number" && def.control === "slider") {
       return (
-        <PropskitSliderControl
+        <ToolkitSliderControl
           key={key}
           name={name}
           def={def}
@@ -850,7 +850,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "number" && def.control !== "slider") {
       return (
-        <PropskitNumberControl
+        <ToolkitNumberControl
           key={key}
           name={name}
           def={def}
@@ -861,7 +861,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "string") {
       return (
-        <PropskitTextControl
+        <ToolkitTextControl
           key={key}
           name={name}
           def={def}
@@ -872,7 +872,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "color") {
       return (
-        <PropskitColorControl
+        <ToolkitColorControl
           key={key}
           name={name}
           def={def}
@@ -883,7 +883,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "gradient") {
       return (
-        <PropskitGradientControl
+        <ToolkitGradientControl
           key={key}
           name={name}
           def={def}
@@ -895,7 +895,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "point") {
       return (
-        <PropskitPositionControl
+        <ToolkitPositionControl
           key={key}
           name={name}
           def={def}
@@ -907,7 +907,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "point-radius") {
       return (
-        <PropskitPointRadiusControl
+        <ToolkitPointRadiusControl
           key={key}
           name={name}
           def={def}
@@ -919,7 +919,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "point-angle-radius") {
       return (
-        <PropskitPointRadiusAngleControl
+        <ToolkitPointRadiusAngleControl
           key={key}
           name={name}
           def={def}
@@ -931,7 +931,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "point-point-line") {
       return (
-        <PropskitPointPointControl
+        <ToolkitPointPointControl
           key={key}
           name={name}
           def={def}
@@ -943,7 +943,7 @@ export default function Controls({ props, values, onChange, onInput }) {
     }
     if (def.type === "color-point") {
       return (
-        <PropskitColorPointControl
+        <ToolkitColorPointControl
           key={key}
           name={name}
           def={def}

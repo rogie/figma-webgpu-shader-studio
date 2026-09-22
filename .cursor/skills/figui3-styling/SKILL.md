@@ -3,7 +3,7 @@ name: figui3-styling
 description: >-
   Prefer FigUI3 component styling over custom CSS. Use whenever adding or
   editing CSS, class names, stylesheets, visual appearance, layout polish, or
-  fig-* / propskit-* UI. Agents must ask before adding custom styling for
+  fig-* / toolkit-* UI. Agents must ask before adding custom styling for
   FigUI3 components.
 ---
 
@@ -15,7 +15,7 @@ FigUI3 components already ship their visual design via `fig.css`, `fig-editor.cs
 
 Prefer documented attributes and tokens over new rules:
 
-- Attributes such as `variant`, `size`, `icon`, and other props on `fig-*` / `propskit-*`
+- Attributes such as `variant`, `size`, `icon`, and other props on `fig-*` / `toolkit-*`
 - Design tokens already in use: `--figma-color-*`, `--spacer-*`, `--body-*`, and component variables such as `--fig-chooser-grid-columns`
 - The matching FigUI3 tag instead of recreating its look with custom HTML/CSS
 
@@ -24,7 +24,7 @@ Prefer documented attributes and tokens over new rules:
 Stop and ask the user before doing any of the following:
 
 - Creating a new `.css` file
-- Adding rules that target `fig-*`, `propskit-*`, `::part`, or nested FigUI3 internals
+- Adding rules that target `fig-*`, `toolkit-*`, `tk-*`, `::part`, or nested component internals
 - Overriding color, type, padding, border, radius, hover, or focus on FigUI3 controls
 - Adding `class` / `className` whose only purpose is to restyle a FigUI3 component
 

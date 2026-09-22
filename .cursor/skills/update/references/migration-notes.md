@@ -455,6 +455,23 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
 - FigUI3 `.fig-overflow-fade` is unused; this app keeps its JS
   `overflow-fade` helper.
 
+## ToolKit rebrand (`d02b9d5c`)
+
+- The package is now `@rogieking/toolkit`, installed from
+  `github:rogie/propskit2#main` until it is published to npm.
+- There are no compatibility aliases: `propskit-*` hosts became `toolkit-*`,
+  package entrypoints became `toolkit.css` / `toolkit.js`, and public CSS/data
+  namespaces became `--tk-*` / `data-toolkit-*`.
+- App helper names, browser selectors, and persistence tests were renamed with
+  the public API so stale legacy names fail searches instead of lingering.
+- Existing per-control visual overrides were removed. ToolKit's unified
+  surfaces now own fill-row and wheel appearance; the preview toolbar keeps
+  layout spacing on its native wrapper only.
+- ToolKit also adds declarative roots/UI schemas, `toolkit-font`, modular
+  `tk-icon`, and Tool Studio. The shader editor retains its schema-driven
+  imperative control mapping because it already handles canvas projections,
+  coalesced input/commit events, and Figma shader property types.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

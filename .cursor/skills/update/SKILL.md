@@ -2,7 +2,7 @@
 name: update
 description: >-
   Update @rogieking/figui3 to the latest version, rebuild the Vite cache, review
-  FigUI3 release notes for breaking or new component APIs, and apply needed app
+  FigUI3 and ToolKit changes for breaking or new component APIs, and apply needed app
   integrations. Use when the user runs /update or asks to pull the latest figui3,
   refresh figui3, rebuild vite cache, or sync FigUI3 component changes.
 ---
@@ -28,11 +28,11 @@ Then follow **Review changelog & migrate** below. Finish with verification.
 Copy and track progress:
 
 ```
-- [ ] Record current @rogieking/figui3 and @rogieking/propskit2 versions
-- [ ] Install latest figui3 and propskit2 in app/
+- [ ] Record current @rogieking/figui3 version and @rogieking/toolkit revision
+- [ ] Install latest figui3 and ToolKit from rogie/propskit2 main in app/
 - [ ] Rebuild Vite cache (script does this)
 - [ ] Restart Vite in a background Shell session and confirm http://localhost:5173/ responds
-- [ ] Review FigUI3 and PropsKit2 changes since previous versions
+- [ ] Review FigUI3 and ToolKit changes since previous versions
 - [ ] Apply needed integrations in app/src
 - [ ] Run npm test && npm run build in app/
 - [ ] Summarize version jump + code changes for the user
@@ -49,7 +49,7 @@ Always run from repo root:
 The script:
 
 - installs `@rogieking/figui3@latest` in `app/`
-- installs latest `@rogieking/propskit2` from `github:rogie/propskit2#main`
+- installs `@rogieking/toolkit` from the latest `github:rogie/propskit2#main`
 - prints old → new versions
 - deletes `app/node_modules/.vite`
 
@@ -77,21 +77,21 @@ Or watch the background terminal log for `ready in`. Do not continue until `curl
 
 FigUI3 does not ship a separate CHANGELOG file. Derive changes from the version jump:
 
-1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/propskit2 --depth=0` in `app/`).
-2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and PropsKit2.
+1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/toolkit --depth=0` in `app/`).
+2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and ToolKit.
 3. Inspect the installed package docs:
    - `app/node_modules/@rogieking/figui3/README.md` — component APIs, attributes, events
    - `app/node_modules/@rogieking/figui3/fig-lab.js` / `fig-lab.css` — lab/chat/canvas components
    - `app/node_modules/@rogieking/figui3/fig-editor.js` — editor/fill-picker components
-   - `app/node_modules/@rogieking/propskit2/README.md` and `.cursor/skills/propskit2/` — `propskit-*` controls
+   - `app/node_modules/@rogieking/toolkit/README.md` and `.cursor/skills/toolkit/` — `toolkit-*` controls
 4. Search for newly relevant symbols:
 
 ```bash
-rg -n "propskit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
+rg -n "toolkit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
   app/node_modules/@rogieking/figui3/README.md \
   app/node_modules/@rogieking/figui3/fig-lab.js \
-  app/node_modules/@rogieking/propskit2/README.md \
-  app/node_modules/@rogieking/propskit2/skills/propskit2
+  app/node_modules/@rogieking/toolkit/README.md \
+  app/node_modules/@rogieking/toolkit/skills/toolkit
 ```
 
 5. Cross-check `app/src` for places still using raw FigUI3 primitives where a newer propskit or attachment wrapper exists.
@@ -101,18 +101,18 @@ rg -n "propskit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
 
 | Area | Preferred FigUI3 surface | Primary files |
 |------|--------------------------|---------------|
-| Properties panel scalars | `propskit-number`, `propskit-text`, `propskit-slider`, `propskit-switch`, `propskit-select`, `propskit-color` | `app/src/components/Controls.jsx` |
-| Properties panel gradients | `propskit-gradient` with `edit="picker"` | `app/src/components/Controls.jsx` |
-| Composition fill | `propskit-fill` + `fig-fill-picker` `mode-shader` slot | `app/src/components/CompositionEditor.jsx` |
+| Properties panel scalars | `toolkit-number`, `toolkit-text`, `toolkit-slider`, `toolkit-switch`, `toolkit-select`, `toolkit-color` | `app/src/components/Controls.jsx` |
+| Properties panel gradients | `toolkit-gradient` with `edit="picker"` | `app/src/components/Controls.jsx` |
+| Composition fill | `toolkit-fill` + `fig-fill-picker` `mode-shader` slot | `app/src/components/CompositionEditor.jsx` |
 | Chat composer attachments | `fig-attachments` + `fig-attachment` inside `fig-ai-prompt` | `app/src/components/ChatPane.jsx`, `app/src/chat.css` |
 | Canvas/on-canvas controls | `fig-canvas-control` | `app/src/components/CanvasControlsOverlay.jsx`, `app/lib/canvasControls.js` |
-| Account/settings fields | `fig-field`, `propskit-*`, `fig-input-text` | `app/src/components/AccountMenu.jsx` |
+| Account/settings fields | `fig-field`, `toolkit-*`, `fig-input-text` | `app/src/components/AccountMenu.jsx` |
 
 Follow existing React + FigUI3 conventions:
 
 - Use `dangerouslySetInnerHTML={opaqueContent}` (or `{ __html: "" }`) on custom elements whose light DOM React must not reconcile away.
 - Bind FigUI3 `input` / `change` via `addEventListener` in `useEffect`, not React `onInput`, when the component rewrites its internals.
-- For propskit sliders, avoid rewriting `value` from React while dragging; mirror `PropskitSliderControl` in `Controls.jsx`.
+- For ToolKit sliders, avoid rewriting `value` from React while dragging; mirror `ToolkitSliderControl` in `Controls.jsx`.
 
 See [`references/migration-notes.md`](references/migration-notes.md) for patterns discovered during prior upgrades.
 
@@ -132,7 +132,7 @@ Confirm `curl -sf http://localhost:5173/` succeeds and the dev server log shows 
 Tell the user:
 
 - previous and new figui3 versions
-- previous and new propskit2 versions
+- previous and new ToolKit revisions
 - whether any app code changed (list files)
 - anything noted in README/API that was **not** adopted yet
 - test/build result

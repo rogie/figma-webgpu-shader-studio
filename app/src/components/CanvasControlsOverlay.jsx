@@ -50,7 +50,7 @@ function CanvasControl({
 
     const handleInput = (event) => {
       draggingRef.current = true;
-      onInputValue?.(name, readDetail(event));
+      onInputValue?.(name, readDetail(event), { source: "canvas" });
     };
     const handleChange = (event) => {
       draggingRef.current = false;
@@ -90,6 +90,7 @@ function CanvasControl({
       ref={controlRef}
       type={type}
       name={canvasControlName(name, def)}
+      precision="3"
       snapping="modifier"
       drag-surface="parent"
       dangerouslySetInnerHTML={opaqueContent}

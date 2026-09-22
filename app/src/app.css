@@ -859,14 +859,6 @@ fig-header[borderless]:has(+ fig-header) {
         .play-controls-time {
           flex: 0 0 auto;
           width: 10rem;
-        }
-
-        .play-controls-time propskit-wheel {
-          --propskit-wheel-background: transparent;
-          --propskit-wheel-border: 0 solid transparent;
-          --propskit-wheel-hover-border: 0 solid transparent;
-          --propskit-wheel-padding-inline: 0px;
-          --figma-focus-outline: none;
           margin-block: calc(var(--spacer-2) * -1);
         }
       }

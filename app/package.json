@@ -37,8 +37,8 @@
     "@lezer/common": "^1.5.2",
     "@lezer/highlight": "^1.2.3",
     "@replit/codemirror-interact": "^6.3.1",
-    "@rogieking/figui3": "^9.0.8",
-    "@rogieking/propskit2": "github:rogie/propskit2#main",
+    "@rogieking/figui3": "^9.1.0",
+    "@rogieking/toolkit": "github:rogie/propskit2#main",
     "@supabase/supabase-js": "^2.110.7",
     "@uiw/codemirror-theme-xcode": "^4.25.2",
     "@uiw/react-codemirror": "^4.23.7",
@@ -50,7 +50,6 @@
     "react-dom": "^18.3.1",
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1",
-    "reset-css": "^5.0.2",
     "sucrase": "^3.35.0"
   },
   "devDependencies": {
@@ -59,5 +58,10 @@
     "@webgpu/types": "^0.1.52",
     "sharp": "^0.34.5",
     "vite": "^5.4.11"
+  },
+  "overrides": {
+    "@rogieking/toolkit": {
+      "@rogieking/figui3": "$@rogieking/figui3"
+    }
   }
 }

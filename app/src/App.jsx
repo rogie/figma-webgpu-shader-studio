@@ -7191,7 +7191,7 @@ export default function App() {
     [protectedPreview, setRuntimeValues]
   );
 
-  const previewControl = useCallback((name, value) => {
+  const previewControl = useCallback((name, value, { source } = {}) => {
     clearShaderVersionPreviewRef.current?.();
     hostRef.current?.setActive(true);
     valuesRef.current = { ...valuesRef.current, [name]: value };
@@ -7210,10 +7210,15 @@ export default function App() {
       } else {
         hostRef.current?.setParams(next);
       }
-      // Canvas handles read React `values`; keep them live while scrubbing
-      // spatial props from the panel (sliders stay ref-only to avoid hitch).
+      // Keep canvas handles live when scrubbing spatial props from the panel.
+      // On-canvas controls already update themselves while dragging, so avoid
+      // re-rendering the full app until their change event commits the value.
       const def = propsRef.current?.[name];
-      if (def && CANVAS_PROP_TYPES.has(def.type)) {
+      if (
+        source !== "canvas" &&
+        def &&
+        CANVAS_PROP_TYPES.has(def.type)
+      ) {
         setValues(next);
       }
       queuePresentState();

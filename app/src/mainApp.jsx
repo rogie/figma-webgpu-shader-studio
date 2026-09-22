@@ -4,12 +4,11 @@ import App from "./App.jsx";
 import FigmaOAuthCallback from "./components/FigmaOAuthCallback.jsx";
 import { AuthProvider } from "./contexts/AuthContext.jsx";
 import { isFigmaOAuthCallback } from "./services/figmaShaders.js";
-import "reset-css";
 import "@rogieking/figui3/fig.css";
 import "@rogieking/figui3/fig-editor.css";
 import "@rogieking/figui3/fig-lab.css";
-import "@rogieking/propskit2/propskit.css";
-import "@rogieking/propskit2/propskit.js";
+import "@rogieking/toolkit/toolkit.css";
+import "@rogieking/toolkit/toolkit.js";
 import { installCanvasHandlePopupGuard } from "./lib/canvasHandlePopupGuard.js";
 import "./app.css";
 

@@ -12,7 +12,7 @@ const MOCK_ATTACHMENTS = [
 ];
 
 /**
- * Mirrors FigUI3 /propskit/lab "AI composer" patterns from 8.5.0.
+ * Mirrors FigUI3 Lab "AI composer" patterns from 8.5.0.
  *
  * Lab layout:
  *   [optional fig-ai-context]  ← attachments, status shimmer, or action-needed
@@ -303,7 +303,7 @@ export default function ChatComposerPlayground() {
         <div>
           <h1>fig-ai-context (FigUI3 8.5.0 lab)</h1>
           <p>
-            Official /propskit/lab AI composer patterns: attachments, status, and
+            Official FigUI3 Lab AI composer patterns: attachments, status, and
             action-needed rows sit in a sibling fig-ai-context above
             fig-ai-prompt. The prompt itself only holds the textarea and footer.
           </p>

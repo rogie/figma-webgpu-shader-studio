@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { readPropskitSliderNumber } from "./controls/controlValues.js";
+import { readToolkitSliderNumber } from "./controls/controlValues.js";
 
 const opaqueContent = { __html: "" };
 const TIME_PRECISION = 1;
@@ -11,7 +11,7 @@ function secondsFromHost(host) {
 
 function hasWheelDragState(wheel) {
   return (
-    wheel.hasAttribute("data-propskit-wheel-elastic-dragging") ||
+    wheel.hasAttribute("data-toolkit-wheel-elastic-dragging") ||
     wheel.hasAttribute("data-number-scrubbing")
   );
 }
@@ -26,7 +26,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
 
   const applyValue = useCallback(
     (event) => {
-      const next = readPropskitSliderNumber(event);
+      const next = readToolkitSliderNumber(event);
       if (!Number.isFinite(next)) return;
       hostRef.current?.seek?.(Math.max(0, next) * 1000, {
         present: "frame",
@@ -137,7 +137,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
         </fig-button>
       </fig-tooltip>
       <div className="play-controls-time">
-        <propskit-wheel
+        <toolkit-wheel
           ref={wheelRef}
           label=""
           units="seconds"
