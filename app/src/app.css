@@ -240,7 +240,6 @@ fig-header[borderless]:has(+ fig-header) {
 
     fig-header.app-nav-library-search {
       .app-nav-search {
-        flex: 1 1 auto;
         width: 100%;
         min-width: 0;
         max-width: none;
@@ -857,6 +856,8 @@ fig-header[borderless]:has(+ fig-header) {
         }
 
         .play-controls-time {
+          --tk-control-bg-color: transparent;
+
           flex: 0 0 auto;
           width: 10rem;
           margin-block: calc(var(--spacer-2) * -1);

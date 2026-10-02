@@ -472,6 +472,22 @@ Value shapes align with `fig-canvas-control` / `canvasControls.js` (percent coor
   imperative control mapping because it already handles canvas projections,
   coalesced input/commit events, and Figma shader property types.
 
+## 9.4.5 + ToolKit `f3ce6d36` notes
+
+- FigUI3 9.4.5 keeps avatar images in normal layout, fixing image avatars that
+  escaped the scrolling home-page chooser. No app-level avatar CSS workaround
+  is needed.
+- FigUI3 adds `fig-stack`, `fig-property-button`, `fig-toolbelt`,
+  `fig-input-audio`, targeted `fig-reorder items`, and expanded `fig-group`
+  behavior. Existing `hstack` aliases and current reorder/group integrations
+  remain compatible, so they are not migrated in this update.
+- ToolKit adds `toolkit-modulator` and `toolkit-motion-preview`. They are not
+  adopted because the Figma shader property schema has no corresponding
+  property types.
+- ToolKit restores natural select trigger spacing and renames its internal
+  surface recipe class. Existing public `toolkit-*` markup and `--tk-*` tokens
+  remain compatible.
+
 ## Vite cache
 
 After any figui3 version bump, clear stale prebundles:

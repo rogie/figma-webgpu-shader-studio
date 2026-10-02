@@ -75,11 +75,10 @@ Or watch the background terminal log for `ready in`. Do not continue until `curl
 
 ## 2. Review changelog & migrate
 
-FigUI3 does not ship a separate CHANGELOG file. Derive changes from the version jump:
-
 1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/toolkit --depth=0` in `app/`).
 2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and ToolKit.
 3. Inspect the installed package docs:
+   - `app/node_modules/@rogieking/figui3/CHANGELOG.md` — release changes
    - `app/node_modules/@rogieking/figui3/README.md` — component APIs, attributes, events
    - `app/node_modules/@rogieking/figui3/fig-lab.js` / `fig-lab.css` — lab/chat/canvas components
    - `app/node_modules/@rogieking/figui3/fig-editor.js` — editor/fill-picker components
