@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  figmaPlansFromWhoamiPayload,
   getShaderToolArguments,
   listShaderToolArguments,
   SHADER_GET_TOOL,
@@ -51,4 +52,16 @@ test("edge update uses the current staging MCP files contract", () => {
     commitMessage: "Update effect",
   });
   assert.equal("mainTs" in args, false);
+});
+
+test("edge reads plans from current and legacy whoami payloads", () => {
+  const plans = [{
+    key: "team::123",
+    name: "Shader team",
+    seat: "Full",
+  }];
+
+  assert.deepEqual(figmaPlansFromWhoamiPayload({ whoami: { plans } }), plans);
+  assert.deepEqual(figmaPlansFromWhoamiPayload({ plans }), plans);
+  assert.deepEqual(figmaPlansFromWhoamiPayload({ whoami: {} }), []);
 });

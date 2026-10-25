@@ -12,618 +12,720 @@ import {
 } from "../lib/canvasControls.js";
 import {
   formatSelectOptions,
+  readColorControlValue,
+  readControlEventValue,
+  readGradientControlValue,
   readNumber,
-  readToolkitEventValue,
-  readToolkitSliderNumber,
+  readPointControlValue,
+  serializeGradientValue,
   sliderTypeForProperty,
 } from "./controls/controlValues.js";
 import { useCoalescedPropertyCallback } from "./controls/useCoalescedPropertyCallback.js";
 
-// FigUI3 controls generate their implementation in light DOM. Marking that
-// content as opaque prevents React from deleting it on subsequent renders.
+// FigUI3 leaf controls render implementation nodes in their light DOM. Marking
+// that content as opaque keeps React from reconciling those generated nodes.
 const opaqueContent = { __html: "" };
 
-function NumberControl({ def, value, onChange }) {
-  const current = value ?? def.defaultValue ?? 0;
+function PropertyRow({ label, children }) {
   return (
-    <fig-input-number
-      value={current}
-      min={def.min}
-      max={def.max}
-      step={def.step ?? 0.01}
-      units={def.unit || ""}
-      onInput={(event) => onChange(readNumber(event))}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <fig-property>
+      <label slot="label">{label}</label>
+      {children}
+    </fig-property>
   );
 }
 
-function ToolkitNumberControl({ name, def, value, onChange }) {
-  const numberRef = useRef(null);
+function useControlEvents(ref, readValue, onInputValue, onCommit) {
+  const readRef = useRef(readValue);
+  const inputRef = useRef(onInputValue);
+  const commitRef = useRef(onCommit);
+  const interactingRef = useRef(false);
 
-  useEffect(() => {
-    const control = numberRef.current;
-    if (!control) return;
-    const handleValue = (event) => {
-      const next = readNumber(event);
-      if (Number.isFinite(next)) onChange(name, next);
-    };
-    control.addEventListener("input", handleValue);
-    control.addEventListener("change", handleValue);
-    return () => {
-      control.removeEventListener("input", handleValue);
-      control.removeEventListener("change", handleValue);
-    };
-  }, [name, onChange]);
-
-  return (
-    <toolkit-number
-      ref={numberRef}
-      label={def.label || name}
-      value={value ?? def.defaultValue ?? 0}
-      default={def.defaultValue ?? 0}
-      min={def.min}
-      max={def.max}
-      step={def.step ?? 0.01}
-      units={def.unit || ""}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function ToolkitTextControl({ name, def, value, onChange }) {
-  const textRef = useRef(null);
-
-  useEffect(() => {
-    const control = textRef.current;
-    if (!control) return;
-    const handleValue = (event) => {
-      const next = readToolkitEventValue(event);
-      onChange(name, String(next ?? ""));
-    };
-    control.addEventListener("input", handleValue);
-    control.addEventListener("change", handleValue);
-    return () => {
-      control.removeEventListener("input", handleValue);
-      control.removeEventListener("change", handleValue);
-    };
-  }, [name, onChange]);
-
-  return (
-    <toolkit-text
-      ref={textRef}
-      label={def.label || name}
-      value={value ?? def.defaultValue ?? ""}
-      default={def.defaultValue ?? ""}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function ToolkitSliderControl({ name, def, value, onInputValue, onCommit }) {
-  const sliderRef = useRef(null);
-  const draggingRef = useRef(false);
-  const latestValue = value ?? def.defaultValue ?? 0;
-  const min = def.min ?? 0;
-  const max = def.max ?? 1;
-  const step = def.step ?? 0.01;
-  const sliderType = sliderTypeForProperty(name, min, max, step);
-  const units = sliderType === "opacity" ? "%" : def.unit || "";
-
-  useEffect(() => {
-    const slider = sliderRef.current;
-    if (!slider) return;
-    const readNext = (event) => {
-      const next = readToolkitSliderNumber(event);
-      return Number.isFinite(next) ? next : null;
-    };
-    const handleInput = (event) => {
-      draggingRef.current = true;
-      const next = readNext(event);
-      if (next != null) onInputValue(name, next);
-    };
-    const handleChange = (event) => {
-      draggingRef.current = false;
-      const next = readNext(event);
-      if (next != null) onCommit(name, next);
-    };
-    const endDrag = () => {
-      draggingRef.current = false;
-    };
-    slider.addEventListener("input", handleInput);
-    slider.addEventListener("change", handleChange);
-    slider.addEventListener("pointerup", endDrag);
-    slider.addEventListener("pointercancel", endDrag);
-    return () => {
-      slider.removeEventListener("input", handleInput);
-      slider.removeEventListener("change", handleChange);
-      slider.removeEventListener("pointerup", endDrag);
-      slider.removeEventListener("pointercancel", endDrag);
-    };
-  }, [name, onCommit, onInputValue]);
-
-  // Keep `value` off the React props path. Rewriting the attribute from React
-  // while scrubbing re-enters ToolKit's attr sync / fig-slider value path.
   useLayoutEffect(() => {
-    const slider = sliderRef.current;
-    if (!slider || draggingRef.current) return;
-    if (slider.matches(":focus-within")) return;
-    if (slider.hasAttribute("data-elastic-dragging")) return;
-    if (slider.hasAttribute("data-number-scrubbing")) return;
-    const current = Number(slider.getAttribute("value"));
-    if (Number.isFinite(current) && current === Number(latestValue)) return;
-    const next = String(latestValue);
-    if (slider.getAttribute("value") === next) return;
-    slider.setAttribute("value", next);
-  }, [latestValue]);
-
-  return (
-    <toolkit-slider
-      ref={sliderRef}
-      label={def.label || name}
-      default={def.defaultValue}
-      min={min}
-      max={max}
-      step={step}
-      units={units}
-      text="true"
-      {...(sliderType ? { type: sliderType } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function SwitchControl({ name, def, value, onChange }) {
-  const switchRef = useRef(null);
-  const checked = Boolean(value ?? def.defaultValue ?? false);
-
-  useEffect(() => {
-    const control = switchRef.current;
-    if (!control) return;
-    const handleValue = (event) => {
-      const next = readToolkitEventValue(event) ?? control.checked;
-      onChange(name, Boolean(next));
-    };
-    control.addEventListener("input", handleValue);
-    control.addEventListener("change", handleValue);
-    return () => {
-      control.removeEventListener("input", handleValue);
-      control.removeEventListener("change", handleValue);
-    };
-  }, [name, onChange]);
-
-  const defaultChecked = Boolean(def.defaultValue);
-  return (
-    <toolkit-switch
-      ref={switchRef}
-      label={def.label || name}
-      {...(checked ? { checked: "" } : {})}
-      {...(defaultChecked ? { default: "" } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function SelectControl({ name, def, value, onChange, onPreview }) {
-  const selectRef = useRef(null);
-  const selectedValueRef = useRef(null);
-  const hoveredValueRef = useRef(null);
-  const options = def.options || [];
-  const numeric = options.length > 0 && typeof options[0].value === "number";
-  const current = value ?? def.defaultValue;
-  selectedValueRef.current = current;
-
-  useEffect(() => {
-    const select = selectRef.current;
-    if (!select) return;
-    const innerSelect = select.querySelector("fig-select");
-    if (!innerSelect) return;
-
-    const readValue = (raw) => (numeric ? Number(raw) : raw);
-    const restoreSelected = () => {
-      if (hoveredValueRef.current == null) return;
-      hoveredValueRef.current = null;
-      onPreview(name, selectedValueRef.current);
-    };
-    const handleValue = (event) => {
-      const raw = readToolkitEventValue(event);
-      const next = readValue(raw);
-      selectedValueRef.current = next;
-      hoveredValueRef.current = null;
-      onChange(name, next);
-    };
-    const handleOptionHover = (event) => {
-      const next = readValue(readToolkitEventValue(event));
-      if (Object.is(hoveredValueRef.current, next)) return;
-      hoveredValueRef.current = next;
-      onPreview(name, next);
-    };
-    select.addEventListener("input", handleValue);
-    select.addEventListener("change", handleValue);
-    select.addEventListener("optionhover", handleOptionHover);
-
-    const openObserver = new MutationObserver(() => {
-      if (!innerSelect?.open) restoreSelected();
-    });
-    openObserver.observe(innerSelect, {
-      attributes: true,
-      attributeFilter: ["open"],
-    });
-
-    return () => {
-      select.removeEventListener("input", handleValue);
-      select.removeEventListener("change", handleValue);
-      select.removeEventListener("optionhover", handleOptionHover);
-      openObserver.disconnect();
-    };
-  }, [name, numeric, onChange, onPreview]);
-
-  const defaultValue =
-    def.defaultValue == null ? "" : String(def.defaultValue);
-  return (
-    <toolkit-select
-      ref={selectRef}
-      label={def.label || name}
-      value={current == null ? "" : String(current)}
-      default={defaultValue}
-      options={formatSelectOptions(options)}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function readToolkitColorEvent(event, host) {
-  const detail = readToolkitEventValue(event);
-  if (typeof detail === "string" && detail.trim()) {
-    return hexToColor(detail);
-  }
-  if (detail && typeof detail === "object") {
-    const hex =
-      typeof detail.color === "string"
-        ? detail.color
-        : typeof detail.value === "string"
-          ? detail.value
-          : typeof detail.hex === "string"
-            ? detail.hex
-            : "";
-    if (hex) {
-      const color = hexToColor(hex);
-      if (Number.isFinite(Number(detail.alpha))) {
-        color.a = Math.max(0, Math.min(1, Number(detail.alpha)));
-      } else if (Number.isFinite(Number(detail.opacity))) {
-        color.a = Math.max(0, Math.min(100, Number(detail.opacity))) / 100;
-      }
-      return color;
-    }
-  }
-  const raw = host?.getAttribute?.("value");
-  return raw ? hexToColor(raw) : null;
-}
-
-function ToolkitColorControl({ name, def, value, onChange }) {
-  const colorRef = useRef(null);
-  const current =
-    value || def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
-
-  useEffect(() => {
-    const control = colorRef.current;
-    if (!control) return;
-    const handleValue = (event) => {
-      const next = readToolkitColorEvent(event, control);
-      if (!next) return;
-      onChange(name, next);
-    };
-    control.addEventListener("input", handleValue);
-    control.addEventListener("change", handleValue);
-    return () => {
-      control.removeEventListener("input", handleValue);
-      control.removeEventListener("change", handleValue);
-    };
-  }, [name, onChange]);
-
-  const defaultColor =
-    def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
-  return (
-    <toolkit-color
-      ref={colorRef}
-      label={def.label || name}
-      value={colorToHex(current)}
-      default={colorToHex(defaultColor)}
-      alpha="true"
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function toolkitPositionUnits(def) {
-  const unit = def?.positionUnit || def?.unit || "%";
-  return unit === "%" || unit === "percent" ? "percent" : undefined;
-}
-
-function toolkitRadiusUnits(def) {
-  const unit = def?.radiusUnit || def?.positionUnit || def?.unit || "%";
-  return unit === "%" || unit === "percent" ? "percent" : undefined;
-}
-
-function serializeToolkitRadius(radius, percentUnits) {
-  const number = Number(radius ?? 0);
-  return percentUnits ? `${number}%` : number;
-}
-
-function parseToolkitRadius(raw) {
-  if (typeof raw === "string" && raw.trim().endsWith("%")) {
-    return Number.parseFloat(raw);
-  }
-  return Number(raw ?? 0);
-}
-
-function readToolkitDetail(event) {
-  const detail = readToolkitEventValue(event);
-  if (typeof detail === "string") {
-    try {
-      return JSON.parse(detail);
-    } catch {
-      return null;
-    }
-  }
-  return detail && typeof detail === "object" ? detail : null;
-}
-
-function useToolkitSpatialEvents(ref, name, mapDetail, onInputValue, onCommit) {
-  const mapDetailRef = useRef(mapDetail);
-  const onInputRef = useRef(onInputValue);
-  const onCommitRef = useRef(onCommit);
-  const draggingRef = useRef(false);
-  useLayoutEffect(() => {
-    mapDetailRef.current = mapDetail;
-    onInputRef.current = onInputValue;
-    onCommitRef.current = onCommit;
-  }, [mapDetail, onCommit, onInputValue]);
+    readRef.current = readValue;
+    inputRef.current = onInputValue;
+    commitRef.current = onCommit;
+  }, [onCommit, onInputValue, readValue]);
 
   useEffect(() => {
     const control = ref.current;
-    if (!control) return;
+    if (!control) return undefined;
+
     const handleInput = (event) => {
-      draggingRef.current = true;
-      const detail = readToolkitDetail(event);
-      const next = detail ? mapDetailRef.current(detail) : null;
-      if (next) onInputRef.current(name, next);
+      const next = readRef.current(event, control);
+      if (next == null) return;
+      interactingRef.current = true;
+      inputRef.current?.(next);
     };
     const handleChange = (event) => {
-      draggingRef.current = false;
-      const detail = readToolkitDetail(event);
-      const next = detail ? mapDetailRef.current(detail) : null;
-      if (next) onCommitRef.current(name, next);
+      const next = readRef.current(event, control);
+      interactingRef.current = false;
+      if (next == null) return;
+      commitRef.current?.(next);
     };
-    const endDrag = () => {
-      draggingRef.current = false;
+    const handleInteractionEnd = () => {
+      interactingRef.current = false;
     };
+
     control.addEventListener("input", handleInput);
     control.addEventListener("change", handleChange);
-    control.addEventListener("pointerup", endDrag);
-    control.addEventListener("pointercancel", endDrag);
+    control.addEventListener("pointercancel", handleInteractionEnd);
+    control.addEventListener("focusout", handleInteractionEnd);
     return () => {
       control.removeEventListener("input", handleInput);
       control.removeEventListener("change", handleChange);
-      control.removeEventListener("pointerup", endDrag);
-      control.removeEventListener("pointercancel", endDrag);
+      control.removeEventListener("pointercancel", handleInteractionEnd);
+      control.removeEventListener("focusout", handleInteractionEnd);
     };
-  }, [name, ref]);
+  }, [ref]);
 
-  return draggingRef;
+  return interactingRef;
 }
 
-/** Avoid rewriting attrs while the control is being scrubbed (same as slider). */
-function useSyncToolkitValueAttr(ref, serialized, draggingRef) {
+function useSyncedAttribute(ref, name, value, interactingRef) {
   useLayoutEffect(() => {
     const control = ref.current;
-    if (!control || draggingRef.current) return;
+    if (!control || interactingRef?.current) return;
     if (control.matches(":focus-within")) return;
-    if (control.getAttribute("value") === serialized) return;
-    control.setAttribute("value", serialized);
-  }, [draggingRef, ref, serialized]);
+    if (value == null) {
+      if (control.hasAttribute(name)) control.removeAttribute(name);
+      return;
+    }
+    const next = String(value);
+    if (control.getAttribute(name) !== next) {
+      control.setAttribute(name, next);
+    }
+  }, [interactingRef, name, ref, value]);
 }
 
-function useSyncToolkitPositionAttrs(ref, x, y, draggingRef) {
+function useSyncedBooleanAttribute(ref, name, enabled, interactingRef) {
   useLayoutEffect(() => {
     const control = ref.current;
-    if (!control || draggingRef.current) return;
-    if (control.matches(":focus-within")) return;
-    const nextX = String(x);
-    const nextY = String(y);
-    if (control.getAttribute("x") !== nextX) control.setAttribute("x", nextX);
-    if (control.getAttribute("y") !== nextY) control.setAttribute("y", nextY);
-  }, [draggingRef, ref, x, y]);
+    if (!control || interactingRef?.current) return;
+    control.toggleAttribute(name, Boolean(enabled));
+  }, [enabled, interactingRef, name, ref]);
 }
 
-function ToolkitPositionControl({ name, def, value, onInputValue, onCommit }) {
+function NumberProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current = value ?? def.defaultValue ?? 0;
+  const readValue = useCallback((event) => {
+    const next = readNumber(event);
+    return Number.isFinite(next) ? next : null;
+  }, []);
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(controlRef, "value", current, interactingRef);
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-input-number
+        ref={controlRef}
+        slot="input"
+        min={def.min}
+        max={def.max}
+        step={def.step ?? 0.01}
+        units={def.unit || ""}
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function TextProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current = value ?? def.defaultValue ?? "";
+  const readValue = useCallback(
+    (event) => String(readControlEventValue(event) ?? ""),
+    [],
+  );
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(controlRef, "value", current, interactingRef);
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-input-text
+        ref={controlRef}
+        slot="input"
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function SliderProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current = value ?? def.defaultValue ?? 0;
+  const min = def.min ?? 0;
+  const max = def.max ?? 1;
+  const step = def.step ?? 0.01;
+  const type = sliderTypeForProperty(name, min, max, step);
+  const units = type === "opacity" ? "%" : def.unit || "";
+  const readValue = useCallback((event) => {
+    const next = Number(readControlEventValue(event));
+    return Number.isFinite(next) ? next : null;
+  }, []);
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(controlRef, "value", current, interactingRef);
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-slider
+        ref={controlRef}
+        slot="input"
+        default={def.defaultValue}
+        min={min}
+        max={max}
+        step={step}
+        units={units}
+        text="true"
+        full=""
+        {...(type ? { type } : {})}
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function SwitchProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const checked = Boolean(value ?? def.defaultValue ?? false);
+  const readValue = useCallback(
+    (_event, control) => Boolean(control.checked),
+    [],
+  );
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedBooleanAttribute(
+    controlRef,
+    "checked",
+    checked,
+    interactingRef,
+  );
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-switch
+        ref={controlRef}
+        slot="input"
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function SelectProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const selectedValueRef = useRef(value ?? def.defaultValue);
+  const previewedRef = useRef(false);
+  const options = def.options || [];
+  const numeric = options.length > 0 && typeof options[0].value === "number";
+  const current = value ?? def.defaultValue;
+
+  useLayoutEffect(() => {
+    selectedValueRef.current = current;
+  }, [current]);
+  useSyncedAttribute(
+    controlRef,
+    "value",
+    current == null ? "" : String(current),
+  );
+
+  useEffect(() => {
+    const control = controlRef.current;
+    if (!control) return undefined;
+    const parseValue = (raw) => (numeric ? Number(raw) : raw);
+    const restorePreview = () => {
+      if (!previewedRef.current) return;
+      previewedRef.current = false;
+      onInputValue(name, selectedValueRef.current);
+    };
+    const handleChange = (event) => {
+      const next = parseValue(readControlEventValue(event));
+      selectedValueRef.current = next;
+      previewedRef.current = false;
+      onCommit(name, next);
+    };
+    const handlePreview = (event) => {
+      const next = parseValue(readControlEventValue(event));
+      previewedRef.current = true;
+      onInputValue(name, next);
+    };
+    const observer = new MutationObserver(() => {
+      if (!control.hasAttribute("open")) restorePreview();
+    });
+
+    control.addEventListener("change", handleChange);
+    control.addEventListener("optionhover", handlePreview);
+    control.addEventListener("optionfocus", handlePreview);
+    observer.observe(control, {
+      attributes: true,
+      attributeFilter: ["open"],
+    });
+    return () => {
+      control.removeEventListener("change", handleChange);
+      control.removeEventListener("optionhover", handlePreview);
+      control.removeEventListener("optionfocus", handlePreview);
+      observer.disconnect();
+    };
+  }, [name, numeric, onCommit, onInputValue]);
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-select
+        ref={controlRef}
+        slot="input"
+        options={formatSelectOptions(options)}
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function ColorProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const current =
+    value || def.defaultValue || { r: 0, g: 0, b: 0, a: 1 };
+  const readValue = useCallback((event, control) => {
+    const parsed = readColorControlValue(
+      event,
+      control.getAttribute("value") || "",
+    );
+    if (!parsed) return null;
+    const color = hexToColor(parsed.color);
+    if (parsed.alpha != null) color.a = parsed.alpha;
+    return color;
+  }, []);
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(
+    controlRef,
+    "value",
+    colorToHex(current),
+    interactingRef,
+  );
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-input-color
+        ref={controlRef}
+        slot="input"
+        text="true"
+        alpha="true"
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function GradientProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const controlRef = useRef(null);
+  const stops = value?.stops || def.defaultValue?.stops || [];
+  const serialized = serializeGradientValue(stops);
+  const readValue = useCallback(readGradientControlValue, []);
+  const interactingRef = useControlEvents(
+    controlRef,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(controlRef, "value", serialized, interactingRef);
+
+  return (
+    <PropertyRow label={def.label || name}>
+      <fig-input-gradient
+        ref={controlRef}
+        slot="input"
+        edit="picker"
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
+  );
+}
+
+function positionUnits(def) {
+  return def.positionUnit || def.unit || "%";
+}
+
+function radiusUnits(def) {
+  return def.radiusUnit || def.positionUnit || def.unit || "%";
+}
+
+function usePointEvents(
+  ref,
+  name,
+  currentRef,
+  onInputValue,
+  onCommit,
+  merge,
+) {
+  const readValue = useCallback(
+    (event) => merge(readPointControlValue(event, currentRef.current)),
+    [currentRef, merge],
+  );
+  return useControlEvents(
+    ref,
+    readValue,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+}
+
+function PointProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
   const controlRef = useRef(null);
   const current = value || def.defaultValue || { x: 50, y: 50 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const defaults = def.defaultValue || { x: 50, y: 50 };
-  const units = toolkitPositionUnits(def);
-  const mapDetail = useCallback(
-    (detail) => ({
-      x: Number(detail.x ?? currentRef.current.x ?? 50),
-      y: Number(detail.y ?? currentRef.current.y ?? 50),
-    }),
-    []
-  );
-  const draggingRef = useToolkitSpatialEvents(
+  const merge = useCallback((point) => point, []);
+  const interactingRef = usePointEvents(
     controlRef,
     name,
-    mapDetail,
+    currentRef,
     onInputValue,
-    onCommit
+    onCommit,
+    merge,
   );
-  useSyncToolkitPositionAttrs(
-    controlRef,
-    current.x ?? 50,
-    current.y ?? 50,
-    draggingRef
-  );
+  useSyncedAttribute(controlRef, "x", current.x ?? 50, interactingRef);
+  useSyncedAttribute(controlRef, "y", current.y ?? 50, interactingRef);
 
   return (
-    <toolkit-position
-      ref={controlRef}
-      label={def.label || name}
-      default={JSON.stringify({
-        x: defaults.x ?? 50,
-        y: defaults.y ?? 50,
-      })}
-      {...(units ? { units } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <PropertyRow label={def.label || name}>
+      <fig-input-point
+        ref={controlRef}
+        slot="input"
+        units={positionUnits(def)}
+        full=""
+        dangerouslySetInnerHTML={opaqueContent}
+      />
+    </PropertyRow>
   );
 }
 
-function ToolkitPointRadiusControl({
+function PointRadiusProperty({
   name,
   def,
   value,
   onInputValue,
   onCommit,
 }) {
-  const controlRef = useRef(null);
-  const current = value || def.defaultValue || { x: 50, y: 50, radius: 0 };
-  const currentRef = useRef(current);
-  currentRef.current = current;
-  const units = toolkitRadiusUnits(def);
-  const serialized = JSON.stringify({
-    x: current.x ?? 50,
-    y: current.y ?? 50,
-    radius: serializeToolkitRadius(current.radius, units === "percent"),
-  });
-  const mapDetail = useCallback(
-    (detail) => ({
-      x: Number(detail.x ?? currentRef.current.x ?? 50),
-      y: Number(detail.y ?? currentRef.current.y ?? 50),
-      radius: parseToolkitRadius(detail.radius ?? currentRef.current.radius),
-    }),
-    []
-  );
-  const draggingRef = useToolkitSpatialEvents(
-    controlRef,
-    name,
-    mapDetail,
-    onInputValue,
-    onCommit
-  );
-  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
-
-  return (
-    <toolkit-point-radius
-      ref={controlRef}
-      label={def.label || name}
-      {...(units ? { units } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
-  );
-}
-
-function ToolkitPointRadiusAngleControl({
-  name,
-  def,
-  value,
-  onInputValue,
-  onCommit,
-}) {
-  const controlRef = useRef(null);
+  const pointRef = useRef(null);
+  const radiusRef = useRef(null);
   const current =
-    value || def.defaultValue || { x: 50, y: 50, radius: 0, angle: 0 };
+    value || def.defaultValue || { x: 50, y: 50, radius: 0 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const units = toolkitRadiusUnits(def);
-  const serialized = JSON.stringify({
-    x: current.x ?? 50,
-    y: current.y ?? 50,
-    radius: serializeToolkitRadius(current.radius, units === "percent"),
-    angle: current.angle ?? 0,
-  });
-  const mapDetail = useCallback(
-    (detail) => ({
-      x: Number(detail.x ?? currentRef.current.x ?? 50),
-      y: Number(detail.y ?? currentRef.current.y ?? 50),
-      radius: parseToolkitRadius(detail.radius ?? currentRef.current.radius),
-      angle: Number(detail.angle ?? currentRef.current.angle ?? 0),
-    }),
-    []
+  const mergePoint = useCallback(
+    (point) => ({ ...currentRef.current, ...point }),
+    [],
   );
-  const draggingRef = useToolkitSpatialEvents(
-    controlRef,
+  const pointInteractingRef = usePointEvents(
+    pointRef,
     name,
-    mapDetail,
+    currentRef,
     onInputValue,
-    onCommit
+    onCommit,
+    mergePoint,
   );
-  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
+  const readRadius = useCallback((event) => {
+    const radius = readNumber(event);
+    return Number.isFinite(radius)
+      ? { ...currentRef.current, radius }
+      : null;
+  }, []);
+  const radiusInteractingRef = useControlEvents(
+    radiusRef,
+    readRadius,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(pointRef, "x", current.x ?? 50, pointInteractingRef);
+  useSyncedAttribute(pointRef, "y", current.y ?? 50, pointInteractingRef);
+  useSyncedAttribute(
+    radiusRef,
+    "value",
+    current.radius ?? 0,
+    radiusInteractingRef,
+  );
 
+  const label = def.label || name;
   return (
-    <toolkit-point-radius-angle
-      ref={controlRef}
-      label={def.label || name}
-      {...(units ? { units } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <PropertyRow label={label}>
+      <fig-stack slot="input" direction="vertical" full="">
+        <fig-input-point
+          ref={pointRef}
+          aria-label={`${label} position`}
+          units={positionUnits(def)}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+        <fig-input-number
+          ref={radiusRef}
+          aria-label={`${label} radius`}
+          min="0"
+          step={def.radiusStep ?? def.step ?? 0.01}
+          units={radiusUnits(def)}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-stack>
+    </PropertyRow>
   );
 }
 
-function ToolkitPointPointControl({
+function PointRadiusAngleProperty({
   name,
   def,
   value,
   onInputValue,
   onCommit,
 }) {
-  const controlRef = useRef(null);
+  const pointRef = useRef(null);
+  const radiusRef = useRef(null);
+  const angleRef = useRef(null);
+  const current =
+    value ||
+    def.defaultValue || { x: 50, y: 50, radius: 0, angle: 0 };
+  const currentRef = useRef(current);
+  currentRef.current = current;
+  const mergePoint = useCallback(
+    (point) => ({ ...currentRef.current, ...point }),
+    [],
+  );
+  const pointInteractingRef = usePointEvents(
+    pointRef,
+    name,
+    currentRef,
+    onInputValue,
+    onCommit,
+    mergePoint,
+  );
+  const readRadius = useCallback((event) => {
+    const radius = readNumber(event);
+    return Number.isFinite(radius)
+      ? { ...currentRef.current, radius }
+      : null;
+  }, []);
+  const readAngle = useCallback((event) => {
+    const angle = Number(readControlEventValue(event));
+    return Number.isFinite(angle)
+      ? { ...currentRef.current, angle }
+      : null;
+  }, []);
+  const radiusInteractingRef = useControlEvents(
+    radiusRef,
+    readRadius,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  const angleInteractingRef = useControlEvents(
+    angleRef,
+    readAngle,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(pointRef, "x", current.x ?? 50, pointInteractingRef);
+  useSyncedAttribute(pointRef, "y", current.y ?? 50, pointInteractingRef);
+  useSyncedAttribute(
+    radiusRef,
+    "value",
+    current.radius ?? 0,
+    radiusInteractingRef,
+  );
+  useSyncedAttribute(
+    angleRef,
+    "value",
+    current.angle ?? 0,
+    angleInteractingRef,
+  );
+
+  const label = def.label || name;
+  return (
+    <PropertyRow label={label}>
+      <fig-stack slot="input" direction="vertical" full="">
+        <fig-input-point
+          ref={pointRef}
+          aria-label={`${label} position`}
+          units={positionUnits(def)}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+        <fig-input-number
+          ref={radiusRef}
+          aria-label={`${label} radius`}
+          min="0"
+          step={def.radiusStep ?? def.step ?? 0.01}
+          units={radiusUnits(def)}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+        <fig-angle
+          ref={angleRef}
+          aria-label={`${label} angle`}
+          default={def.defaultValue?.angle ?? 0}
+          step={def.angleStep ?? 1}
+          units={def.angleUnit || "deg"}
+          dial="false"
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-stack>
+    </PropertyRow>
+  );
+}
+
+function PointPointProperty({
+  name,
+  def,
+  value,
+  onInputValue,
+  onCommit,
+}) {
+  const startRef = useRef(null);
+  const endRef = useRef(null);
   const current =
     value || def.defaultValue || { x: 25, y: 25, x2: 75, y2: 75 };
   const currentRef = useRef(current);
   currentRef.current = current;
-  const units = toolkitPositionUnits(def);
-  const serialized = JSON.stringify({
-    x: current.x ?? 25,
-    y: current.y ?? 25,
-    x2: current.x2 ?? 75,
-    y2: current.y2 ?? 75,
-  });
-  const mapDetail = useCallback(
-    (detail) => ({
-      x: Number(detail.x ?? currentRef.current.x ?? 25),
-      y: Number(detail.y ?? currentRef.current.y ?? 25),
-      x2: Number(detail.x2 ?? currentRef.current.x2 ?? 75),
-      y2: Number(detail.y2 ?? currentRef.current.y2 ?? 75),
+  const mergeStart = useCallback(
+    (point) => ({ ...currentRef.current, ...point }),
+    [],
+  );
+  const mergeEnd = useCallback(
+    (point) => ({
+      ...currentRef.current,
+      x2: point.x,
+      y2: point.y,
     }),
-    []
+    [],
   );
-  const draggingRef = useToolkitSpatialEvents(
-    controlRef,
+  const startInteractingRef = usePointEvents(
+    startRef,
     name,
-    mapDetail,
+    currentRef,
     onInputValue,
-    onCommit
+    onCommit,
+    mergeStart,
   );
-  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
+  const endInteractingRef = usePointEvents(
+    endRef,
+    name,
+    currentRef,
+    onInputValue,
+    onCommit,
+    mergeEnd,
+  );
+  useSyncedAttribute(startRef, "x", current.x ?? 25, startInteractingRef);
+  useSyncedAttribute(startRef, "y", current.y ?? 25, startInteractingRef);
+  useSyncedAttribute(endRef, "x", current.x2 ?? 75, endInteractingRef);
+  useSyncedAttribute(endRef, "y", current.y2 ?? 75, endInteractingRef);
 
+  const label = def.label || name;
+  const units = positionUnits(def);
   return (
-    <toolkit-point-point
-      ref={controlRef}
-      label={def.label || name}
-      {...(units ? { units } : {})}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <PropertyRow label={label}>
+      <fig-stack slot="input" direction="vertical" full="">
+        <fig-input-point
+          ref={startRef}
+          aria-label={`${label} start`}
+          units={units}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+        <fig-input-point
+          ref={endRef}
+          aria-label={`${label} end`}
+          units={units}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-stack>
+    </PropertyRow>
   );
 }
 
-function ToolkitColorPointControl({
+function ColorPointProperty({
   name,
   def,
   value,
   onInputValue,
   onCommit,
 }) {
-  const controlRef = useRef(null);
+  const pointRef = useRef(null);
+  const colorRef = useRef(null);
   const current =
     value ||
     def.defaultValue || {
@@ -633,168 +735,80 @@ function ToolkitColorPointControl({
     };
   const currentRef = useRef(current);
   currentRef.current = current;
-  // Keep #RRGGBBAA so opacity-only canvas edits still change the serialized
-  // value (6-digit hex would look identical and skip the panel sync).
-  const serialized = JSON.stringify({
-    x: current.x ?? 50,
-    y: current.y ?? 50,
-    color: colorToHex(current.color || { r: 1, g: 1, b: 1, a: 1 }),
-  });
-  const mapDetail = useCallback((detail) => {
-    const fallback = currentRef.current;
-    let color =
-      typeof detail.color === "string"
-        ? hexToColor(detail.color)
-        : { ...(fallback.color || { r: 1, g: 1, b: 1, a: 1 }) };
-    if (detail.alpha != null && Number.isFinite(Number(detail.alpha))) {
-      color = {
-        ...color,
-        a: Math.max(0, Math.min(1, Number(detail.alpha))),
-      };
-    } else if (
-      detail.opacity != null &&
-      Number.isFinite(Number(detail.opacity))
-    ) {
-      color = {
-        ...color,
-        a: Math.max(0, Math.min(100, Number(detail.opacity))) / 100,
-      };
-    }
-    return {
-      x: Number(detail.x ?? fallback.x ?? 50),
-      y: Number(detail.y ?? fallback.y ?? 50),
-      color,
-    };
-  }, []);
-  const draggingRef = useToolkitSpatialEvents(
-    controlRef,
+  const mergePoint = useCallback(
+    (point) => ({ ...currentRef.current, ...point }),
+    [],
+  );
+  const pointInteractingRef = usePointEvents(
+    pointRef,
     name,
-    mapDetail,
+    currentRef,
     onInputValue,
-    onCommit
+    onCommit,
+    mergePoint,
   );
-  useSyncToolkitValueAttr(controlRef, serialized, draggingRef);
-
-  // toolkit-color-point's inner color control omits alpha; enable it so the
-  // panel can show/edit opacity that canvas color handles emit.
-  useLayoutEffect(() => {
-    const host = controlRef.current;
-    if (!host) return;
-    const color = host.querySelector?.("toolkit-color");
-    if (color && color.getAttribute("alpha") !== "true") {
-      color.setAttribute("alpha", "true");
-    }
+  const readColor = useCallback((event, control) => {
+    const parsed = readColorControlValue(
+      event,
+      control.getAttribute("value") || "",
+    );
+    if (!parsed) return null;
+    const color = hexToColor(parsed.color);
+    if (parsed.alpha != null) color.a = parsed.alpha;
+    return { ...currentRef.current, color };
   }, []);
+  const colorInteractingRef = useControlEvents(
+    colorRef,
+    readColor,
+    (next) => onInputValue(name, next),
+    (next) => onCommit(name, next),
+  );
+  useSyncedAttribute(pointRef, "x", current.x ?? 50, pointInteractingRef);
+  useSyncedAttribute(pointRef, "y", current.y ?? 50, pointInteractingRef);
+  useSyncedAttribute(
+    colorRef,
+    "value",
+    colorToHex(current.color),
+    colorInteractingRef,
+  );
 
+  const label = def.label || name;
   return (
-    <toolkit-color-point
-      ref={controlRef}
-      label={def.label || name}
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <PropertyRow label={label}>
+      <fig-stack slot="input" direction="vertical" full="">
+        <fig-input-point
+          ref={pointRef}
+          aria-label={`${label} position`}
+          units={positionUnits(def)}
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+        <fig-input-color
+          ref={colorRef}
+          aria-label={`${label} color`}
+          text="true"
+          alpha="true"
+          full=""
+          dangerouslySetInnerHTML={opaqueContent}
+        />
+      </fig-stack>
+    </PropertyRow>
   );
 }
 
-function serializeGradient(stops) {
-  return JSON.stringify({
-    type: "gradient",
-    gradient: {
-      type: "linear",
-      angle: 90,
-      interpolationSpace: "srgb",
-      hueInterpolation: "shorter",
-      stops: stops.map((stop) => ({
-        position: Math.max(0, Math.min(100, Number(stop.position) * 100)),
-        color: colorToHex(stop.color).slice(0, 7),
-        opacity: Math.round(
-          Math.max(0, Math.min(1, Number(stop.color?.a ?? 1))) * 100
-        ),
-      })),
-    },
-  });
-}
-
-function ToolkitGradientControl({
-  name,
-  def,
-  value,
-  onInputValue,
-  onCommit,
-}) {
-  const gradientRef = useRef(null);
-  const stops = value?.stops || def.defaultValue?.stops || [];
-  const serialized = serializeGradient(stops);
-  const serializedDefault = serializeGradient(def.defaultValue?.stops || stops);
-
-  useEffect(() => {
-    const control = gradientRef.current;
-    if (!control) return;
-    const readValue = (event) => {
-      let detail = readToolkitEventValue(event);
-      if (typeof detail === "string") {
-        try {
-          detail = JSON.parse(detail);
-        } catch {
-          return null;
-        }
-      }
-      const nextStops = detail?.gradient?.stops;
-      if (!Array.isArray(nextStops)) return null;
-      return {
-        stops: nextStops.map((stop) => {
-          const color = hexToColor(stop.color);
-          color.a =
-            stop.opacity == null
-              ? color.a
-              : Math.max(0, Math.min(100, Number(stop.opacity))) / 100;
-          return {
-            position:
-              Math.max(0, Math.min(100, Number(stop.position))) / 100,
-            color,
-          };
-        }),
-      };
-    };
-    const handleInput = (event) => {
-      const next = readValue(event);
-      if (next) onInputValue(name, next);
-    };
-    const handleChange = (event) => {
-      const next = readValue(event);
-      if (next) onCommit(name, next);
-    };
-    control.addEventListener("input", handleInput);
-    control.addEventListener("change", handleChange);
-    return () => {
-      control.removeEventListener("input", handleInput);
-      control.removeEventListener("change", handleChange);
-    };
-  }, [name, onCommit, onInputValue]);
-
+function UnknownProperty({ name, def }) {
   return (
-    <toolkit-gradient
-      ref={gradientRef}
-      label={def.label || name}
-      value={serialized}
-      default={serializedDefault}
-      edit="picker"
-      dangerouslySetInnerHTML={opaqueContent}
-    />
+    <PropertyRow label={def.label || name}>
+      <code slot="input" className="unknown-type">
+        {def.type || "unknown"}
+      </code>
+    </PropertyRow>
   );
-}
-
-function Control({ def, value, onChange }) {
-  if (def.type === "number") {
-    return <NumberControl def={def} value={value} onChange={onChange} />;
-  }
-  return <code className="unknown-type">{def.type || "unknown"}</code>;
 }
 
 export default function Controls({ props, values, onChange, onInput }) {
   const coalescedChange = useCoalescedPropertyCallback(onChange);
   const coalescedInput = useCoalescedPropertyCallback(onInput);
-  // Spatial/canvas-handle props stay at the bottom so ordinary controls stay
-  // grouped at the top of the panel.
   const entries = Object.entries(props || {})
     .filter(([, def]) => showsInPropertyPanel(def))
     .sort(([, a], [, b]) => {
@@ -802,166 +816,64 @@ export default function Controls({ props, values, onChange, onInput }) {
       const bCanvas = CANVAS_PROP_TYPES.has(b?.type) ? 1 : 0;
       return aCanvas - bCanvas;
     });
+
   if (entries.length === 0) {
     return (
-      <fig-field>
-        <p className="empty-state">This shader has no exposed properties.</p>
-      </fig-field>
+      <fig-property>
+        <p slot="input" className="empty-state">
+          This shader has no exposed properties.
+        </p>
+      </fig-property>
     );
   }
+
   return entries.map(([name, def]) => {
-    const key = `${name}:${def.type}:${def.control || ""}:${JSON.stringify(
-      def.options || []
-    )}`;
+    const shared = {
+      key: `${name}:${def.type}:${def.control || ""}:${JSON.stringify(
+        def.options || [],
+      )}`,
+      name,
+      def,
+      value: values[name],
+      onInputValue: coalescedInput,
+      onCommit: coalescedChange,
+    };
     if (def.type === "number" && def.control === "slider") {
-      return (
-        <ToolkitSliderControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <SliderProperty {...shared} />;
     }
     if (def.control === "select") {
-      return (
-        <SelectControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onChange={coalescedChange}
-          onPreview={coalescedInput}
-        />
-      );
+      return <SelectProperty {...shared} />;
     }
     if (def.type === "boolean") {
-      return (
-        <SwitchControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onChange={coalescedChange}
-        />
-      );
+      return <SwitchProperty {...shared} />;
     }
-    if (def.type === "number" && def.control !== "slider") {
-      return (
-        <ToolkitNumberControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onChange={coalescedChange}
-        />
-      );
+    if (def.type === "number") {
+      return <NumberProperty {...shared} />;
     }
     if (def.type === "string") {
-      return (
-        <ToolkitTextControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onChange={coalescedChange}
-        />
-      );
+      return <TextProperty {...shared} />;
     }
     if (def.type === "color") {
-      return (
-        <ToolkitColorControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onChange={coalescedChange}
-        />
-      );
+      return <ColorProperty {...shared} />;
     }
     if (def.type === "gradient") {
-      return (
-        <ToolkitGradientControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <GradientProperty {...shared} />;
     }
     if (def.type === "point") {
-      return (
-        <ToolkitPositionControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <PointProperty {...shared} />;
     }
     if (def.type === "point-radius") {
-      return (
-        <ToolkitPointRadiusControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <PointRadiusProperty {...shared} />;
     }
     if (def.type === "point-angle-radius") {
-      return (
-        <ToolkitPointRadiusAngleControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <PointRadiusAngleProperty {...shared} />;
     }
     if (def.type === "point-point-line") {
-      return (
-        <ToolkitPointPointControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <PointPointProperty {...shared} />;
     }
     if (def.type === "color-point") {
-      return (
-        <ToolkitColorPointControl
-          key={key}
-          name={name}
-          def={def}
-          value={values[name]}
-          onInputValue={coalescedInput}
-          onCommit={coalescedChange}
-        />
-      );
+      return <ColorPointProperty {...shared} />;
     }
-    return (
-      <fig-field direction="horizontal" key={key}>
-        <label>{def.label || name}</label>
-        <Control
-          def={def}
-          value={values[name]}
-          onChange={(value) => coalescedChange(name, value)}
-        />
-      </fig-field>
-    );
+    return <UnknownProperty key={shared.key} name={name} def={def} />;
   });
 }

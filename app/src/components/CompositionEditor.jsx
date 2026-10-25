@@ -316,9 +316,10 @@ function PropertiesLayerRow({
   const hideLabel = layerToggleLabel(visibility, noun, enabled);
   const removeLabel = `Remove ${noun}`;
   return (
-    <div id={id} className="properties-layer-row" aria-label={name}>
+    <fig-property id={id} show-trailing="" aria-label={name}>
       {control || (
         <fig-button
+          slot="input"
           type="button"
           variant={expanded ? "ghost" : "input"}
           size="large"
@@ -334,35 +335,39 @@ function PropertiesLayerRow({
           <span className="properties-layer-row-label">{name}</span>
         </fig-button>
       )}
-      {onToggleVisible && (
-        <fig-tooltip text={hideLabel}>
-          <fig-button
-            type="button"
-            variant="ghost"
-            icon="true"
-            disabled={readOnly ? "" : undefined}
-            aria-label={hideLabel}
-            onClick={onToggleVisible}
-          >
-            <LayerVisibilityIcon visibility={visibility} enabled={enabled} />
-          </fig-button>
-        </fig-tooltip>
+      {(onToggleVisible || onRemove) && (
+        <fig-stack slot="trailing" direction="horizontal" gap="1">
+          {onToggleVisible && (
+            <fig-tooltip text={hideLabel}>
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                disabled={readOnly ? "" : undefined}
+                aria-label={hideLabel}
+                onClick={onToggleVisible}
+              >
+                <LayerVisibilityIcon visibility={visibility} enabled={enabled} />
+              </fig-button>
+            </fig-tooltip>
+          )}
+          {onRemove && (
+            <fig-tooltip text={removeLabel}>
+              <fig-button
+                type="button"
+                variant="ghost"
+                icon="true"
+                disabled={readOnly ? "" : undefined}
+                aria-label={removeLabel}
+                onClick={onRemove}
+              >
+                <fig-icon name="minus" />
+              </fig-button>
+            </fig-tooltip>
+          )}
+        </fig-stack>
       )}
-      {onRemove && (
-        <fig-tooltip text={removeLabel}>
-          <fig-button
-            type="button"
-            variant="ghost"
-            icon="true"
-            disabled={readOnly ? "" : undefined}
-            aria-label={removeLabel}
-            onClick={onRemove}
-          >
-            <fig-icon name="minus" />
-          </fig-button>
-        </fig-tooltip>
-      )}
-    </div>
+    </fig-property>
   );
 }
 
@@ -501,6 +506,7 @@ function ShaderFillMode({
 }
 
 function ImageFillInput({
+  slot = "input",
   disabled = false,
   value,
   onChange,
@@ -521,6 +527,9 @@ function ImageFillInput({
   onOpenPicker,
   onClosePicker,
   onAutoOpened,
+  onPointerDown,
+  onFocusCapture,
+  onClickCapture,
 }) {
   const ref = useRef(null);
   const [typeLabel, setTypeLabel] = useState(
@@ -613,15 +622,13 @@ function ImageFillInput({
   useLayoutEffect(() => {
     const host = ref.current;
     if (!host || !allowShader) return undefined;
-    const picker = host.querySelector("fig-fill-picker");
-    if (!picker) return undefined;
 
     const slot = document.createElement("div");
     slot.setAttribute("slot", "mode-shader");
     slot.setAttribute("label", "Shader");
     const swatch = swatchBackgroundCss(shaderModePropsRef.current.thumbnailUrl);
     if (swatch) slot.setAttribute("swatch-background", swatch);
-    picker.appendChild(slot);
+    host.appendChild(slot);
 
     const renderMode = () => {
       const props = shaderModePropsRef.current;
@@ -703,15 +710,18 @@ function ImageFillInput({
   }, [autoOpen, disabled, onAutoOpened, onOpenPicker]);
 
   return (
-    <toolkit-fill
+    <fig-input-fill
       ref={ref}
-      label={typeLabel}
+      slot={slot}
       mode={allowShader ? FILL_SHADER_MODES : FILL_PAINT_MODES}
       value={value}
       disabled={disabled ? "" : undefined}
       webcam-mode="live"
       default-video={defaultVideoUrl}
       aria-label={typeLabel}
+      onPointerDown={onPointerDown}
+      onFocusCapture={onFocusCapture}
+      onClickCapture={onClickCapture}
       dangerouslySetInnerHTML={opaqueContent}
     />
   );
@@ -739,6 +749,7 @@ export function ExportPropertiesPane({ disabled = false, onExport }) {
 }
 
 function AudioInputControl({
+  slot = "input",
   input,
   disabled = false,
   anchorId = "",
@@ -807,7 +818,7 @@ function AudioInputControl({
   }, [anchorSelector, disabled, hasFile, open]);
 
   return (
-    <div className="composition-fill-control">
+    <div slot={slot}>
       <fig-button
         type="button"
         variant={open ? "ghost" : "input"}
@@ -1341,12 +1352,22 @@ function FillLayerEditor({
 
   const control =
     fill.type === "html" ? (
-      <fig-button type="button" variant="secondary" full="" disabled="">
+      <fig-button
+        slot="input"
+        type="button"
+        variant="secondary"
+        full=""
+        disabled=""
+        onPointerDown={() => onSelect?.(fill.id)}
+        onFocusCapture={() => onSelect?.(fill.id)}
+        onClickCapture={() => onOpenPicker?.(fill.id)}
+      >
         HTML fill
       </fig-button>
     ) : (
       <ImageFillInput
         key={controlKey}
+        slot="input"
         disabled={readOnly || !fill.enabled}
         value={controlValue}
         onChange={applyFillValue}
@@ -1373,6 +1394,9 @@ function FillLayerEditor({
         onOpenPicker={() => onOpenPicker?.(fill.id)}
         onClosePicker={() => onClosePicker?.(fill.id)}
         onAutoOpened={onAutoOpened}
+        onPointerDown={() => onSelect?.(fill.id)}
+        onFocusCapture={() => onSelect?.(fill.id)}
+        onClickCapture={() => onOpenPicker?.(fill.id)}
       />
     );
 
@@ -1388,16 +1412,7 @@ function FillLayerEditor({
       enabled={fill.enabled}
       readOnly={readOnly}
       noun="fill"
-      control={
-        <div
-          className="composition-fill-control"
-          onPointerDown={() => onSelect?.(fill.id)}
-          onFocusCapture={() => onSelect?.(fill.id)}
-          onClickCapture={() => onOpenPicker?.(fill.id)}
-        >
-          {control}
-        </div>
-      }
+      control={control}
       onToggleVisible={() => onToggleVisible?.(fill.id)}
       onRemove={() => onRemove?.(fill.id)}
     />

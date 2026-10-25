@@ -12,6 +12,15 @@ export function getShaderToolArguments(id, version) {
   };
 }
 
+export function figmaPlansFromWhoamiPayload(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  const whoami =
+    payload.whoami && typeof payload.whoami === "object"
+      ? payload.whoami
+      : payload;
+  return Array.isArray(whoami.plans) ? whoami.plans : [];
+}
+
 export function updateShaderToolArguments({
   id,
   kind,

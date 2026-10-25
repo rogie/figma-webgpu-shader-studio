@@ -3,29 +3,6 @@
   flex-direction: column;
 }
 
-.composition-fill-control {
-  --tk-row-padding-inline: 0;
-
-  min-width: 0;
-  width: 100%;
-}
-
-.properties-layer-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: var(--spacer-1);
-  min-width: 0;
-  width: 100%;
-  padding-block: var(--spacer-1);
-  padding-inline: var(--spacer-3) var(--spacer-2);
-}
-
-.properties-layer-row > fig-button {
-  height: var(--spacer-5);
-  padding: 0 var(--spacer-2-5);
-}
-
 .properties-layer-row-label {
   display: block;
   flex: 1 1 auto;

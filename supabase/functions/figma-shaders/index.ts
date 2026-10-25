@@ -7,6 +7,7 @@
  */
 
 import {
+  figmaPlansFromWhoamiPayload,
   getShaderToolArguments,
   listShaderToolArguments,
   SHADER_GET_TOOL,
@@ -900,7 +901,7 @@ function requireBodySource(value: unknown): string {
 
 async function listFigmaPlans(client: McpClient) {
   const payload = extractToolPayload(await client.callTool("whoami"));
-  const plans = Array.isArray(payload.plans) ? payload.plans : [];
+  const plans = figmaPlansFromWhoamiPayload(payload);
   return {
     plans: plans.map((entry) => {
       const plan = (entry && typeof entry === "object" ? entry : {}) as Record<

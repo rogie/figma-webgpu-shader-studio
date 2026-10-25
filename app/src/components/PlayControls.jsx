@@ -11,7 +11,8 @@ function secondsFromHost(host) {
 
 function hasWheelDragState(wheel) {
   return (
-    wheel.hasAttribute("data-toolkit-wheel-elastic-dragging") ||
+    wheel.hasAttribute("data-toolkit-slider-dragging") ||
+    wheel.hasAttribute("data-elastic-dragging") ||
     wheel.hasAttribute("data-number-scrubbing")
   );
 }
@@ -49,7 +50,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
       pointerActiveRef.current = false;
     };
     const handleFocusIn = (event) => {
-      if (event.target instanceof Element && event.target.closest("fig-input-number")) {
+      if (event.target instanceof Element && event.target.closest("tk-input-number")) {
         numberEditingRef.current = true;
       }
     };
@@ -57,11 +58,12 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
       requestAnimationFrame(() => {
         const node = wheelRef.current;
         numberEditingRef.current = Boolean(
-          node?.querySelector("fig-input-number:focus-within")
+          node?.querySelector("tk-input-number:focus-within")
         );
       });
     };
 
+    wheel.addEventListener("input", applyValue);
     wheel.addEventListener("change", applyValue);
     wheel.addEventListener("focusin", handleFocusIn);
     wheel.addEventListener("focusout", handleFocusOut);
@@ -69,6 +71,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
     window.addEventListener("pointerup", handlePointerEnd, true);
     window.addEventListener("pointercancel", handlePointerEnd, true);
     return () => {
+      wheel.removeEventListener("input", applyValue);
       wheel.removeEventListener("change", applyValue);
       wheel.removeEventListener("focusin", handleFocusIn);
       wheel.removeEventListener("focusout", handleFocusOut);
@@ -137,8 +140,9 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
         </fig-button>
       </fig-tooltip>
       <div className="play-controls-time">
-        <toolkit-wheel
+        <toolkit-slider
           ref={wheelRef}
+          type="wheel"
           label=""
           units="seconds"
           min="0"
@@ -147,8 +151,6 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
           precision="1"
           elastic="false"
           aria-label="Time"
-          spin={running ? "false" : "true"}
-          onInput={applyValue}
           dangerouslySetInnerHTML={opaqueContent}
         />
       </div>
