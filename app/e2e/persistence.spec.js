@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+function brightnessSlider(page) {
+  return page.locator("fig-property")
+    .filter({ has: page.getByText("Brightness", { exact: true }) })
+    .locator("fig-slider");
+}
+
 async function openAnonymousEditor(page) {
   await page.addInitScript(() => {
     localStorage.clear();
@@ -9,11 +15,11 @@ async function openAnonymousEditor(page) {
     });
   });
   await page.goto("/dither");
-  await expect(page.locator("toolkit-slider[label=Brightness]")).toHaveCount(1);
+  await expect(brightnessSlider(page)).toHaveCount(1);
 }
 
 async function setBrightness(page, value) {
-  const slider = page.locator("toolkit-slider[label=Brightness]");
+  const slider = brightnessSlider(page);
   await slider.evaluate((element, next) => {
     element.dispatchEvent(
       new CustomEvent("change", {
@@ -48,7 +54,7 @@ test("Reset to default preserves the current source and document identity", asyn
   await page.locator('fig-menu-item[value="reset"]:visible').click();
 
   await expect(
-    page.locator("toolkit-slider[label=Brightness]"),
+    brightnessSlider(page),
   ).toHaveAttribute("value", "100");
   await expect(editor).toContainText("reset-keeps-current-source");
   await expect(page).toHaveURL(/\/dither$/);

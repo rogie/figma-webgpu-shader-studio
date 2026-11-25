@@ -2,7 +2,7 @@
 name: update
 description: >-
   Update @rogieking/figui3 to the latest version, rebuild the Vite cache, review
-  FigUI3 and ToolKit changes for breaking or new component APIs, and apply needed app
+  FigUI3 and FigUI3 Extended changes for breaking or new component APIs, and apply needed app
   integrations. Use when the user runs /update or asks to pull the latest figui3,
   refresh figui3, rebuild vite cache, or sync FigUI3 component changes.
 ---
@@ -28,11 +28,11 @@ Then follow **Review changelog & migrate** below. Finish with verification.
 Copy and track progress:
 
 ```
-- [ ] Record current @rogieking/figui3 version and @rogieking/toolkit revision
-- [ ] Install latest figui3 and ToolKit from rogie/propskit2 main in app/
+- [ ] Record current FigUI3 version and FigUI3 Extended pin
+- [ ] Install latest FigUI3 in app/
 - [ ] Rebuild Vite cache (script does this)
 - [ ] Restart Vite in a background Shell session and confirm http://localhost:5173/ responds
-- [ ] Review FigUI3 and ToolKit changes since previous versions
+- [ ] Review FigUI3 and FigUI3 Extended changes since previous versions
 - [ ] Apply needed integrations in app/src
 - [ ] Run npm test && npm run build in app/
 - [ ] Summarize version jump + code changes for the user
@@ -49,7 +49,7 @@ Always run from repo root:
 The script:
 
 - installs `@rogieking/figui3@latest` in `app/`
-- installs `@rogieking/toolkit` from the latest `github:rogie/propskit2#main`
+- preserves the pinned `@rogieking/figui3-extended` dependency
 - prints old → new versions
 - deletes `app/node_modules/.vite`
 
@@ -75,45 +75,43 @@ Or watch the background terminal log for `ready in`. Do not continue until `curl
 
 ## 2. Review changelog & migrate
 
-1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/toolkit --depth=0` in `app/`).
-2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and ToolKit.
+1. Note `previousVersion` and `newVersion` from the script output (or `npm list @rogieking/figui3 @rogieking/figui3-extended --depth=0` in `app/`).
+2. Read [`references/repo-integrations.md`](references/repo-integrations.md) for where this app uses FigUI3 and FigUI3 Extended.
 3. Inspect the installed package docs:
    - `app/node_modules/@rogieking/figui3/CHANGELOG.md` — release changes
    - `app/node_modules/@rogieking/figui3/README.md` — component APIs, attributes, events
-   - `app/node_modules/@rogieking/figui3/fig-lab.js` / `fig-lab.css` — lab/chat/canvas components
-   - `app/node_modules/@rogieking/figui3/fig-editor.js` — editor/fill-picker components
-   - `app/node_modules/@rogieking/toolkit/README.md` and `.cursor/skills/toolkit/` — `toolkit-*` controls
+   - `app/node_modules/@rogieking/figui3-extended/fig-lab.js` / `fig-lab.css` — lab/chat/canvas components
+   - `app/node_modules/@rogieking/figui3-extended/fig-editor.js` — editor/fill-picker components
+   - `app/node_modules/@rogieking/figui3-extended/.cursor/skills/` — Editor and Lab component APIs
 4. Search for newly relevant symbols:
 
 ```bash
-rg -n "toolkit-|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
+rg -n "fig-input-slider-wheel|fig-attachment|fig-ai-prompt|fig-input-gradient|fig-chat" \
   app/node_modules/@rogieking/figui3/README.md \
-  app/node_modules/@rogieking/figui3/fig-lab.js \
-  app/node_modules/@rogieking/toolkit/README.md \
-  app/node_modules/@rogieking/toolkit/skills/toolkit
+  app/node_modules/@rogieking/figui3-extended/.cursor/skills
 ```
 
-5. Cross-check `app/src` for places still using raw FigUI3 primitives where a newer propskit or attachment wrapper exists.
+5. Cross-check `app/src` for places still using raw FigUI3 primitives where a newer FigUI3 component exists.
 6. Apply the smallest correct diff. Prefer upgrading in place over adding parallel patterns.
 
 ### Migration priorities (this repo)
 
 | Area | Preferred FigUI3 surface | Primary files |
 |------|--------------------------|---------------|
-| Properties panel scalars | `toolkit-number`, `toolkit-text`, `toolkit-slider`, `toolkit-switch`, `toolkit-select`, `toolkit-color` | `app/src/components/Controls.jsx` |
-| Properties panel gradients | `toolkit-gradient` with `edit="picker"` | `app/src/components/Controls.jsx` |
-| Composition fill | `toolkit-fill` + `fig-fill-picker` `mode-shader` slot | `app/src/components/CompositionEditor.jsx` |
+| Properties panel scalars | `fig-input-number`, `fig-input-text`, `fig-slider`, `fig-switch`, `fig-select`, `fig-input-color` | `app/src/components/Controls.jsx` |
+| Properties panel gradients | `fig-input-gradient` | `app/src/components/Controls.jsx` |
+| Composition fill | `fig-input-fill` with a shader picker | `app/src/components/CompositionEditor.jsx` |
 | Chat composer attachments | `fig-attachments` + `fig-attachment` inside `fig-ai-prompt` | `app/src/components/ChatPane.jsx`, `app/src/chat.css` |
 | Canvas/on-canvas controls | `fig-canvas-control` | `app/src/components/CanvasControlsOverlay.jsx`, `app/lib/canvasControls.js` |
-| Account/settings fields | `fig-field`, `toolkit-*`, `fig-input-text` | `app/src/components/AccountMenu.jsx` |
+| Account/settings fields | `fig-field`, `fig-input-text` | `app/src/components/AccountMenu.jsx` |
 
 Follow existing React + FigUI3 conventions:
 
 - Use `dangerouslySetInnerHTML={opaqueContent}` (or `{ __html: "" }`) on custom elements whose light DOM React must not reconcile away.
 - Bind FigUI3 `input` / `change` via `addEventListener` in `useEffect`, not React `onInput`, when the component rewrites its internals.
-- For ToolKit sliders, avoid rewriting `value` from React while dragging; mirror `ToolkitSliderControl` in `Controls.jsx`.
+- For sliders, pause programmatic value updates during user input. See `PlayControls.jsx`.
 
-See [`references/migration-notes.md`](references/migration-notes.md) for patterns discovered during prior upgrades.
+See [`references/migration-notes.md`](references/migration-notes.md) for historical patterns from prior upgrades.
 
 ## 3. Verify
 
@@ -131,7 +129,6 @@ Confirm `curl -sf http://localhost:5173/` succeeds and the dev server log shows 
 Tell the user:
 
 - previous and new figui3 versions
-- previous and new ToolKit revisions
 - whether any app code changed (list files)
 - anything noted in README/API that was **not** adopted yet
 - test/build result

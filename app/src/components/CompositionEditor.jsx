@@ -38,7 +38,7 @@ import { valuesMatchDefaults } from "../runtime/params.js";
 import defaultInputUrl from "../assets/default-input.png";
 import { defaultVideoUrl } from "../runtime/sample.js";
 import Controls from "./Controls.jsx";
-import { readToolkitEventValue } from "./controls/controlValues.js";
+import { readControlEventValue } from "./controls/controlValues.js";
 import MicrophoneIcon from "./MicrophoneIcon.jsx";
 import VolumeIcon from "./VolumeIcon.jsx";
 import ShaderPicker, {
@@ -577,7 +577,7 @@ function ImageFillInput({
     if (!node || !onChange) return undefined;
     const picker = node.querySelector("fig-fill-picker") || node;
     const handleValue = (event) => {
-      const rawDetail = readToolkitEventValue(event);
+      const rawDetail = readControlEventValue(event);
       let detail = rawDetail;
       if (typeof rawDetail === "string") {
         try {
@@ -693,7 +693,7 @@ function ImageFillInput({
     const popupOpen = node.classList.contains("has-popup-open");
     if (popupOpen) return;
     // Always assign the property. Matching the attribute is not enough —
-    // ToolKit updates the swatch from the setter, not from React's attribute.
+    // The fill control updates the swatch when its value property is set.
     node.value = value;
   }, [value]);
 

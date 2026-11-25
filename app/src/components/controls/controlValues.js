@@ -9,14 +9,6 @@ export function readControlEventValue(event) {
     : (detail ?? event.target?.value);
 }
 
-export function readToolkitEventValue(event) {
-  return readControlEventValue(event);
-}
-
-export function readToolkitSliderNumber(event) {
-  return Number(readControlEventValue(event));
-}
-
 export function readColorControlValue(event, fallback = "") {
   const detail = event.nativeEvent?.detail ?? event.detail;
   if (typeof detail === "string" && detail.trim()) {

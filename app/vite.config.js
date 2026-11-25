@@ -7,8 +7,7 @@ const preserveFiguiRegistrations = {
   transform(code, id) {
     if (
       (id.includes("/@rogieking/figui3/") ||
-        id.includes("/@rogieking/figui3-extended/") ||
-        id.includes("/@rogieking/toolkit/")) &&
+        id.includes("/@rogieking/figui3-extended/")) &&
       id.endsWith(".js")
     ) {
       return { code, map: null, moduleSideEffects: "no-treeshake" };
@@ -25,22 +24,7 @@ export default defineConfig({
       ? "/figma-webgpu-shader-studio/"
       : "/",
   plugins: [preserveFiguiRegistrations, react()],
-  resolve: {
-    alias: [
-      // Toolkit still imports the Editor/Lab paths from before the package split.
-      {
-        find: /^@rogieking\/figui3\/src\/fig-(editor|lab)\.js$/,
-        replacement: "@rogieking/figui3-extended/fig-$1.js",
-      },
-      {
-        find: "@rogieking/figui3/src/fig.js",
-        replacement: "@rogieking/figui3/fig.js",
-      },
-    ],
-  },
-  // FigUI3 and ToolKit register custom elements as import side effects;
-  // keep them out of Vite's dependency optimizer so upgrades aren't served
-  // from a stale prebundle.
+  // Keep custom element registrations out of the dependency optimizer.
   optimizeDeps: {
     exclude: [
       "@rogieking/figui3/fig.js",
@@ -49,10 +33,7 @@ export default defineConfig({
       "@rogieking/figui3-extended/fig-editor.js",
       "@rogieking/figui3/fig-layer.js",
       "@rogieking/figui3/src/fig.js",
-      "@rogieking/figui3/src/fig-lab.js",
-      "@rogieking/figui3/src/fig-editor.js",
       "@rogieking/figui3/src/fig-layer.js",
-      "@rogieking/toolkit/toolkit.js",
     ],
   },
   build: {

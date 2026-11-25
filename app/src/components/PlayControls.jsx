@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef } from "react";
-import { readToolkitSliderNumber } from "./controls/controlValues.js";
+import { readControlEventValue } from "./controls/controlValues.js";
 
 const opaqueContent = { __html: "" };
 const TIME_PRECISION = 1;
@@ -9,25 +9,25 @@ function secondsFromHost(host) {
   return Number((ms / 1000).toFixed(TIME_PRECISION));
 }
 
-function hasWheelDragState(wheel) {
+function isEditingTime(wheel) {
   return (
-    wheel.hasAttribute("data-toolkit-slider-dragging") ||
-    wheel.hasAttribute("data-elastic-dragging") ||
-    wheel.hasAttribute("data-number-scrubbing")
+    wheel.hasAttribute("data-wheel-active") ||
+    wheel.hasAttribute("data-dragging") ||
+    Boolean(wheel.querySelector("fig-input-number:focus-within"))
   );
 }
 
 function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
   const wheelRef = useRef(null);
   const pointerActiveRef = useRef(false);
-  const numberEditingRef = useRef(false);
   const wasRunningRef = useRef(running);
   const didStampRef = useRef(false);
   const label = running ? "Pause" : "Play";
 
   const applyValue = useCallback(
     (event) => {
-      const next = readToolkitSliderNumber(event);
+      if (event.target !== wheelRef.current) return;
+      const next = Number(readControlEventValue(event));
       if (!Number.isFinite(next)) return;
       hostRef.current?.seek?.(Math.max(0, next) * 1000, {
         present: "frame",
@@ -49,35 +49,19 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
     const handlePointerEnd = () => {
       pointerActiveRef.current = false;
     };
-    const handleFocusIn = (event) => {
-      if (event.target instanceof Element && event.target.closest("tk-input-number")) {
-        numberEditingRef.current = true;
-      }
-    };
-    const handleFocusOut = () => {
-      requestAnimationFrame(() => {
-        const node = wheelRef.current;
-        numberEditingRef.current = Boolean(
-          node?.querySelector("tk-input-number:focus-within")
-        );
-      });
-    };
-
     wheel.addEventListener("input", applyValue);
     wheel.addEventListener("change", applyValue);
-    wheel.addEventListener("focusin", handleFocusIn);
-    wheel.addEventListener("focusout", handleFocusOut);
     window.addEventListener("pointerdown", handlePointerDown, true);
     window.addEventListener("pointerup", handlePointerEnd, true);
     window.addEventListener("pointercancel", handlePointerEnd, true);
+    window.addEventListener("blur", handlePointerEnd);
     return () => {
       wheel.removeEventListener("input", applyValue);
       wheel.removeEventListener("change", applyValue);
-      wheel.removeEventListener("focusin", handleFocusIn);
-      wheel.removeEventListener("focusout", handleFocusOut);
       window.removeEventListener("pointerdown", handlePointerDown, true);
       window.removeEventListener("pointerup", handlePointerEnd, true);
       window.removeEventListener("pointercancel", handlePointerEnd, true);
+      window.removeEventListener("blur", handlePointerEnd);
     };
   }, [applyValue]);
 
@@ -87,8 +71,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
       !wheel ||
       running ||
       pointerActiveRef.current ||
-      numberEditingRef.current ||
-      hasWheelDragState(wheel)
+      isEditingTime(wheel)
     ) {
       wasRunningRef.current = running;
       return;
@@ -97,7 +80,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
     wasRunningRef.current = running;
     didStampRef.current = true;
     if (!shouldStamp) return;
-    wheel.setAttribute("value", String(secondsFromHost(hostRef.current)));
+    wheel.spinTo(secondsFromHost(hostRef.current), { animateHandle: false });
   }, [hostRef, running]);
 
   useEffect(() => {
@@ -106,16 +89,10 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
     if (!wheel) return undefined;
 
     const sync = () => {
-      if (
-        pointerActiveRef.current ||
-        numberEditingRef.current ||
-        hasWheelDragState(wheel)
-      ) {
-        return;
-      }
-      const next = String(secondsFromHost(hostRef.current));
-      if (wheel.getAttribute("value") === next) return;
-      wheel.setAttribute("value", next);
+      if (pointerActiveRef.current || isEditingTime(wheel)) return;
+      const next = secondsFromHost(hostRef.current);
+      if (Number(wheel.value) === next) return;
+      wheel.spinTo(next, { animateHandle: false });
     };
 
     let rafId = requestAnimationFrame(function loop() {
@@ -140,19 +117,26 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
         </fig-button>
       </fig-tooltip>
       <div className="play-controls-time">
-        <toolkit-slider
+        <fig-input-slider-wheel
           ref={wheelRef}
-          type="wheel"
-          label=""
-          units="seconds"
           min="0"
           default="0"
           step="0.1"
           precision="1"
-          elastic="false"
           aria-label="Time"
-          dangerouslySetInnerHTML={opaqueContent}
-        />
+        >
+          <fig-input-number
+            variant="ghost"
+            min="0"
+            default="0"
+            step="0.1"
+            precision="1"
+            units="s"
+            steppers="false"
+            aria-label="Time in seconds"
+            dangerouslySetInnerHTML={opaqueContent}
+          />
+        </fig-input-slider-wheel>
       </div>
     </div>
   );

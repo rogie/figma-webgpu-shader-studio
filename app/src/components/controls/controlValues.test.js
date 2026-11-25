@@ -7,39 +7,12 @@ import {
   readGradientControlValue,
   readNumber,
   readPointControlValue,
-  readToolkitEventValue,
-  readToolkitSliderNumber,
   serializeGradientValue,
   sliderTypeForProperty,
 } from "./controlValues.js";
 
-test("reads native and toolkit numeric event shapes", () => {
+test("reads native numeric fields", () => {
   assert.equal(readNumber({ target: { value: "2.5" }, detail: 1 }), 2.5);
-  assert.equal(
-    readToolkitSliderNumber({ detail: { value: "4.25" } }),
-    4.25,
-  );
-  assert.equal(
-    readToolkitSliderNumber({ nativeEvent: { detail: 7 } }),
-    7,
-  );
-});
-
-test("unwraps legacy and shared ToolKit event values", () => {
-  assert.deepEqual(
-    readToolkitEventValue({
-      detail: {
-        control: "toolkit-position",
-        value: { x: 25, y: 75, units: "percent" },
-      },
-    }),
-    { x: 25, y: 75, units: "percent" },
-  );
-  assert.equal(readToolkitEventValue({ detail: "legacy" }), "legacy");
-  assert.equal(
-    readToolkitEventValue({ detail: undefined, target: { value: "host" } }),
-    "host",
-  );
 });
 
 test("reads FigUI3 direct and wrapped event values", () => {

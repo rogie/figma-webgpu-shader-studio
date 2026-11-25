@@ -10,8 +10,6 @@ import "@rogieking/figui3-extended/fig-editor.css";
 import "@rogieking/figui3-extended/fig-editor.js";
 import "@rogieking/figui3-extended/fig-lab.css";
 import "@rogieking/figui3-extended/fig-lab.js";
-import "@rogieking/toolkit/toolkit.css";
-import "@rogieking/toolkit/toolkit.js";
 import { installCanvasHandlePopupGuard } from "./lib/canvasHandlePopupGuard.js";
 import "./app.css";
 

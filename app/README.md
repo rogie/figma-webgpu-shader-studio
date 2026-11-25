@@ -68,6 +68,42 @@ Configure the Pages Git integration with:
 - Production and preview variables: `VITE_SUPABASE_URL` and
   `VITE_SUPABASE_PUBLISHABLE_KEY`
 
+### Private FigUI3 Extended dependency
+
+Cloudflare’s GitHub integration checks out Shader Studio. The npm install also
+needs read access to the separate private `rogie/figui3-extended` repository.
+Create a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new)
+owned by `rogie`, with only `figui3-extended` selected and repository
+**Contents: Read-only** permission. Start with an expiring token and the
+**Preview** environment in the Cloudflare Pages settings.
+
+| Cloudflare build variable | Value |
+| --- | --- |
+| `GIT_CONFIG_COUNT` | `2` |
+| `GIT_CONFIG_KEY_0` | `url.https://github.com/rogie/figui3-extended.git.insteadOf` |
+| `GIT_CONFIG_VALUE_0` | `ssh://git@github.com/rogie/figui3-extended.git` |
+| `GIT_CONFIG_KEY_1` | `http.https://github.com/rogie/figui3-extended.git.extraHeader` |
+| `GIT_CONFIG_VALUE_1` | **Encrypted secret.** The authorization header generated below. |
+
+On macOS, run this in a terminal to copy the header to the clipboard without
+printing it. Paste it into the encrypted secret field in Cloudflare.
+
+```bash
+(
+  printf 'GitHub token: '
+  read -rs figui_build_token
+  printf '\n'
+  {
+    printf 'Authorization: Basic '
+    printf '%s' "x-access-token:$figui_build_token" | base64 | tr -d '\r\n'
+  } | pbcopy
+)
+```
+
+Retry the preview after saving the variables. Add the same configuration to
+**Production** before merging a release that uses FigUI3 Extended. Keep the
+build command and output directory as shown above.
+
 Cloudflare Access protects the production hostname and preview deployments.
 That edge policy is still GitHub-only (`@figma.com`). In-app sign-in can use
 Figma or GitHub; people without GitHub still need Access to be opened or

@@ -252,11 +252,9 @@ async function rasterizeInPage(page) {
 }
 
 async function applyFill(page, detail) {
-  await page.waitForSelector("toolkit-fill, fig-input-fill", { timeout: 20000 });
+  await page.waitForSelector("fig-input-fill", { timeout: 20000 });
   await page.evaluate((value) => {
-    const node =
-      document.querySelector("toolkit-fill") ||
-      document.querySelector("fig-input-fill");
+    const node = document.querySelector("fig-input-fill");
     if (!node) throw new Error("fill control missing");
     node.value = value;
     node.dispatchEvent(
@@ -270,9 +268,7 @@ async function applyFill(page, detail) {
 
 async function readFillValue(page) {
   return page.evaluate(() => {
-    const node =
-      document.querySelector("toolkit-fill") ||
-      document.querySelector("fig-input-fill");
+    const node = document.querySelector("fig-input-fill");
     if (!node) return null;
     try {
       return typeof node.value === "string"
@@ -319,7 +315,7 @@ async function openSeededEditor(page, path) {
     { key: DRAFTS_KEY, drafts: [composerDraft, effectDraft] }
   );
   await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector("toolkit-fill, fig-input-fill", { timeout: 25000 });
+  await page.waitForSelector("fig-input-fill", { timeout: 25000 });
   await page.waitForSelector("canvas.preview-canvas", { timeout: 25000 });
   await page.waitForTimeout(1200);
 }
@@ -382,10 +378,8 @@ async function exerciseFills(page, label) {
   await applyFill(page, emptyVideo);
   await page.waitForTimeout(2000);
   const videoMeta = await page.evaluate(() => {
-    const node =
-      document.querySelector("toolkit-fill") ||
-      document.querySelector("fig-input-fill");
-    const swatch = node?.querySelector("tk-swatch");
+    const node = document.querySelector("fig-input-fill");
+    const swatch = node?.querySelector("fig-swatch");
     const background = swatch?.getAttribute("background") || "";
     const value =
       typeof node?.value === "string"
@@ -429,9 +423,7 @@ async function exerciseFills(page, label) {
     const stream = video?.srcObject;
     return {
       fillType: (() => {
-        const node =
-          document.querySelector("toolkit-fill") ||
-          document.querySelector("fig-input-fill");
+        const node = document.querySelector("fig-input-fill");
         const value =
           typeof node?.value === "string"
             ? (() => {
