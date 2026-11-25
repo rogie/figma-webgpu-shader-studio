@@ -1,8 +1,4 @@
-import { useCallback } from "react";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
-import GridViewIcon from "./GridViewIcon.jsx";
-import ListViewIcon from "./ListViewIcon.jsx";
-import "./LibraryFilterMenu.css";
 
 const KIND_OPTIONS = [
   { value: "all", label: "All types" },
@@ -13,26 +9,17 @@ const KIND_OPTIONS = [
 
 function FilterMenuItem({ value, checked, children }) {
   return (
-    <fig-menu-item value={value} selected={checked ? "" : undefined}>
+    <fig-menu-item
+      value={value}
+      role="menuitemradio"
+      aria-checked={checked ? "true" : "false"}
+    >
       <fig-icon
+        slot="prepend"
         name="checkmark"
-        size="small"
+        aria-hidden="true"
         style={{ visibility: checked ? "visible" : "hidden" }}
       />
-      {children}
-    </fig-menu-item>
-  );
-}
-
-function ViewMenuItem({ value, checked, icon, children }) {
-  return (
-    <fig-menu-item value={value} selected={checked ? "" : undefined}>
-      <fig-icon
-        name="checkmark"
-        size="small"
-        style={{ visibility: checked ? "visible" : "hidden" }}
-      />
-      {icon}
       {children}
     </fig-menu-item>
   );
@@ -67,20 +54,12 @@ export default function LibraryFilterMenu({
     else if (group === "view") onViewChange?.(next);
   });
 
-  const menuRef = useCallback(
-    (node) => {
-      onMenuChange(node);
-      const items = node?.shadowRoot?.querySelector(".fig-menu-items");
-      if (items) items.style.marginTop = "0";
-    },
-    [onMenuChange]
-  );
-
   return (
-    <fig-menu ref={menuRef} class="library-filter-menu" position="bottom right">
+    <fig-menu ref={onMenuChange} position="bottom right">
       <fig-tooltip text="Filter">
         <fig-button
           fig-menu-trigger=""
+          type="button"
           variant="ghost"
           icon="true"
           selected={filtersActive ? "" : undefined}
@@ -137,20 +116,12 @@ export default function LibraryFilterMenu({
       {view && onViewChange && (
         <>
           <fig-separator label="View options" />
-          <ViewMenuItem
-            value="view:grid"
-            checked={view === "grid"}
-            icon={<GridViewIcon />}
-          >
+          <FilterMenuItem value="view:grid" checked={view === "grid"}>
             Grid
-          </ViewMenuItem>
-          <ViewMenuItem
-            value="view:list"
-            checked={view === "list"}
-            icon={<ListViewIcon />}
-          >
+          </FilterMenuItem>
+          <FilterMenuItem value="view:list" checked={view === "list"}>
             List
-          </ViewMenuItem>
+          </FilterMenuItem>
         </>
       )}
     </fig-menu>

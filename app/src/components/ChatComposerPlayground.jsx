@@ -152,7 +152,7 @@ function Composer({
                 <fig-icon name="add" />
               </fig-button>
             </fig-tooltip>
-            <hstack>
+            <fig-stack direction="horizontal">
               {!context && missingKey ? (
                 <fig-button type="button" variant="secondary">
                   Add API key
@@ -191,6 +191,7 @@ function Composer({
                     type="button"
                     variant="primary"
                     icon="true"
+                    pill=""
                     aria-label="Send"
                     disabled={canSend ? undefined : ""}
                   >
@@ -198,7 +199,7 @@ function Composer({
                   </fig-button>
                 </fig-tooltip>
               )}
-            </hstack>
+            </fig-stack>
           </fig-footer>
         </fig-ai-prompt>
       </div>

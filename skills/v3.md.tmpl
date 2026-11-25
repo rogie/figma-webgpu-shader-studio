@@ -41,6 +41,7 @@ Skip the recipe and hand-author raw `main.ts` only when the shader effect or sha
 * Custom/non-fullscreen geometry.
 {{- if .animations }}
 * Persistent cross-frame simulation state.
+* Primary-button input, unless the target recipe wrapper explicitly provides it.
 {{- end }}
 * A parameter schema recipe types cannot represent.
 
@@ -240,9 +241,9 @@ Don't create `package.json`, `tsconfig.json`, `eslint.config.js`, or `figma-shad
 * `version` is always `2`.
 {{- if .animations }}
 * `isAnimated: true` iff `render()` reads `frame.time`, `frame.deltaTime`, or `frame.frame`.
-* `usesMouse: true` iff `render()` reads `frame.mousePosition`.
+* `usesMouse: true` iff `render()` reads `frame.mousePosition`, including a read of only `frame.mousePosition.down`.
 * `usesMouse` is independent of `isAnimated`.
-* If `usesMouse` is false, `frame.mousePosition` stays `{ x: 0, y: 0 }`.
+* With mouse input disabled, do not rely on pointer coordinates or button state.
 {{- else }}
 * `isAnimated` must be `false`.
 * `usesMouse` must be `false`.
@@ -308,7 +309,9 @@ Rules:
 * For `effect`, you MUST use premultiplied alpha.
 * Clamp UVs before sampling offset coordinates unless the effect intentionally treats out-of-bounds reads as transparent.
 {{- if .animations }}
-* For cursor-following effects, read `frame.mousePosition` and set `usesMouse: true`; do not use click/drag state.
+* For cursor-following effects and fills, read `frame.mousePosition.x` and `.y` and set `usesMouse: true`.
+* For press-and-hold behavior, read `frame.mousePosition.down === true`. This is the primary pointer's held state, so use `frame.state` to compare it with the previous render when you need a press or release transition. Do not set `isAnimated` unless the shader also reads the clock.
+* Studio preview and browser exports support `down`, as does Figma's Expressive Components browser runtime. Figma Design's MCP authoring docs currently document position only. Keep behavior sensible when `down` is absent, and validate on the target Figma runtime before claiming press support there.
 {{- end }}
 
 ## Runtime API summary
@@ -325,7 +328,7 @@ Rules:
 | `frame.time` | Elapsed time in ms. |
 | `frame.deltaTime` | Time since last frame in ms. |
 | `frame.frame` | Frame counter. |
-| `frame.mousePosition` | Local pixel cursor `{x,y}`; top-left origin, y down; only updates when `usesMouse` is true and cursor is in bounds. |
+| `frame.mousePosition` | Layer-local pointer coordinates `{x,y}` with a top-left origin. Where supported, `down` is a boolean for the primary button. Studio preserves its existing logical coordinate scale under supersampling. |
 {{- end }}
 | `frame.params` | Values from `defineProperties`. |
 | `frame.state` | Mutable persistent bag for shader modules, buffers, samplers, layouts, pipelines, etc. |

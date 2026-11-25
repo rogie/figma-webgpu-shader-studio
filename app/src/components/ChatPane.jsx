@@ -69,6 +69,7 @@ import {
 import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
+import ChatDictationControls, { DictateIcon } from "./ChatDictationControls.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import PastedText from "./PastedText.jsx";
 import UserAvatar from "./UserAvatar.jsx";
@@ -78,6 +79,7 @@ import PlanMarkdownBlock from "./PlanMarkdownBlock.jsx";
 import PlanReadyAction from "./PlanReadyAction.jsx";
 import StreamingCodeBlock from "./StreamingCodeBlock.jsx";
 import { useOverflowFade } from "../hooks/useOverflowFade.js";
+import { useChatDictation } from "../hooks/useChatDictation.js";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
@@ -179,6 +181,17 @@ function useStableEvent(handler) {
   return useCallback((...args) => handlerRef.current(...args), []);
 }
 
+function insertDictation(draft, start, end, transcript) {
+  const before = draft.slice(0, start);
+  const after = draft.slice(end);
+  const leading = before && !/\s$|[(\[{]$/.test(before) && !/^[,.!?;:]/.test(transcript) ? " " : "";
+  const trailing = after && !/^[\s,.!?;:)\]}]/.test(after) ? " " : "";
+  return {
+    value: before + leading + transcript + trailing + after,
+    caret: start + leading.length + transcript.length,
+  };
+}
+
 const ChatComposer = memo(function ChatComposer({
   canSend,
   draft,
@@ -189,14 +202,29 @@ const ChatComposer = memo(function ChatComposer({
   modelControlRef,
   modelGroups,
   onAttachmentChosen,
+  onDictationError,
   onPromptPaste,
   onSend,
   onStop,
   setDraft,
   setMode,
   streaming,
+  dictationScope,
+  hidden,
   videoSupported,
 }) {
+  const promptRef = useRef(null);
+  const inputRef = useRef(null);
+  const stopDictationButtonRef = useRef(null);
+  const dictationInsertion = useRef(null);
+  const dictationCaret = useRef(null);
+  const wasDictating = useRef(false);
+  const dictation = useChatDictation({
+    enabled: !hidden && !streaming,
+    scope: dictationScope,
+    onError: onDictationError,
+  });
+  const dictating = dictation.phase !== "idle";
   const actionButtonRef = useRef(null);
   const actionTooltipTimerRef = useRef(0);
   const [showActionTooltip, setShowActionTooltip] = useState(false);
@@ -229,114 +257,185 @@ const ChatComposer = memo(function ChatComposer({
     [],
   );
 
+  useEffect(() => {
+    const active = document.activeElement;
+    if (dictating && !wasDictating.current) stopDictationButtonRef.current?.focus();
+    if (!dictating && wasDictating.current) {
+      if (!hidden && !streaming && (active === document.body || promptRef.current?.contains(active))) {
+        const input = inputRef.current?.querySelector("textarea");
+        input?.focus();
+        if (dictationCaret.current !== null) {
+          input?.setSelectionRange(dictationCaret.current, dictationCaret.current);
+        }
+      }
+      dictationCaret.current = null;
+      dictationInsertion.current = null;
+    }
+    wasDictating.current = dictating;
+  }, [dictating, hidden, streaming]);
+
+  const startDictation = () => {
+    const input = inputRef.current?.querySelector("textarea");
+    const hasCaret = input && document.activeElement === input;
+    const start = hasCaret ? input.selectionStart : draft.length;
+    const end = hasCaret ? input.selectionEnd : draft.length;
+    dictationInsertion.current = { start, end };
+    dictation.start((text) => {
+      const insertion = insertDictation(draft, start, end, text);
+      dictationCaret.current = insertion.caret;
+      setDraft((current) =>
+        current === draft
+          ? insertion.value
+          : insertDictation(current, current.length, current.length, text).value
+      );
+    });
+  };
+
   const onKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
-      onSend();
+      if (!dictating && hasKey) onSend();
     }
   };
+  const insertion = dictationInsertion.current;
+  const inputValue = insertion && dictation.transcript
+    ? insertDictation(draft, insertion.start, insertion.end, dictation.transcript).value
+    : draft;
 
   return (
     <>
-      <fig-ai-prompt>
+      <fig-ai-prompt
+        ref={promptRef}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || !dictating) return;
+          event.preventDefault();
+          event.stopPropagation();
+          dictation.stop();
+        }}
+      >
         <fig-input-text
+          ref={inputRef}
           class="chat-input"
           multiline=""
           autoresize=""
-          value={draft}
+          value={inputValue}
           placeholder={
             mode === "plan"
               ? "Describe what you want to plan…"
               : "Ask for changes..."
           }
           aria-label="Ask for changes"
-          disabled={streaming || !hasKey ? "" : undefined}
-          onInput={(event) => setDraft(event.target.value)}
+          disabled={streaming ? "" : undefined}
+          readonly={dictating ? "" : undefined}
+          onInput={(event) => {
+            if (!dictating) setDraft(event.target.value);
+          }}
           onKeyDown={onKeyDown}
-          onPaste={onPromptPaste}
+          onPaste={dictating || !hasKey ? undefined : onPromptPaste}
           dangerouslySetInnerHTML={{ __html: "" }}
         />
         <fig-footer>
-          <fig-tooltip class="chat-attach-button" text="Attach media">
-            <fig-button
-              type="button"
-              variant="ghost"
-              icon="true"
-              aria-label="Attach media"
-              disabled={streaming || !hasKey ? "" : undefined}
-              onClick={() => imageInputRef.current?.click()}
-            >
-              <fig-icon name="add" />
-            </fig-button>
-          </fig-tooltip>
-          <hstack>
-            <fig-tooltip text="Plan mode">
-              <fig-button
-                type="toggle"
-                variant="ghost"
-                icon="true"
-                selected={mode === "plan"}
-                aria-label={
-                  mode === "plan" ? "Disable plan mode" : "Enable plan mode"
-                }
-                disabled={streaming ? "" : undefined}
-                onClick={() =>
-                  setMode((current) =>
-                    current === "plan" ? "agent" : "plan"
-                  )
-                }
-              >
-                <PlanIcon />
-              </fig-button>
-            </fig-tooltip>
-            <fig-tooltip text={`Model: ${model.label}`}>
-              <fig-select
-                ref={modelControlRef}
-                class="chat-model-select"
-                variant="ghost"
-                label="Model"
-                position="top left"
-                value={chatModelValue(model)}
-                disabled={streaming ? "" : undefined}
-              >
-                <fig-select-options>
-                  {modelGroups.map((group) => (
-                    <Fragment key={group.label}>
-                      <fig-separator label={group.label} />
-                      {group.models.map((entry) => (
-                        <fig-select-option
-                          key={chatModelValue(entry)}
-                          value={chatModelValue(entry)}
-                        >
-                          {entry.label}
-                        </fig-select-option>
+          {dictating ? (
+            <ChatDictationControls dictation={dictation} stopButtonRef={stopDictationButtonRef} />
+          ) : (
+            <>
+              <fig-tooltip class="chat-attach-button" text="Attach media">
+                <fig-button
+                  type="button"
+                  variant="ghost"
+                  icon="true"
+                  aria-label="Attach media"
+                  disabled={streaming || !hasKey ? "" : undefined}
+                  onClick={() => imageInputRef.current?.click()}
+                >
+                  <fig-icon name="add" />
+                </fig-button>
+              </fig-tooltip>
+              <fig-stack direction="horizontal">
+                <fig-tooltip text="Plan mode">
+                  <fig-button
+                    type="toggle"
+                    variant="ghost"
+                    icon="true"
+                    selected={mode === "plan"}
+                    aria-label={
+                      mode === "plan" ? "Disable plan mode" : "Enable plan mode"
+                    }
+                    disabled={streaming ? "" : undefined}
+                    onClick={() =>
+                      setMode((current) =>
+                        current === "plan" ? "agent" : "plan"
+                      )
+                    }
+                  >
+                    <PlanIcon />
+                  </fig-button>
+                </fig-tooltip>
+                <fig-tooltip text={`Model: ${model.label}`}>
+                  <fig-select
+                    ref={modelControlRef}
+                    class="chat-model-select"
+                    variant="ghost"
+                    label="Model"
+                    position="top left"
+                    value={chatModelValue(model)}
+                    disabled={streaming ? "" : undefined}
+                  >
+                    <fig-select-options>
+                      {modelGroups.map((group) => (
+                        <Fragment key={group.label}>
+                          <fig-separator label={group.label} />
+                          {group.models.map((entry) => (
+                            <fig-select-option
+                              key={chatModelValue(entry)}
+                              value={chatModelValue(entry)}
+                            >
+                              {entry.label}
+                            </fig-select-option>
+                          ))}
+                        </Fragment>
                       ))}
-                    </Fragment>
-                  ))}
-                </fig-select-options>
-              </fig-select>
-            </fig-tooltip>
-            <fig-tooltip
-              text={streaming ? "Stop" : "Send"}
-              show={streaming && showActionTooltip ? "" : undefined}
-            >
-              <fig-button
-                ref={actionButtonRef}
-                type="button"
-                variant={streaming ? "ghost" : "primary"}
-                icon="true"
-                aria-label={streaming ? "Stop" : "Send"}
-                disabled={!streaming && !canSend ? "" : undefined}
-                onClick={streaming ? onStop : onSend}
-                onPointerEnter={showActionTooltipDelayed}
-                onPointerLeave={hideActionTooltip}
-                onFocus={showActionTooltipDelayed}
-                onBlur={hideActionTooltip}
-              >
-                {streaming ? <StopIcon /> : <SendIcon />}
-              </fig-button>
-            </fig-tooltip>
-          </hstack>
+                    </fig-select-options>
+                  </fig-select>
+                </fig-tooltip>
+                <fig-tooltip text={dictation.supported ? "Dictate" : "Dictation unavailable in this browser"}>
+                  <fig-button
+                    type="button"
+                    variant="ghost"
+                    icon=""
+                    pill=""
+                    aria-label="Dictate"
+                    disabled={streaming || !dictation.supported ? "" : undefined}
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={startDictation}
+                  >
+                    <DictateIcon />
+                  </fig-button>
+                </fig-tooltip>
+                <fig-tooltip
+                  text={streaming ? "Stop" : "Send"}
+                  show={streaming && showActionTooltip ? "" : undefined}
+                >
+                  <fig-button
+                    ref={actionButtonRef}
+                    type="button"
+                    variant={streaming ? "ghost" : "primary"}
+                    icon="true"
+                    pill={streaming ? undefined : ""}
+                    aria-label={streaming ? "Stop" : "Send"}
+                    disabled={!streaming && !canSend ? "" : undefined}
+                    onClick={streaming ? onStop : onSend}
+                    onPointerEnter={showActionTooltipDelayed}
+                    onPointerLeave={hideActionTooltip}
+                    onFocus={showActionTooltipDelayed}
+                    onBlur={hideActionTooltip}
+                  >
+                    {streaming ? <StopIcon /> : <SendIcon />}
+                  </fig-button>
+                </fig-tooltip>
+              </fig-stack>
+            </>
+          )}
         </fig-footer>
       </fig-ai-prompt>
       <input
@@ -1731,12 +1830,15 @@ ${pendingPlan.content}
             modelControlRef={modelControlRef}
             modelGroups={modelGroups}
             onAttachmentChosen={handleAttachmentChosen}
+            onDictationError={setError}
             onPromptPaste={handlePromptPaste}
             onSend={handleSend}
             onStop={stop}
             setDraft={setDraft}
             setMode={setMode}
             streaming={streaming}
+            dictationScope={threadId}
+            hidden={hidden}
             videoSupported={videoSupported}
           />
           {zoomedAttachment && (

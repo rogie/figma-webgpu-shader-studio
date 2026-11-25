@@ -303,6 +303,7 @@ function LayerVisibilityIcon({ visibility, enabled }) {
 function PropertiesLayerRow({
   id,
   name,
+  thumbnailUrl = "",
   expanded = false,
   enabled = true,
   readOnly = false,
@@ -321,10 +322,7 @@ function PropertiesLayerRow({
         <fig-button
           slot="input"
           type="button"
-          variant={expanded ? "ghost" : "input"}
-          size="large"
-          full=""
-          align="start"
+          variant="property"
           title={name}
           aria-haspopup="dialog"
           aria-expanded={expanded ? "true" : "false"}
@@ -332,6 +330,12 @@ function PropertiesLayerRow({
           disabled={enabled ? undefined : ""}
           onClick={onOpen}
         >
+          {thumbnailUrl ? (
+            <fig-swatch
+              slot="prepend"
+              background={swatchBackgroundCss(thumbnailUrl)}
+            />
+          ) : null}
           <span className="properties-layer-row-label">{name}</span>
         </fig-button>
       )}
@@ -2030,6 +2034,10 @@ export default function CompositionEditor({
                     layerCards,
                     "Shader effect"
                   )}
+                  thumbnailUrl={
+                    findShaderFillCard(layerCards, effect.shaderId)
+                      ?.thumbnailUrl || ""
+                  }
                   expanded={propertiesLayerId === effect.id}
                   enabled={effect.enabled}
                   readOnly={readOnly}

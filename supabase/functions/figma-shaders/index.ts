@@ -84,6 +84,8 @@ type RequestBody = {
   mainTs?: string;
   metadata?: ShaderMetadata;
   commitMessage?: string;
+  versionDescription?: string;
+  versionDetail?: string;
 };
 
 type OAuthIntent = "signin" | "connect";
@@ -976,6 +978,8 @@ async function updateFigmaShader(
       mainTs,
       metadata: body.metadata,
       commitMessage,
+      versionDescription: body.versionDescription,
+      versionDetail: body.versionDetail,
     })),
   );
   return {

@@ -70,6 +70,8 @@ test("create persists the scaffold link before deploying source", async () => {
       usesMouse: false,
     },
     commitMessage: "Create Glow from Shader Studio",
+    versionDescription: "Added Glow as a shader effect.",
+    versionDetail: "The shader source renders without pointer input or an animation clock.",
   });
 });
 

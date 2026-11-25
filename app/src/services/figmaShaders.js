@@ -59,6 +59,26 @@ function callbackUrl() {
   return new URL(OAUTH_CALLBACK_PATH, base).toString();
 }
 
+function localOAuthStart() {
+  if (!import.meta.env.DEV || window.location.hostname !== "localhost" ||
+      window.location.port !== "5173") return null;
+  if (!isFigmaOAuthCallback()) return null;
+  const params = new URLSearchParams(window.location.search);
+  const intent = params.get("start");
+  if (intent !== "connect" && intent !== "signin") return null;
+  const callback = new URL(callbackUrl());
+  const basePath = new URL(import.meta.env.BASE_URL, callback.origin).pathname;
+  const path = params.get("returnTo") || basePath;
+  const returnTo = new URL(path.startsWith("/") && !path.startsWith("//") ? path : basePath, callback.origin);
+  const returnUrl =
+    returnTo.origin === callback.origin &&
+    returnTo.pathname.startsWith(basePath) &&
+    returnTo.pathname !== callback.pathname
+      ? returnTo.pathname + returnTo.search + returnTo.hash
+      : basePath;
+  return { intent, returnUrl };
+}
+
 function randomBase64Url(byteLength = 32) {
   const bytes = crypto.getRandomValues(new Uint8Array(byteLength));
   let binary = "";
@@ -248,6 +268,8 @@ async function establishFigmaStudioSession(auth) {
 
 export function peekFigmaOAuthIntent() {
   try {
+    const start = localOAuthStart();
+    if (start) return start.intent;
     const pending = JSON.parse(sessionStorage.getItem(OAUTH_PENDING_KEY) || "null");
     return pending?.intent === "signin" ? "signin" : "connect";
   } catch {
@@ -256,10 +278,21 @@ export function peekFigmaOAuthIntent() {
 }
 
 /**
- * @param {{ intent?: "signin" | "connect" }} [options]
+ * @param {{ intent?: "signin" | "connect", returnUrl?: string }} [options]
  */
 export async function beginFigmaOAuth(options = {}) {
   const intent = options.intent === "signin" ? "signin" : "connect";
+  const returnUrl = options.returnUrl ||
+    window.location.pathname + window.location.search + window.location.hash;
+  // The registered dev callback and origin-scoped PKCE state both use localhost.
+  if (import.meta.env.DEV && window.location.hostname === "127.0.0.1" &&
+      window.location.port === "5173") {
+    const start = new URL(callbackUrl());
+    start.hostname = "localhost";
+    start.search = new URLSearchParams({ start: intent, returnTo: returnUrl });
+    window.location.assign(start.href);
+    return;
+  }
   const state = randomBase64Url();
   const verifier = randomBase64Url(48);
   const codeChallenge = await sha256Base64Url(verifier);
@@ -269,8 +302,7 @@ export async function beginFigmaOAuth(options = {}) {
       state,
       verifier,
       intent,
-      returnUrl:
-        window.location.pathname + window.location.search + window.location.hash,
+      returnUrl,
     })
   );
   const payload = await callFigmaShadersRaw({
@@ -285,7 +317,11 @@ export async function beginFigmaOAuth(options = {}) {
       code: "oauth_authorize_failed",
     });
   }
-  window.location.assign(payload.authorizationUrl);
+  if (options.returnUrl && isFigmaOAuthCallback()) {
+    window.location.replace(payload.authorizationUrl);
+  } else {
+    window.location.assign(payload.authorizationUrl);
+  }
 }
 
 async function exchangeFigmaOAuthCallback() {
@@ -351,7 +387,8 @@ async function exchangeFigmaOAuthCallback() {
 export function completeFigmaOAuthCallback() {
   if (!isFigmaOAuthCallback()) return Promise.resolve(null);
   if (!callbackPromise) {
-    callbackPromise = exchangeFigmaOAuthCallback();
+    const start = localOAuthStart();
+    callbackPromise = start ? beginFigmaOAuth(start) : exchangeFigmaOAuthCallback();
   }
   return callbackPromise;
 }
@@ -580,6 +617,8 @@ export function createFigmaShader(args, options = {}) {
  *   mainTs: string,
  *   metadata?: { name?: string, description?: string, isAnimated?: boolean, usesMouse?: boolean },
  *   commitMessage: string,
+ *   versionDescription?: string,
+ *   versionDetail?: string,
  * }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */

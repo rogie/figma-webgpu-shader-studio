@@ -197,7 +197,6 @@ fig-header[borderless]:has(+ fig-header) {
     min-height: 0;
     margin: 0;
     overflow: hidden;
-    background: var(--figma-color-bg-secondary);
     border-right: 1px solid var(--figma-color-border);
 
     .new-shader-menu {

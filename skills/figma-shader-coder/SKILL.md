@@ -20,3 +20,7 @@ Before editing shader source:
 5. Fix build, WGSL, type, and lint errors with the smallest targeted edits.
 
 Do not deploy, create, update, attach, or invalidate shaders unless the user explicitly asks for those actions.
+
+## Figma MCP publishing
+
+Use Figma's current `figma-shaders` skill for the connected MCP workflow. Create the fill or effect scaffold in the chosen plan, read its source contract, and update it with the complete `main.ts`. For a linked shader, keep its existing kind and update it directly. Pass `usesMouse` for any pointer read, including `frame.mousePosition.down`, and `isAnimated` for clock reads. Send those flags in update metadata, with a commit message and the supported version notes. If Figma rejects a capability, report the rejection and preserve the source.

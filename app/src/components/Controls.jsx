@@ -132,6 +132,7 @@ function NumberProperty({
       <fig-input-number
         ref={controlRef}
         slot="input"
+        default={def.defaultValue ?? 0}
         min={def.min}
         max={def.max}
         step={def.step ?? 0.01}
@@ -169,6 +170,7 @@ function TextProperty({
       <fig-input-text
         ref={controlRef}
         slot="input"
+        default={def.defaultValue ?? ""}
         full=""
         dangerouslySetInnerHTML={opaqueContent}
       />
@@ -207,7 +209,7 @@ function SliderProperty({
       <fig-slider
         ref={controlRef}
         slot="input"
-        default={def.defaultValue}
+        default={def.defaultValue ?? 0}
         min={min}
         max={max}
         step={step}
@@ -252,6 +254,7 @@ function SwitchProperty({
       <fig-switch
         ref={controlRef}
         slot="input"
+        default-checked={def.defaultValue ? "" : undefined}
         dangerouslySetInnerHTML={opaqueContent}
       />
     </PropertyRow>
@@ -325,6 +328,7 @@ function SelectProperty({
       <fig-select
         ref={controlRef}
         slot="input"
+        default={def.defaultValue == null ? undefined : String(def.defaultValue)}
         options={formatSelectOptions(options)}
         full=""
         dangerouslySetInnerHTML={opaqueContent}
@@ -371,6 +375,9 @@ function ColorProperty({
       <fig-input-color
         ref={controlRef}
         slot="input"
+        default={colorToHex(
+          def.defaultValue || { r: 0, g: 0, b: 0, a: 1 },
+        )}
         text="true"
         alpha="true"
         full=""
@@ -404,6 +411,7 @@ function GradientProperty({
       <fig-input-gradient
         ref={controlRef}
         slot="input"
+        default={serializeGradientValue(def.defaultValue?.stops || [])}
         edit="picker"
         full=""
         dangerouslySetInnerHTML={opaqueContent}
@@ -468,6 +476,8 @@ function PointProperty({
       <fig-input-point
         ref={controlRef}
         slot="input"
+        default-x={def.defaultValue?.x ?? 50}
+        default-y={def.defaultValue?.y ?? 50}
         units={positionUnits(def)}
         full=""
         dangerouslySetInnerHTML={opaqueContent}
@@ -529,6 +539,8 @@ function PointRadiusProperty({
         <fig-input-point
           ref={pointRef}
           aria-label={`${label} position`}
+          default-x={def.defaultValue?.x ?? 50}
+          default-y={def.defaultValue?.y ?? 50}
           units={positionUnits(def)}
           full=""
           dangerouslySetInnerHTML={opaqueContent}
@@ -536,6 +548,7 @@ function PointRadiusProperty({
         <fig-input-number
           ref={radiusRef}
           aria-label={`${label} radius`}
+          default={def.defaultValue?.radius ?? 0}
           min="0"
           step={def.radiusStep ?? def.step ?? 0.01}
           units={radiusUnits(def)}
@@ -620,6 +633,8 @@ function PointRadiusAngleProperty({
         <fig-input-point
           ref={pointRef}
           aria-label={`${label} position`}
+          default-x={def.defaultValue?.x ?? 50}
+          default-y={def.defaultValue?.y ?? 50}
           units={positionUnits(def)}
           full=""
           dangerouslySetInnerHTML={opaqueContent}
@@ -627,6 +642,7 @@ function PointRadiusAngleProperty({
         <fig-input-number
           ref={radiusRef}
           aria-label={`${label} radius`}
+          default={def.defaultValue?.radius ?? 0}
           min="0"
           step={def.radiusStep ?? def.step ?? 0.01}
           units={radiusUnits(def)}
@@ -701,6 +717,8 @@ function PointPointProperty({
         <fig-input-point
           ref={startRef}
           aria-label={`${label} start`}
+          default-x={def.defaultValue?.x ?? 25}
+          default-y={def.defaultValue?.y ?? 25}
           units={units}
           full=""
           dangerouslySetInnerHTML={opaqueContent}
@@ -708,6 +726,8 @@ function PointPointProperty({
         <fig-input-point
           ref={endRef}
           aria-label={`${label} end`}
+          default-x={def.defaultValue?.x2 ?? 75}
+          default-y={def.defaultValue?.y2 ?? 75}
           units={units}
           full=""
           dangerouslySetInnerHTML={opaqueContent}
@@ -779,6 +799,8 @@ function ColorPointProperty({
         <fig-input-point
           ref={pointRef}
           aria-label={`${label} position`}
+          default-x={def.defaultValue?.x ?? 50}
+          default-y={def.defaultValue?.y ?? 50}
           units={positionUnits(def)}
           full=""
           dangerouslySetInnerHTML={opaqueContent}
@@ -786,6 +808,9 @@ function ColorPointProperty({
         <fig-input-color
           ref={colorRef}
           aria-label={`${label} color`}
+          default={colorToHex(
+            def.defaultValue?.color || { r: 1, g: 1, b: 1, a: 1 },
+          )}
           text="true"
           alpha="true"
           full=""

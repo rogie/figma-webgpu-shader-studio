@@ -20,7 +20,9 @@ Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in
 `.env.local`. The publishable key is safe to use in the browser; never put a
 Supabase secret or service-role key in this app.
 
-Open the printed URL. The interface mirrors the original `shader.gl` application: a preset rail, FigUI3 property sidebar, CodeMirror panel, and large checkerboard visualizer. The `dither`, `grain`, `pixelate`, and `sphere` modules from the repo root are bundled as presets. A bundled sample image is loaded so effects render immediately; drop or upload your own image/video to change the input.
+Open [http://localhost:5173](http://localhost:5173). Figma OAuth uses this exact host and port. If you start Connect to Figma from `127.0.0.1:5173` in dev, Shader Studio switches to `localhost` before starting the flow. Browser drafts and sessions are stored separately on each origin.
+
+The interface mirrors the original `shader.gl` application: a preset rail, FigUI3 property sidebar, CodeMirror panel, and large checkerboard visualizer. The `dither`, `grain`, `pixelate`, and `sphere` modules from the repo root are bundled as presets. A bundled sample image is loaded so effects render immediately; drop or upload your own image/video to change the input.
 
 ## Supabase setup
 
@@ -114,8 +116,9 @@ OpenAI, Anthropic, Gemini, or Grok API key.
 
    The function reads `x-user-api-key` from each request. No platform
    provider secrets are required.
-3. In Chat, pick an allowlisted model from the dropdown (OpenAI GPT-6 Astra / GPT-5.6, Claude,
-   Gemini 3.x, or Grok 4.x), send a message, and
+3. In Chat, pick an available model from the dropdown. The OpenAI shortlist
+   includes GPT-6.2 Sol and Astra, GPT-6.1 Terra, and GPT-6 Luna. GPT-5.6 Turbo
+   appears only if your API key lists that exact model. Send a message, and
    when the model returns a full TypeScript fence it is applied to the editor
    (with Undo apply).
 

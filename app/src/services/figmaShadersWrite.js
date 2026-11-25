@@ -133,6 +133,8 @@ export async function createFigmaShader(request, args, options = {}) {
  *   mainTs: string,
  *   metadata?: { name?: string, description?: string, isAnimated?: boolean, usesMouse?: boolean },
  *   commitMessage: string,
+ *   versionDescription?: string,
+ *   versionDetail?: string,
  * }} args
  * @param {{ token?: string, signal?: AbortSignal }} [options]
  */
@@ -143,6 +145,8 @@ export async function updateFigmaShader(request, args, options = {}) {
     });
   }
   const metadata = optionalMetadata(args?.metadata);
+  const versionDescription = args?.versionDescription?.trim();
+  const versionDetail = args?.versionDetail?.trim();
   const payload = await request(
     {
       op: "update",
@@ -151,6 +155,8 @@ export async function updateFigmaShader(request, args, options = {}) {
       mainTs: requiredSource(args?.mainTs),
       ...(metadata ? { metadata } : {}),
       commitMessage: requiredString(args?.commitMessage, "commitMessage"),
+      ...(versionDescription ? { versionDescription } : {}),
+      ...(versionDetail ? { versionDetail } : {}),
     },
     options
   );

@@ -1,3 +1,5 @@
+import { OPENAI_CHAT_MODELS } from "./openaiModels.mjs";
+
 export type Provider = "openai" | "anthropic" | "gemini" | "grok" | "cursor";
 
 export const PROVIDERS: Provider[] = [
@@ -18,13 +20,11 @@ export type ModelOption = {
   label: string;
 };
 
-/** Curated BYOK models. Keep in sync with app/src/lib/chatModels.js.
+/** Curated BYOK models. Keep other providers in sync with app/src/lib/chatModels.js.
  * Cursor also accepts any well-formed id from GET /v1/models. */
 export const MODELS: ModelOption[] = [
   // OpenAI
-  { provider: "openai", id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-  { provider: "openai", id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-  { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
+  ...OPENAI_CHAT_MODELS.map(({ id, label }) => ({ provider: "openai" as const, id, label })),
 
   // Anthropic
   { provider: "anthropic", id: "claude-fable-5", label: "Claude Fable 5" },

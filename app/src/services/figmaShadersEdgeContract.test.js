@@ -26,14 +26,16 @@ test("edge update uses the current staging MCP files contract", () => {
   const args = updateShaderToolArguments({
     id: "shader-1",
     kind: "effect",
-    mainTs: "export default function Effect() {}",
+    mainTs: "export function render(device, frame) { return frame.mousePosition.down }",
     metadata: {
-      name: "Animated effect",
-      description: "Responds over time without reading the mouse.",
-      isAnimated: true,
-      usesMouse: false,
+      name: "Press effect",
+      description: "Responds to a primary-button press.",
+      isAnimated: false,
+      usesMouse: true,
     },
     commitMessage: "Update effect",
+    versionDescription: "Added a press response.",
+    versionDetail: "The shader reads primary-button state at render time.",
   });
 
   assert.deepEqual(args, {
@@ -41,15 +43,17 @@ test("edge update uses the current staging MCP files contract", () => {
     kind: "effect",
     files: [{
       path: "main.ts",
-      content: "export default function Effect() {}",
+      content: "export function render(device, frame) { return frame.mousePosition.down }",
     }],
     metadata: {
-      name: "Animated effect",
-      description: "Responds over time without reading the mouse.",
-      isAnimated: true,
-      usesMouse: false,
+      name: "Press effect",
+      description: "Responds to a primary-button press.",
+      isAnimated: false,
+      usesMouse: true,
     },
     commitMessage: "Update effect",
+    versionDescription: "Added a press response.",
+    versionDetail: "The shader reads primary-button state at render time.",
   });
   assert.equal("mainTs" in args, false);
 });

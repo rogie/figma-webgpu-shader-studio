@@ -33,7 +33,6 @@
     position: sticky;
     top: 0;
     z-index: 2;
-    background: var(--figma-color-bg-secondary);
 
     h3,
     .shader-list-header-count {

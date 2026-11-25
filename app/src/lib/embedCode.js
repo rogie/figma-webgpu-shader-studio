@@ -13,6 +13,48 @@ function jsonLiteral(value) {
   return JSON.stringify(value ?? {}, null, 2).replace(/</g, "\\u003c");
 }
 
+const STANDALONE_POINTER_INPUT = `
+      let pressedPointerId = null;
+      let pointerOutside = false;
+
+      function movePointer(event) {
+        if (!event.isPrimary || (pressedPointerId !== null && event.pointerId !== pressedPointerId)) return;
+        pointerOutside = false;
+        if (event.type === "pointermove" && !(event.buttons & 1)) pressedPointerId = null;
+        const rect = canvas.getBoundingClientRect();
+        frame.mousePosition = {
+          x: (event.clientX - rect.left) * canvas.width / rect.width,
+          y: (event.clientY - rect.top) * canvas.height / rect.height,
+          down: pressedPointerId !== null,
+        };
+      }
+
+      function releasePointer(event) {
+        if (pressedPointerId === null) return;
+        if (event.pointerId !== undefined && event.pointerId !== pressedPointerId) return;
+        if (event.type === "pointerup" && (event.buttons & 1)) return;
+        pressedPointerId = null;
+        frame.mousePosition = pointerOutside
+          ? { x: 0, y: 0, down: false }
+          : { ...frame.mousePosition, down: false };
+      }
+
+      canvas.addEventListener("pointermove", movePointer);
+      canvas.addEventListener("pointerdown", (event) => {
+        if (!event.isPrimary || event.button !== 0 || pressedPointerId !== null) return;
+        pressedPointerId = event.pointerId;
+        movePointer(event);
+      });
+      canvas.addEventListener("pointerleave", (event) => {
+        if (!event.isPrimary || (pressedPointerId !== null && event.pointerId !== pressedPointerId)) return;
+        pointerOutside = true;
+        if (pressedPointerId === null) frame.mousePosition = { x: 0, y: 0, down: false };
+      });
+      window.addEventListener("pointerup", releasePointer, true);
+      window.addEventListener("pointercancel", releasePointer, true);
+      window.addEventListener("blur", releasePointer);
+`;
+
 function wrapLayerModule(source) {
   return `(() => {
 ${inlineScriptSafe(browserShaderSource(source || ""))}
@@ -124,7 +166,7 @@ ${layersLiteral}
         time: 0,
         deltaTime: 0,
         frame: 0,
-        mousePosition: { x: 0, y: 0 },
+        mousePosition: { x: 0, y: 0, down: false },
       };
       let inputTexture = null;
       let lastTime = performance.now();
@@ -134,16 +176,7 @@ ${layersLiteral}
       let passthroughBindLayout = null;
       let passthroughSampler = null;
 
-      canvas.addEventListener("pointermove", (event) => {
-        const rect = canvas.getBoundingClientRect();
-        frame.mousePosition = {
-          x: (event.clientX - rect.left) * canvas.width / rect.width,
-          y: (event.clientY - rect.top) * canvas.height / rect.height,
-        };
-      });
-      canvas.addEventListener("pointerleave", () => {
-        frame.mousePosition = { x: 0, y: 0 };
-      });
+${STANDALONE_POINTER_INPUT}
 
       function destroyLayerStates() {
         for (const layer of layers) {
@@ -437,22 +470,13 @@ ${shaderSource}
         time: 0,
         deltaTime: 0,
         frame: 0,
-        mousePosition: { x: 0, y: 0 },
+        mousePosition: { x: 0, y: 0, down: false },
       };
       let inputTexture = null;
       let lastTime = performance.now();
       let initialized = false;
 
-      canvas.addEventListener("pointermove", (event) => {
-        const rect = canvas.getBoundingClientRect();
-        frame.mousePosition = {
-          x: (event.clientX - rect.left) * canvas.width / rect.width,
-          y: (event.clientY - rect.top) * canvas.height / rect.height,
-        };
-      });
-      canvas.addEventListener("pointerleave", () => {
-        frame.mousePosition = { x: 0, y: 0 };
-      });
+${STANDALONE_POINTER_INPUT}
 
       function destroyState() {
         for (const resource of Object.values(frame.state)) {

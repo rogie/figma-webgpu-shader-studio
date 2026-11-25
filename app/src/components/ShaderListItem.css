@@ -1,46 +1,4 @@
-.shader-list-item {
-  display: flex;
-  align-items: center;
-  gap: var(--spacer-2);
-  width: 100%;
-  min-width: 0;
-  padding: var(--spacer-1);
-  padding-right: var(--spacer-2);
-
-  & .shader-list-item-preview {
-    width: var(--spacer-5);
-    flex-shrink: 0;
-
-    & > fig-preview {
-      --fig-preview-background: transparent;
-    }
-  }
-
-  & .shader-list-item-text {
-    display: flex;
-    flex: 1 1 auto;
-    min-width: 0;
-    flex-direction: column;
-  }
-
-  & .shader-list-item-label {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--figma-color-text-primary);
-  }
-
-  & .shader-list-item-sublabel {
-    min-width: 0;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    overflow: hidden;
-    color: var(--figma-color-text-secondary);
-    font-size: var(--body-small-fontSize);
-  }
-
+fig-card.shader-list-item {
   & .shader-list-item-status {
     display: flex;
     flex: 0 0 auto;

@@ -690,20 +690,20 @@ test("mouse uniforms update only while playback is running", () => {
 
     host.running = false;
     host._onMouse({ clientX: 60, clientY: 45 });
-    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0, down: false });
     assert.equal(host.frame.time, 321);
     assert.equal(redraws, 0);
 
     host._onMouseLeave();
     raf.flush();
-    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0, down: false });
     assert.equal(host.frame.time, 321);
     assert.equal(redraws, 0);
 
     host.running = true;
     host.rafId = 1;
     host._onMouse({ clientX: 35, clientY: 30 });
-    assert.deepEqual(host.frame.mousePosition, { x: 50, y: 20 });
+    assert.deepEqual(host.frame.mousePosition, { x: 50, y: 20, down: false });
     assert.equal(redraws, 0);
   } finally {
     raf.restore();
@@ -720,12 +720,12 @@ test("moving between canvas and overlay handles keeps mousePosition", () => {
     host._onMouseLeave();
     host._onMouse({ clientX: 60, clientY: 45 });
     raf.flush();
-    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
 
     // Leaving the preview entirely still clears the position.
     host._onMouseLeave();
     raf.flush();
-    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0 });
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0, down: false });
   } finally {
     raf.restore();
   }
@@ -740,7 +740,38 @@ test("mousePosition stays in logical pixels while supersampled", () => {
 
   host._onMouse({ clientX: 60, clientY: 45 });
 
-  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
+});
+
+test("primary press redraws without animation and clears outside, on cancel, or on blur", () => {
+  const raf = stubAnimationFrame();
+  try {
+    const host = makeMouseHost();
+    const frames = [];
+    host.redraw = () => frames.push(host.frame.mousePosition);
+    const press = { isPrimary: true, pointerId: 1, button: 0, clientX: 60, clientY: 45 };
+    host._onMouseDown({ ...press, button: 2 });
+    assert.equal(frames.length, 0);
+
+    host._onMouseDown(press);
+    assert.deepEqual(frames.at(-1), { x: 100, y: 50, down: true });
+    host._onMouseRelease({ type: "pointerup", pointerId: 2 });
+    assert.equal(host.frame.mousePosition.down, true);
+    host._onMouseLeave(press);
+    raf.flush();
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: true });
+    host._onMouseRelease({ type: "pointerup", pointerId: 1, buttons: 0 });
+    assert.deepEqual(frames.at(-1), { x: 0, y: 0, down: false });
+
+    for (const event of [{ type: "pointercancel", pointerId: 1 }, { type: "blur" }]) {
+      host._onMouseDown(press);
+      host._onMouseRelease(event);
+      assert.deepEqual(frames.at(-1), { x: 100, y: 50, down: false });
+    }
+    assert.equal(host.frame.time, 321);
+  } finally {
+    raf.restore();
+  }
 });
 
 test("setPointerSurface tracks the overlay and detaches on destroy", () => {
@@ -762,16 +793,16 @@ test("setPointerSurface tracks the overlay and detaches on destroy", () => {
     host.setPointerSurface(surface);
     assert.deepEqual(
       listeners.map(([type]) => type),
-      ["pointermove", "pointerleave"]
+      ["pointermove", "pointerleave", "pointerdown"]
     );
 
     // Repeat calls must not stack duplicate listeners.
     host.setPointerSurface(surface);
-    assert.equal(listeners.length, 2);
+    assert.equal(listeners.length, 3);
 
     const move = listeners.find(([type]) => type === "pointermove")[1];
     move({ clientX: 60, clientY: 45 });
-    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50 });
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
 
     host.setPointerSurface(null);
     assert.equal(listeners.length, 0);

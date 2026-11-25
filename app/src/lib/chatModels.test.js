@@ -13,6 +13,10 @@ import {
 
 test("keeps only the shader-focused model shortlist", () => {
   assert.deepEqual(CHAT_MODELS.map((model) => model.id), [
+    "gpt-6.2-sol",
+    "gpt-6.2-astra",
+    "gpt-6.1-terra",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-6-astra",
@@ -36,13 +40,19 @@ test("filters OpenAI models by availability in curated order", () => {
     { id: "not-in-the-catalog" },
     { id: "gpt-6-astra" },
     { id: "gpt-5.6-sol" },
+    { id: "gpt-5.6-turbo" },
+    { id: "gpt-6.2-astra" },
+    { id: "gpt-6.2-sol" },
   ]);
   const openaiIds = groups
     .flatMap((group) => group.models)
     .filter((model) => model.provider === "openai")
     .map((model) => model.id);
 
-  assert.deepEqual(openaiIds, ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra"]);
+  assert.deepEqual(openaiIds, [
+    "gpt-6.2-sol", "gpt-6.2-astra", "gpt-5.6-turbo",
+    "gpt-5.6-sol", "gpt-5.6-terra", "gpt-6-astra",
+  ]);
   assert.ok(groups.some((group) => group.label === "Anthropic"));
   assert.ok(groups.some((group) => group.label === "Gemini"));
   assert.ok(groups.some((group) => group.label === "Grok"));

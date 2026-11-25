@@ -1,14 +1,17 @@
-/** Curated shortlist — keep in sync with supabase/functions/chat/models.ts.
+import { OPENAI_CHAT_MODELS } from "../../../supabase/functions/chat/openaiModels.mjs";
+
+/** Curated shortlist for other providers — keep in sync with supabase/functions/chat/models.ts.
  * Cursor options are replaced by GET /v1/models when a Cursor key is present. */
+
+const openAIModels = OPENAI_CHAT_MODELS.map(({ id, label }) => ({ provider: "openai", id, label }));
+const openAIModelsRequiringDiscovery = new Set(
+  OPENAI_CHAT_MODELS.filter((model) => model.requiresDiscovery).map((model) => model.id)
+);
 
 export const CHAT_MODEL_GROUPS = [
   {
     label: "OpenAI",
-    models: [
-      { provider: "openai", id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
-      { provider: "openai", id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
-      { provider: "openai", id: "gpt-6-astra", label: "GPT-6 Astra" },
-    ],
+    models: openAIModels.filter((model) => !openAIModelsRequiringDiscovery.has(model.id)),
   },
   {
     label: "Anthropic",
@@ -179,6 +182,10 @@ export function groupsForAvailableProviderModels(availableModelsByProvider) {
       if (discovered.length) return { ...group, models: discovered };
       return group;
     }
+    if (provider === "openai" && availableIdsByProvider.has(provider)) {
+      const available = availableIdsByProvider.get(provider);
+      return { ...group, models: openAIModels.filter((model) => available.has(model.id)) };
+    }
     return {
       ...group,
       models: group.models.filter(
@@ -236,7 +243,8 @@ export function findSelectableChatModel(models, value) {
 }
 
 export function findChatModel(provider, id) {
-  const known = CHAT_MODELS.find((model) =>
+  const models = provider === "openai" ? openAIModels : CHAT_MODELS;
+  const known = models.find((model) =>
     matchesChatModel(model, provider, id)
   );
   if (known) return known;

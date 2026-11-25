@@ -39,10 +39,9 @@ function ShaderListItem({
   }
 
   return (
-    <div className="shader-list-item">
+    <fig-card class="shader-list-item" direction="horizontal">
       {showPreview && (
         <fig-image
-          class="shader-list-item-preview"
           src={src || undefined}
           alt={label}
           fit="contain"
@@ -53,12 +52,12 @@ function ShaderListItem({
           dangerouslySetInnerHTML={opaqueContent}
         />
       )}
-      <div className="shader-list-item-text">
-        <label className="shader-list-item-label">{label}</label>
+      <fig-footer>
+        <label className="fig-card-label">{label}</label>
         {sublabel && (
-          <span className="shader-list-item-sublabel">{sublabel}</span>
+          <label className="fig-card-sublabel">{sublabel}</label>
         )}
-      </div>
+      </fig-footer>
       {(published || figmaLinked) && (
         <div className="shader-list-item-status">
           {figmaLinked && (
@@ -76,7 +75,7 @@ function ShaderListItem({
       {actions ? (
         <div className="shader-list-item-actions">{actions}</div>
       ) : null}
-    </div>
+    </fig-card>
   );
 }
 

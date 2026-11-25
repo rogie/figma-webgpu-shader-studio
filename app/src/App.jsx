@@ -176,6 +176,7 @@ import {
   figmaShaderProgressMessage,
   figmaShaderSuccessMessage,
   figmaShaderUpdateMetadata,
+  figmaShaderVersionNotes,
 } from "./lib/figmaShaderSync.js";
 import { buildStandaloneEmbedCode } from "./lib/embedCode.js";
 import {
@@ -11032,6 +11033,7 @@ export default function App() {
           commitMessage: `${
             operation === "create" ? "Create" : "Update"
           } ${snapshot.name} from Shader Studio`,
+          ...figmaShaderVersionNotes({ ...snapshot, mainTs: pkg.mainTs }, metadata, operation),
         });
         await persistCurrentFigmaLink({
           ...link,

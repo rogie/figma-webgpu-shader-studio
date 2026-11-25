@@ -130,7 +130,7 @@ export class ShaderHost {
       deltaTime: 0,
       frame: 0,
       renderScale: 1,
-      mousePosition: { x: 0, y: 0 },
+      mousePosition: { x: 0, y: 0, down: false },
       audio: createSilentAudioFrame(),
     };
     this._audioBus = null;
@@ -151,9 +151,13 @@ export class ShaderHost {
     this._shaderCompilationErrorMessage = null;
     this._pointerSurface = null;
     this._mouseResetId = 0;
+    this._pressedPointerId = null;
+    this._mouseOutside = false;
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
+    this._onMouseDown = this._onMouseDown.bind(this);
+    this._onMouseRelease = this._onMouseRelease.bind(this);
     // While > 0, setSize defers canvas dimension changes so WebGPU readback
     // cannot lose its swapchain texture mid-copy (e.g. export menu close).
     this._captureLock = 0;
@@ -210,8 +214,11 @@ export class ShaderHost {
       }
     });
 
-    this.canvas.addEventListener?.("pointermove", this._onMouse);
-    this.canvas.addEventListener?.("pointerleave", this._onMouseLeave);
+    this._listenOnPointerSurface(this.canvas, "addEventListener");
+    const pointerWindow = this.canvas.ownerDocument?.defaultView;
+    pointerWindow?.addEventListener("pointerup", this._onMouseRelease, true);
+    pointerWindow?.addEventListener("pointercancel", this._onMouseRelease, true);
+    pointerWindow?.addEventListener("blur", this._onMouseRelease);
     this.ready = true;
     measurePerf("host.init", startedAt);
   }
@@ -223,19 +230,48 @@ export class ShaderHost {
    */
   setPointerSurface(element) {
     if (this._pointerSurface === element) return;
-    this._pointerSurface?.removeEventListener?.("pointermove", this._onMouse);
-    this._pointerSurface?.removeEventListener?.(
-      "pointerleave",
-      this._onMouseLeave
-    );
+    if (this._pointerSurface !== this.canvas) {
+      this._listenOnPointerSurface(this._pointerSurface, "removeEventListener");
+    }
     this._pointerSurface = element || null;
-    this._pointerSurface?.addEventListener?.("pointermove", this._onMouse);
-    this._pointerSurface?.addEventListener?.("pointerleave", this._onMouseLeave);
+    if (this._pointerSurface !== this.canvas) {
+      this._listenOnPointerSurface(this._pointerSurface, "addEventListener");
+    }
+  }
+
+  _listenOnPointerSurface(surface, method) {
+    surface?.[method]?.("pointermove", this._onMouse);
+    surface?.[method]?.("pointerleave", this._onMouseLeave);
+    surface?.[method]?.("pointerdown", this._onMouseDown);
+  }
+
+  _onMouseDown(event) {
+    if (!this.active || !this.running || !this.usesMouse) return;
+    if (event.isPrimary === false || event.button !== 0 || this._pressedPointerId !== null) return;
+    this._pressedPointerId = event.pointerId;
+    this._onMouse(event);
+  }
+
+  _onMouseRelease(event) {
+    if (this._pressedPointerId === null) return;
+    if (event?.pointerId !== undefined && event.pointerId !== this._pressedPointerId) return;
+    if (event?.type === "pointerup" && (event.buttons & 1)) return;
+    this._pressedPointerId = null;
+    const { x, y } = this.frame.mousePosition;
+    this.frame.mousePosition = this._mouseOutside
+      ? { x: 0, y: 0, down: false }
+      : { x, y, down: false };
+    this._redrawForMouse();
   }
 
   _onMouse(e) {
-    if (!this.active || !this.running) return;
+    if (!this.active || !this.running || e.isPrimary === false) return;
+    if (this._pressedPointerId !== null && e.pointerId !== this._pressedPointerId) return;
     this._cancelMouseReset();
+    this._mouseOutside = false;
+    if (e.type === "pointermove" && !(e.buttons & 1)) {
+      this._pressedPointerId = null;
+    }
     const rect = this.canvas.getBoundingClientRect();
     const renderScale = this.frame.renderScale || 1;
     const sx = this.canvas.width / rect.width / renderScale;
@@ -243,18 +279,22 @@ export class ShaderHost {
     this.frame.mousePosition = {
       x: (e.clientX - rect.left) * sx,
       y: (e.clientY - rect.top) * sy,
+      down: this._pressedPointerId !== null,
     };
     this._redrawForMouse();
   }
 
-  _onMouseLeave() {
-    if (!this.active || !this.running) return;
+  _onMouseLeave(event) {
+    if (!this.active || !this.running || event?.isPrimary === false) return;
+    if (this._pressedPointerId !== null && event?.pointerId !== this._pressedPointerId) return;
     // Moving between the canvas and an overlay handle fires leave before the
     // next move; defer the reset so the handoff never blanks mousePosition.
     this._cancelMouseReset();
     this._mouseResetId = requestAnimationFrame(() => {
       this._mouseResetId = 0;
-      this.frame.mousePosition = { x: 0, y: 0 };
+      this._mouseOutside = true;
+      if (this._pressedPointerId !== null) return;
+      this.frame.mousePosition = { x: 0, y: 0, down: false };
       this._redrawForMouse();
     });
   }
@@ -266,7 +306,7 @@ export class ShaderHost {
   }
 
   _redrawForMouse() {
-    if (this.running && this.usesMouse && !this._isLoopActive()) this.redraw();
+    if (this.active && this.running && this.usesMouse && !this._isLoopActive()) this.redraw();
   }
 
   /**
@@ -2306,6 +2346,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
 
   _disableRejectedModule() {
     this.running = false;
+    this._onMouseRelease();
     this._playbackGeneration += 1;
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
@@ -2485,6 +2526,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
   stop({ resetTime = true } = {}) {
     this._cancelSeekPresent();
     this.running = false;
+    this._onMouseRelease();
     if (this.rafId) cancelAnimationFrame(this.rafId);
     this.rafId = 0;
     this._cancelMouseReset();
@@ -2515,6 +2557,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.active = next;
     this._syncCompositionSourcePlayback();
     if (!this.active) {
+      this._onMouseRelease();
+      this._cancelMouseReset();
       if (this.rafId) cancelAnimationFrame(this.rafId);
       this.rafId = 0;
       // Stop the video decoder so a hidden tab quiets the CPU/GPU. Frame
@@ -2582,8 +2626,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.clearInput();
     this._cancelMouseReset();
     this.setPointerSurface(null);
-    this.canvas.removeEventListener?.("pointermove", this._onMouse);
-    this.canvas.removeEventListener?.("pointerleave", this._onMouseLeave);
+    this._listenOnPointerSurface(this.canvas, "removeEventListener");
+    const pointerWindow = this.canvas.ownerDocument?.defaultView;
+    pointerWindow?.removeEventListener("pointerup", this._onMouseRelease, true);
+    pointerWindow?.removeEventListener("pointercancel", this._onMouseRelease, true);
+    pointerWindow?.removeEventListener("blur", this._onMouseRelease);
     if (this.device) {
       try {
         this.device.destroy();

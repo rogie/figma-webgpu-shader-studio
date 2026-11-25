@@ -50,6 +50,25 @@ export function figmaShaderUpdateMetadata(snapshot) {
   };
 }
 
+export function figmaShaderVersionNotes(snapshot, metadata, operation) {
+  const kind = figmaShaderKindLabel(snapshot.kind);
+  const versionDescription = operation === "create"
+    ? `Added ${metadata.name} as a shader ${kind}.`
+    : `Updated the shader ${kind} ${metadata.name}.`;
+  const source = snapshot.mainTs || snapshot.source || "";
+  const inputs = [];
+  if (metadata.usesMouse) {
+    inputs.push(/\bmousePosition\s*(?:\?\.|\.)\s*down\b/.test(source)
+      ? "primary-button press state"
+      : "pointer input");
+  }
+  if (metadata.isAnimated) inputs.push("the animation clock");
+  const versionDetail = inputs.length
+    ? `The shader reads ${inputs.join(" and ")} at render time.`
+    : "The shader source renders without pointer input or an animation clock.";
+  return { versionDescription, versionDetail };
+}
+
 export async function createAndDeployFigmaShader({
   snapshot,
   planKey,
@@ -80,6 +99,7 @@ export async function createAndDeployFigmaShader({
     mainTs: snapshot.mainTs,
     metadata,
     commitMessage: `Create ${metadata.name} from Shader Studio`,
+    ...figmaShaderVersionNotes(snapshot, metadata, "create"),
   });
   const deployedLink = {
     ...link,

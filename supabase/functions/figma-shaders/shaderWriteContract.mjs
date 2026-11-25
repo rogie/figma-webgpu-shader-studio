@@ -27,6 +27,8 @@ export function updateShaderToolArguments({
   mainTs,
   metadata,
   commitMessage,
+  versionDescription,
+  versionDetail,
 }) {
   const nextMetadata = {};
   if (typeof metadata?.name === "string" && metadata.name.trim()) {
@@ -44,6 +46,10 @@ export function updateShaderToolArguments({
   if (typeof metadata?.usesMouse === "boolean") {
     nextMetadata.usesMouse = metadata.usesMouse;
   }
+  const description = typeof versionDescription === "string"
+    ? versionDescription.replace(/\s+/g, " ").trim()
+    : "";
+  const detail = typeof versionDetail === "string" ? versionDetail.trim() : "";
 
   return {
     id,
@@ -51,5 +57,7 @@ export function updateShaderToolArguments({
     files: [{ path: "main.ts", content: mainTs }],
     ...(Object.keys(nextMetadata).length ? { metadata: nextMetadata } : {}),
     commitMessage,
+    ...(description ? { versionDescription: description } : {}),
+    ...(detail ? { versionDetail: detail } : {}),
   };
 }

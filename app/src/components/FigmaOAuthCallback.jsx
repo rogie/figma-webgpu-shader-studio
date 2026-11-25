@@ -15,8 +15,8 @@ export default function FigmaOAuthCallback() {
   useEffect(() => {
     let active = true;
     completeFigmaOAuthCallback()
-      .then(() => {
-        if (active) window.location.reload();
+      .then((payload) => {
+        if (active && payload) window.location.reload();
       })
       .catch((oauthError) => {
         if (active) setError(oauthError.message || String(oauthError));

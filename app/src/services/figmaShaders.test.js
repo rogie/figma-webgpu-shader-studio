@@ -32,7 +32,7 @@ test("buildFigmaShaderZip bundles source and inferred mouse features", async () 
   const source = `
 // frame.time must not mark this shader as animated.
 export function render(device, frame) {
-  return frame.mousePosition.x;
+  return frame.mousePosition.down;
 }
 `;
   const archive = await buildFigmaShaderZip(source, "Cursor/Glow");
@@ -111,6 +111,8 @@ test("updateFigmaShader sends only the staging MCP update contract", async () =>
         usesMouse: false,
       },
       commitMessage: "Update Fill from Shader Studio",
+      versionDescription: "Updated Still Fill.",
+      versionDetail: "The shader source renders without pointer input.",
     }
   );
   assert.deepEqual(calls[0], {
@@ -125,6 +127,8 @@ test("updateFigmaShader sends only the staging MCP update contract", async () =>
       usesMouse: false,
     },
     commitMessage: "Update Fill from Shader Studio",
+    versionDescription: "Updated Still Fill.",
+    versionDetail: "The shader source renders without pointer input.",
   });
   assert.equal(result.version, "v2");
 });

@@ -7,6 +7,7 @@ const preserveFiguiRegistrations = {
   transform(code, id) {
     if (
       (id.includes("/@rogieking/figui3/") ||
+        id.includes("/@rogieking/figui3-extended/") ||
         id.includes("/@rogieking/toolkit/")) &&
       id.endsWith(".js")
     ) {
@@ -24,14 +25,28 @@ export default defineConfig({
       ? "/figma-webgpu-shader-studio/"
       : "/",
   plugins: [preserveFiguiRegistrations, react()],
+  resolve: {
+    alias: [
+      // Toolkit still imports the Editor/Lab paths from before the package split.
+      {
+        find: /^@rogieking\/figui3\/src\/fig-(editor|lab)\.js$/,
+        replacement: "@rogieking/figui3-extended/fig-$1.js",
+      },
+      {
+        find: "@rogieking/figui3/src/fig.js",
+        replacement: "@rogieking/figui3/fig.js",
+      },
+    ],
+  },
   // FigUI3 and ToolKit register custom elements as import side effects;
   // keep them out of Vite's dependency optimizer so upgrades aren't served
   // from a stale prebundle.
   optimizeDeps: {
     exclude: [
       "@rogieking/figui3/fig.js",
-      "@rogieking/figui3/fig-lab.js",
-      "@rogieking/figui3/fig-editor.js",
+      "@rogieking/figui3/extended-runtime.js",
+      "@rogieking/figui3-extended/fig-lab.js",
+      "@rogieking/figui3-extended/fig-editor.js",
       "@rogieking/figui3/fig-layer.js",
       "@rogieking/figui3/src/fig.js",
       "@rogieking/figui3/src/fig-lab.js",
@@ -54,8 +69,10 @@ export default defineConfig({
     },
   },
   server: {
+    // Figma OAuth registers the localhost callback on this exact port.
+    host: "localhost",
     port: 5173,
-    strictPort: false,
+    strictPort: true,
     fs: {
       allow: [".."],
     },

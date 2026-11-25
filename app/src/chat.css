@@ -113,6 +113,11 @@
       fig-ai-prompt{
         --fig-ai-prompt-margin-inline: var(--spacer-3);
 
+        > fig-input-text.chat-input[readonly] {
+          background: transparent;
+          box-shadow: none;
+        }
+
         > fig-input-text[autoresize]:not([autoresize="false"]) > textarea {
           max-height: clamp(
             6rem,
@@ -165,6 +170,45 @@
 
     .chat-attach-button {
       margin-right: auto;
+    }
+
+    .chat-dictation-controls {
+      display: flex;
+      align-items: center;
+      gap: var(--spacer-1);
+      width: 100%;
+      min-width: 0;
+
+      > fig-tooltip {
+        flex: 0 0 auto;
+      }
+    }
+
+    .chat-dictation-status {
+      display: flex;
+      align-items: center;
+      flex: 1 1 auto;
+      min-width: 0;
+      min-height: 24px;
+      gap: var(--spacer-3);
+      padding-inline: var(--spacer-2);
+      border-radius: var(--radius-full);
+      background: var(--figma-color-bg-selected);
+      color: var(--figma-color-text-brand);
+
+      > time {
+        flex: 0 0 auto;
+        font-variant-numeric: tabular-nums;
+      }
+    }
+
+    .chat-dictation-wave {
+      display: block;
+      flex: 1 1 auto;
+      width: 0;
+      min-width: 0;
+      height: 16px;
+      mask-image: linear-gradient(90deg, transparent, black 12px, black calc(100% - 12px), transparent);
     }
 
     .chat-composer-actions {
