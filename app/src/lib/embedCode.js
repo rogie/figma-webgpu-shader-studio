@@ -1,3 +1,5 @@
+import { inferFeatures } from "../runtime/params.js";
+
 function browserShaderSource(source) {
   return source
     .replace(/^\s*import\s+[^;\n]+;?\s*$/gm, "")
@@ -14,45 +16,45 @@ function jsonLiteral(value) {
 }
 
 const STANDALONE_POINTER_INPUT = `
-      let pressedPointerId = null;
-      let pointerOutside = false;
+      if (usesMouse) {
+        let pressedPointerId = null;
 
-      function movePointer(event) {
-        if (!event.isPrimary || (pressedPointerId !== null && event.pointerId !== pressedPointerId)) return;
-        pointerOutside = false;
-        if (event.type === "pointermove" && !(event.buttons & 1)) pressedPointerId = null;
-        const rect = canvas.getBoundingClientRect();
-        frame.mousePosition = {
-          x: (event.clientX - rect.left) * canvas.width / rect.width,
-          y: (event.clientY - rect.top) * canvas.height / rect.height,
-          down: pressedPointerId !== null,
+        const isTrackedPointer = (event) => event.isPrimary !== false &&
+          (pressedPointerId === null || event.pointerId === pressedPointerId);
+        const resetPointer = () => {
+          frame.mousePosition = { x: 0, y: 0, down: false };
         };
+        const samplePointer = (event, down) => {
+          if (!isTrackedPointer(event)) return;
+          const rect = canvas.getBoundingClientRect();
+          const u = (event.clientX - rect.left) / rect.width;
+          const v = (event.clientY - rect.top) / rect.height;
+          if (!Number.isFinite(u) || !Number.isFinite(v) || u < 0 || u > 1 || v < 0 || v > 1) {
+            resetPointer();
+            return;
+          }
+          pressedPointerId = down ? event.pointerId : null;
+          frame.mousePosition = { x: u * canvas.width, y: v * canvas.height, down };
+        };
+        const clearDown = (event) => {
+          if (pressedPointerId === null) return;
+          if (event.pointerId !== undefined && event.pointerId !== pressedPointerId) return;
+          if (event.type === "pointerup" && (event.buttons & 1)) return;
+          pressedPointerId = null;
+          frame.mousePosition = { ...frame.mousePosition, down: false };
+        };
+        canvas.addEventListener("pointermove", (event) => samplePointer(event, Boolean(event.buttons & 1)));
+        canvas.addEventListener("pointerdown", (event) => {
+          if (event.button === 0) samplePointer(event, true);
+        });
+        canvas.addEventListener("pointerleave", (event) => {
+          if (isTrackedPointer(event)) resetPointer();
+        });
+        window.addEventListener("pointerup", clearDown, true);
+        window.addEventListener("pointercancel", clearDown, true);
+        window.addEventListener("lostpointercapture", clearDown, true);
+        window.addEventListener("blur", clearDown);
       }
-
-      function releasePointer(event) {
-        if (pressedPointerId === null) return;
-        if (event.pointerId !== undefined && event.pointerId !== pressedPointerId) return;
-        if (event.type === "pointerup" && (event.buttons & 1)) return;
-        pressedPointerId = null;
-        frame.mousePosition = pointerOutside
-          ? { x: 0, y: 0, down: false }
-          : { ...frame.mousePosition, down: false };
-      }
-
-      canvas.addEventListener("pointermove", movePointer);
-      canvas.addEventListener("pointerdown", (event) => {
-        if (!event.isPrimary || event.button !== 0 || pressedPointerId !== null) return;
-        pressedPointerId = event.pointerId;
-        movePointer(event);
-      });
-      canvas.addEventListener("pointerleave", (event) => {
-        if (!event.isPrimary || (pressedPointerId !== null && event.pointerId !== pressedPointerId)) return;
-        pointerOutside = true;
-        if (pressedPointerId === null) frame.mousePosition = { x: 0, y: 0, down: false };
-      });
-      window.addEventListener("pointerup", releasePointer, true);
-      window.addEventListener("pointercancel", releasePointer, true);
-      window.addEventListener("blur", releasePointer);
 `;
 
 function wrapLayerModule(source) {
@@ -71,6 +73,7 @@ function compositionLayersLiteral(layers) {
       (layer) => `    {
       role: ${JSON.stringify(layer.role === "fill" ? "fill" : "effect")},
       enabled: ${layer.enabled !== false},
+      usesMouse: ${inferFeatures(layer.source || "").usesMouse},
       params: ${jsonLiteral(layer.params)},
       state: {},
       module: ${wrapLayerModule(layer.source)},
@@ -135,6 +138,7 @@ function buildStandaloneCompositionEmbedCode(composition) {
     const layers = [
 ${layersLiteral}
     ];
+    const usesMouse = layers.some((layer) => layer.enabled && layer.usesMouse);
 
     const canvas = document.querySelector("#shader");
     const errorView = document.querySelector("#error");
@@ -314,7 +318,7 @@ ${STANDALONE_POINTER_INPUT}
           time: frame.time,
           deltaTime: frame.deltaTime,
           frame: frame.frame,
-          mousePosition: frame.mousePosition,
+          mousePosition: layer.usesMouse ? frame.mousePosition : { x: 0, y: 0, down: false },
         };
       }
 
@@ -410,6 +414,7 @@ export function buildStandaloneEmbedCode({ source, values, kind, composition }) 
   const params = JSON.stringify(values || {}, null, 2).replace(/</g, "\\u003c");
   const shaderSource = inlineScriptSafe(browserShaderSource(source));
   const isEffect = kind === "effect";
+  const usesMouse = inferFeatures(source).usesMouse;
 
   return `<!doctype html>
 <html lang="en">
@@ -431,6 +436,7 @@ export function buildStandaloneEmbedCode({ source, values, kind, composition }) 
     // frame.params and writes them into its own uniform buffers.
     const params = ${params};
     const isEffect = ${isEffect};
+    const usesMouse = ${usesMouse};
 
     // Figma shader modules call this at load time; the standalone page already
     // has the current values above, so only the runtime functions are needed.

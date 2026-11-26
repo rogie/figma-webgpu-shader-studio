@@ -885,7 +885,9 @@ Deno.serve(async (req) => {
     const allAttachments = history.flatMap((m) => m.attachments || []);
     assertProviderAttachments(provider, allAttachments);
     const officialReference = await loadFigmaAuthoringReference();
-    const skillRevision = officialReference?.revision ?? FIGMA_SHADER_SKILL_REVISION;
+    const skillRevision = officialReference
+      ? `${FIGMA_SHADER_SKILL_REVISION}/${officialReference.revision}`
+      : FIGMA_SHADER_SKILL_REVISION;
     const system = buildSystemPrompt({
       kind,
       mode,

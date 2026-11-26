@@ -165,6 +165,11 @@ code against that reviewed contract before applying it. Review new documented
 runtime features against the preview and compatibility checks before enabling
 them. Figma's native build is the final shader validation.
 
+The preview uses layer-local physical mouse coordinates and supports the v4
+held-button field `frame.mousePosition.down`. Chat uses that field for
+requested click or held-drag interactions and flags its dependency on
+mouse-down support in the Figma target.
+
 Chat history is saved per shader in `localStorage`. Saved plans and old messages
 are context for the current guidance. Cursor resumes only when the shader and
 skill revision match. **Clear chat** detaches its provider session.

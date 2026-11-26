@@ -17,9 +17,10 @@ function edit(source) {
   ].join("\n");
 }
 
-test("old shader chat uses current guidance and only applies completed compatible edits", async ({ page, baseURL }) => {
+test("old shader chat uses the selected OpenAI model and only applies completed Figma edits", async ({ page, context, baseURL }) => {
   const requests = [];
   const origin = new URL(baseURL).origin;
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin });
 
   await page.addInitScript((savedReply) => {
     localStorage.setItem("shader-studio.providerKeys", JSON.stringify({ openai: "mock-test-key" }));
@@ -42,7 +43,10 @@ test("old shader chat uses current guidance and only applies completed compatibl
 
     const payload = request.postDataJSON();
     if (payload.action === "list-models") {
-      return route.fulfill({ headers: cors, json: { models: [{ id: "gpt-6.2-sol", label: "GPT-6.2 Sol" }] } });
+      return route.fulfill({ headers: cors, json: { models: [
+        { id: "gpt-6.2-sol", label: "GPT-6.2 Sol" },
+        { id: "gpt-6.2-astra", label: "GPT-6.2 Astra" },
+      ] } });
     }
     requests.push(payload);
 
@@ -54,7 +58,10 @@ test("old shader chat uses current guidance and only applies completed compatibl
       )),
       "Give advice": "This is an example.\n```typescript\n// Advice only\n" + payload.source + "\n```",
       "Try an interrupted edit": edit("// Interrupted edit\n" + payload.source),
-      "Apply the native edit": edit("// Completed native edit\n" + payload.source),
+      "Add a held-button effect": edit("// Completed native edit\n" + payload.source.replace(
+        "export function render(device, frame) {",
+        "export function render(device, frame) {\n  var held = frame.mousePosition.down",
+      )),
     };
     const events = [{ type: "delta", text: responses[prompt] }];
     if (prompt !== "Try an interrupted edit") events.push({ type: "done" });
@@ -73,6 +80,7 @@ test("old shader chat uses current guidance and only applies completed compatibl
   const initialSource = await editor.innerText();
   const input = page.locator("fig-input-text.chat-input textarea");
   const stop = page.getByRole("button", { name: "Stop", exact: true });
+  const modelPicker = page.getByRole("button", { name: "Model", exact: true });
 
   async function send(prompt, result) {
     await input.fill(prompt);
@@ -82,9 +90,11 @@ test("old shader chat uses current guidance and only applies completed compatibl
   }
 
   await send("Try unsupported input", "Figma shader compatibility:");
+  expect(requests[0]).toMatchObject({ provider: "openai", model: "gpt-6.2-sol" });
   expect(await editor.innerText()).toBe(initialSource);
   expect(requests[0].messages).toContainEqual(expect.objectContaining({ role: "assistant", content: olderReply }));
   expect(requests[0].skills).toContain("Figma MCP shader contract");
+  expect(requests[0].skills).toContain("frame.mousePosition.down");
   expect(requests[0].skills).not.toMatch(/gestureId|endReason|frame\.audio|supportsAudio/);
 
   await send("Give advice", "This is an example.");
@@ -93,7 +103,12 @@ test("old shader chat uses current guidance and only applies completed compatibl
   await send("Try an interrupted edit", "stream ended before the agent finished");
   expect(await editor.innerText()).toBe(initialSource);
 
-  await send("Apply the native edit");
+  await modelPicker.click();
+  await page.getByText("GPT-6.2 Astra", { exact: true }).click();
+  await send("Add a held-button effect");
+  expect(requests.at(-1)).toMatchObject({ provider: "openai", model: "gpt-6.2-astra" });
   await expect(editor).toContainText("Completed native edit");
+  await page.getByRole("button", { name: "Copy code", exact: true }).click();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toContain("frame.mousePosition.down");
   expect(requests).toHaveLength(4);
 });

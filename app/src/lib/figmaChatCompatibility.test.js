@@ -45,7 +45,7 @@ defineProperties(Layer, { amount: { type: "number", defaultValue: 1 } });
   assert.deepEqual(validateFigmaChatCompatibility(render("frame.state.output = frame.output;")), { ok: true });
 });
 
-test("rejects undocumented pointer members in direct, aliased and destructured access", () => {
+test("accepts the v4 held-button field in direct, aliased and destructured access", () => {
   for (const access of [
     "return frame.mousePosition.down;",
     "return frame['mousePosition']?.['down'];",
@@ -58,8 +58,12 @@ test("rejects undocumented pointer members in direct, aliased and destructured a
     "const p = (frame as any).mousePosition; return p!.down;",
     "const read = pointer => pointer.down; return read(frame.mousePosition);",
     "function read(pointer = frame.mousePosition) { return pointer.down; } return read();",
-  ]) rejects(render(access), /frame\.mousePosition\.down/);
+  ]) assert.deepEqual(validateFigmaChatCompatibility(render(access)), { ok: true });
+});
 
+test("rejects undocumented pointer members in direct, aliased and destructured access", () => {
+  rejects(render("return frame.mousePosition.pressed;"), /frame\.mousePosition\.pressed/);
+  rejects(render("const pointer = frame.mousePosition; return pointer.gestureId;"), /frame\.mousePosition\.gestureId/);
   rejects("export function render(device, { mousePosition: { endReason } }) {}", /frame\.mousePosition\.endReason/);
   rejects("function step(device, f) { return f.mousePosition.gestureId; } export { step as render };", /frame\.mousePosition\.gestureId/);
 });
@@ -69,7 +73,7 @@ test("rejects unknown frame fields, dynamic frame access and pointer mutation", 
   rejects(render("const { audio: bands } = frame; return bands;"), /frame\.audio/);
   rejects(render("return frame.params[0] + frame.pos.x;"), /frame\.pos/);
   rejects(render("const field = frame.params.field; return frame[field];"), /documented names/);
-  rejects(render("return frame.mousePosition[frame.params.field];"), /frame\.mousePosition\.x and \.y/);
+  rejects(render("return frame.mousePosition[frame.params.field];"), /named frame\.mousePosition fields: x, y, or down/);
   rejects(render("return { ...frame.mousePosition };"), /documented named frame and pointer fields/);
   rejects(render("frame.mousePosition.x = 1;"), /Only read documented shader frame and pointer fields/);
   rejects(render("let read = pointer => pointer.x; read = pointer => pointer.down; return read(frame.mousePosition);"),

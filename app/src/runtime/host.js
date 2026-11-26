@@ -152,7 +152,6 @@ export class ShaderHost {
     this._pointerSurface = null;
     this._mouseResetId = 0;
     this._pressedPointerId = null;
-    this._mouseOutside = false;
     this._loopBound = this._loop.bind(this);
     this._onMouse = this._onMouse.bind(this);
     this._onMouseLeave = this._onMouseLeave.bind(this);
@@ -218,6 +217,7 @@ export class ShaderHost {
     const pointerWindow = this.canvas.ownerDocument?.defaultView;
     pointerWindow?.addEventListener("pointerup", this._onMouseRelease, true);
     pointerWindow?.addEventListener("pointercancel", this._onMouseRelease, true);
+    pointerWindow?.addEventListener("lostpointercapture", this._onMouseRelease, true);
     pointerWindow?.addEventListener("blur", this._onMouseRelease);
     this.ready = true;
     measurePerf("host.init", startedAt);
@@ -246,10 +246,7 @@ export class ShaderHost {
   }
 
   _onMouseDown(event) {
-    if (!this.active || !this.running || !this.usesMouse) return;
-    if (event.isPrimary === false || event.button !== 0 || this._pressedPointerId !== null) return;
-    this._pressedPointerId = event.pointerId;
-    this._onMouse(event);
+    if (event.button === 0) this._updateMouse(event, true);
   }
 
   _onMouseRelease(event) {
@@ -257,43 +254,45 @@ export class ShaderHost {
     if (event?.pointerId !== undefined && event.pointerId !== this._pressedPointerId) return;
     if (event?.type === "pointerup" && (event.buttons & 1)) return;
     this._pressedPointerId = null;
-    const { x, y } = this.frame.mousePosition;
-    this.frame.mousePosition = this._mouseOutside
-      ? { x: 0, y: 0, down: false }
-      : { x, y, down: false };
+    if (!this.frame.mousePosition.down) return;
+    this.frame.mousePosition = { ...this.frame.mousePosition, down: false };
     this._redrawForMouse();
   }
 
-  _onMouse(e) {
-    if (!this.active || !this.running || e.isPrimary === false) return;
-    if (this._pressedPointerId !== null && e.pointerId !== this._pressedPointerId) return;
-    this._cancelMouseReset();
-    this._mouseOutside = false;
-    if (e.type === "pointermove" && !(e.buttons & 1)) {
-      this._pressedPointerId = null;
-    }
+  _pointerSample(event) {
     const rect = this.canvas.getBoundingClientRect();
-    const renderScale = this.frame.renderScale || 1;
-    const sx = this.canvas.width / rect.width / renderScale;
-    const sy = this.canvas.height / rect.height / renderScale;
-    this.frame.mousePosition = {
-      x: (e.clientX - rect.left) * sx,
-      y: (e.clientY - rect.top) * sy,
-      down: this._pressedPointerId !== null,
-    };
+    const u = (event.clientX - rect.left) / rect.width;
+    const v = (event.clientY - rect.top) / rect.height;
+    if (!Number.isFinite(u) || !Number.isFinite(v) || u < 0 || u > 1 || v < 0 || v > 1) return null;
+    return { x: u * this.canvas.width, y: v * this.canvas.height };
+  }
+
+  _onMouse(event) {
+    this._updateMouse(event, Boolean(event.buttons & 1));
+  }
+
+  _updateMouse(event, down) {
+    if (!this.active || !this.running || !this.usesMouse || event.isPrimary === false) return;
+    if (this._pressedPointerId !== null && event.pointerId !== this._pressedPointerId) return;
+    const sample = this._pointerSample(event);
+    if (!sample) {
+      this._onMouseLeave(event);
+      return;
+    }
+    this._cancelMouseReset();
+    this._pressedPointerId = down ? event.pointerId : null;
+    this.frame.mousePosition = { ...sample, down };
     this._redrawForMouse();
   }
 
   _onMouseLeave(event) {
-    if (!this.active || !this.running || event?.isPrimary === false) return;
+    if (!this.active || !this.running || !this.usesMouse || event?.isPrimary === false) return;
     if (this._pressedPointerId !== null && event?.pointerId !== this._pressedPointerId) return;
     // Moving between the canvas and an overlay handle fires leave before the
     // next move; defer the reset so the handoff never blanks mousePosition.
     this._cancelMouseReset();
     this._mouseResetId = requestAnimationFrame(() => {
       this._mouseResetId = 0;
-      this._mouseOutside = true;
-      if (this._pressedPointerId !== null) return;
       this.frame.mousePosition = { x: 0, y: 0, down: false };
       this._redrawForMouse();
     });
@@ -303,6 +302,12 @@ export class ShaderHost {
     if (!this._mouseResetId) return;
     cancelAnimationFrame(this._mouseResetId);
     this._mouseResetId = 0;
+  }
+
+  _resetMouse() {
+    this._cancelMouseReset();
+    this._pressedPointerId = null;
+    this.frame.mousePosition = { x: 0, y: 0, down: false };
   }
 
   _redrawForMouse() {
@@ -2245,6 +2250,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.isFill = Boolean(isFill);
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
+    if (!this.usesMouse) this._resetMouse();
     this.supportsRenderScale = Boolean(supportsRenderScale);
     this.supportsAudio = Boolean(supportsAudio);
     this.frame.frame = 0;
@@ -2301,6 +2307,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     this.isFill = Boolean(isFill);
     this.isAnimated = Boolean(isAnimated);
     this.usesMouse = Boolean(usesMouse);
+    if (!this.usesMouse) this._resetMouse();
     this.supportsRenderScale = Boolean(supportsRenderScale);
     this.supportsAudio = Boolean(supportsAudio);
     this.frame.frame = 0;
@@ -2630,6 +2637,7 @@ fn fs_main(in: VsOut) -> @location(0) vec4f {
     const pointerWindow = this.canvas.ownerDocument?.defaultView;
     pointerWindow?.removeEventListener("pointerup", this._onMouseRelease, true);
     pointerWindow?.removeEventListener("pointercancel", this._onMouseRelease, true);
+    pointerWindow?.removeEventListener("lostpointercapture", this._onMouseRelease, true);
     pointerWindow?.removeEventListener("blur", this._onMouseRelease);
     if (this.device) {
       try {

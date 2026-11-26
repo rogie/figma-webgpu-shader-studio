@@ -271,7 +271,7 @@ function compatibleMember(flags, property, kind) {
   if (flags & POINTER && !POINTER_FIELDS.has(property)) {
     return failure(property
       ? `frame.mousePosition.${property} is outside the documented Figma pointer API.`
-      : "Read pointer coordinates through frame.mousePosition.x and .y.");
+      : "Read named frame.mousePosition fields: x, y, or down.");
   }
   return null;
 }

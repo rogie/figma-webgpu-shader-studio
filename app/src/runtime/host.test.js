@@ -701,6 +701,10 @@ test("mouse uniforms update only while playback is running", () => {
     assert.equal(redraws, 0);
 
     host.running = true;
+    host.usesMouse = false;
+    host._onMouse({ clientX: 60, clientY: 45, buttons: 1 });
+    assert.deepEqual(host.frame.mousePosition, { x: 0, y: 0, down: false });
+    host.usesMouse = true;
     host.rafId = 1;
     host._onMouse({ clientX: 35, clientY: 30 });
     assert.deepEqual(host.frame.mousePosition, { x: 50, y: 20, down: false });
@@ -731,7 +735,7 @@ test("moving between canvas and overlay handles keeps mousePosition", () => {
   }
 });
 
-test("mousePosition stays in logical pixels while supersampled", () => {
+test("mousePosition uses output pixels while supersampled", () => {
   const host = makeMouseHost();
   host.canvas.width = 400;
   host.canvas.height = 200;
@@ -740,10 +744,10 @@ test("mousePosition stays in logical pixels while supersampled", () => {
 
   host._onMouse({ clientX: 60, clientY: 45 });
 
-  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
+  assert.deepEqual(host.frame.mousePosition, { x: 200, y: 100, down: false });
 });
 
-test("primary press redraws without animation and clears outside, on cancel, or on blur", () => {
+test("primary button is held only while the pointer is inside the preview", () => {
   const raf = stubAnimationFrame();
   try {
     const host = makeMouseHost();
@@ -757,21 +761,48 @@ test("primary press redraws without animation and clears outside, on cancel, or 
     assert.deepEqual(frames.at(-1), { x: 100, y: 50, down: true });
     host._onMouseRelease({ type: "pointerup", pointerId: 2 });
     assert.equal(host.frame.mousePosition.down, true);
+
+    const move = { ...press, type: "pointermove", buttons: 1, clientX: 85, clientY: 35 };
+    host._onMouse(move);
+    assert.deepEqual(frames.at(-1), { x: 150, y: 30, down: true });
     host._onMouseLeave(press);
     raf.flush();
-    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: true });
-    host._onMouseRelease({ type: "pointerup", pointerId: 1, buttons: 0 });
     assert.deepEqual(frames.at(-1), { x: 0, y: 0, down: false });
-
-    for (const event of [{ type: "pointercancel", pointerId: 1 }, { type: "blur" }]) {
-      host._onMouseDown(press);
-      host._onMouseRelease(event);
-      assert.deepEqual(frames.at(-1), { x: 100, y: 50, down: false });
-    }
+    host._onMouse({ ...move, clientX: 125 });
+    raf.flush();
+    assert.deepEqual(frames.at(-1), { x: 0, y: 0, down: false });
+    host._onMouse(move);
+    assert.deepEqual(frames.at(-1), { x: 150, y: 30, down: true });
+    host._onMouseRelease({ ...move, type: "pointerup", buttons: 0 });
+    assert.deepEqual(frames.at(-1), { x: 150, y: 30, down: false });
+    host._onMouse({ ...move, clientX: 60, clientY: 45, buttons: 0 });
+    assert.deepEqual(frames.at(-1), { x: 100, y: 50, down: false });
     assert.equal(host.frame.time, 321);
   } finally {
     raf.restore();
   }
+});
+
+test("pointer interruptions and a move without the primary button clear the hold", () => {
+  const host = makeMouseHost();
+  host.redraw = () => {};
+  const press = { isPrimary: true, pointerId: 1, button: 0, clientX: 60, clientY: 45 };
+  const interruptions = [
+    { type: "pointercancel", pointerId: 1 },
+    { type: "lostpointercapture", pointerId: 1 },
+    { type: "blur" },
+  ];
+  for (const event of interruptions) {
+    host._onMouseDown(press);
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: true });
+    host._onMouseRelease(event);
+    assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
+  }
+  host._onMouseDown(press);
+  host._onMouse({ ...press, type: "pointermove", buttons: 0 });
+  assert.equal(host.frame.mousePosition.down, false);
+  host._onMouseRelease({ ...press, type: "pointerup", buttons: 0 });
+  assert.deepEqual(host.frame.mousePosition, { x: 100, y: 50, down: false });
 });
 
 test("setPointerSurface tracks the overlay and detaches on destroy", () => {

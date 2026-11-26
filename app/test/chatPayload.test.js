@@ -192,10 +192,12 @@ test("agent and plan prompts include only the documented Figma pointer API", () 
 
     assert.ok(prompt.includes(getChatSkillContext(mode)));
     assert.match(prompt, /Recheck technical assumptions from prior messages and saved plans/);
-    assert.match(prompt, /`frame\.mousePosition\.x` and `frame\.mousePosition\.y`, in layer-local pixels/);
+    assert.match(prompt, /`frame\.mousePosition\.x` and `frame\.mousePosition\.y` in layer-local physical pixels/);
+    assert.match(prompt, /`frame\.mousePosition\.down` as a boolean held-button state when mouse-down support is enabled/);
+    assert.match(prompt, /A transition to false cannot distinguish release, cancellation, or leaving the layer/);
     assert.match(prompt, /Mark mouse use when reading `frame\.mousePosition`/);
     assert.match(prompt, /use an approved fallback/);
-    assert.doesNotMatch(prompt, /gestureId|endReason|mousePosition\.down|frame\.audio|supportsAudio/);
+    assert.doesNotMatch(prompt, /gestureId|endReason|frame\.audio|supportsAudio/);
   }
 });
 

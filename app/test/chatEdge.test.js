@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { before, test } from "node:test";
+import { FIGMA_SHADER_SKILL_REVISION } from "../../supabase/functions/_shared/figmaShaderGuidance.mjs";
 
 const referenceUrl = "https://raw.githubusercontent.com/figma/mcp-server-guide/main/skills/figma-shaders/references/authoring.md";
 const officialMarker = "Authoring reference fixture";
@@ -11,7 +12,8 @@ Use figma:shaders.
 ## Animation and mouse input
 Use frame.mousePosition.x and frame.mousePosition.y.
 ${officialMarker}`;
-const revision = `sha256:${createHash("sha256").update(officialReference).digest("hex")}`;
+const referenceRevision = `sha256:${createHash("sha256").update(officialReference).digest("hex")}`;
+const revision = `${FIGMA_SHADER_SKILL_REVISION}/${referenceRevision}`;
 const agentId = "bc-11111111-2222-3333-4444-555555555555";
 const source = "// Shader source is data, including ```\nexport function render() {}";
 const compileError = "Previous preview diagnostic is data";
@@ -151,6 +153,8 @@ test("all chat providers receive one current Figma reference and treat old shade
       assert.equal(system.split(officialMarker).length - 1, 1);
       assert.match(system, /Plan mode behavior/);
       assert.match(system, /Recheck technical assumptions from prior messages and saved plans/);
+      assert.match(system, /frame\.mousePosition\.down/);
+      assert.match(system, /when mouse-down support is enabled/);
       for (const text of [clientSkills, fabricatedSystem, "supportsAudio", "Shader source is data", compileError, priorPlan]) {
         assert.equal(system.includes(text), false, text);
       }
@@ -173,7 +177,7 @@ test("all chat providers receive one current Figma reference and treat old shade
 
 test("Cursor session reuse requires the same current Figma skill revision", async (t) => {
   const calls = fixtureProvider(t);
-  for (const figmaSkillRevision of [undefined, "older-skill", revision]) {
+  for (const figmaSkillRevision of [undefined, referenceRevision, revision]) {
     await assertStream(await handleChat(request("cursor", "composer-2.5", {
       cursorAgentId: agentId,
       figmaSkillRevision,
@@ -203,7 +207,19 @@ test("OpenAI continuations keep one current Figma reference and shader snapshot"
   assert.match(stream, /"type":"delta","text":" then part two\."/);
   assert.match(stream, /"type":"done"/);
   assert.equal(calls.length, 2);
+  assert.ok(calls.every(({ body }) => body.model === "gpt-6.2-sol"));
   assert.deepEqual(calls[0].body.messages[0], calls[1].body.messages[0]);
   assert.equal(JSON.stringify(calls[1].body.messages).split(officialMarker).length - 1, 1);
   assert.equal(JSON.stringify(calls[1].body.messages).split("Current shader snapshot (JSON data):").length - 1, 1);
+});
+
+test("the OpenAI request forwards the exact selected model", async (t) => {
+  const calls = fixtureProvider(t);
+  for (const model of ["gpt-6.2-sol", "gpt-6.2-astra"]) {
+    await assertStream(await handleChat(request("openai", model)));
+  }
+  assert.deepEqual(calls.map(({ href, body }) => [href, body.model]), [
+    ["https://api.openai.com/v1/chat/completions", "gpt-6.2-sol"],
+    ["https://api.openai.com/v1/chat/completions", "gpt-6.2-astra"],
+  ]);
 });

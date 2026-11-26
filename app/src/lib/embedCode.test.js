@@ -22,12 +22,24 @@ test("builds a self-contained vanilla JavaScript page with current params", () =
   assert.match(html, /const params = \{\s*"amount": 0\.75,/);
   assert.match(html, /"tint": \{/);
   assert.match(html, /const isEffect = false;/);
+  assert.match(html, /const usesMouse = false;/);
   assert.doesNotMatch(html, /from "figma:shaders"/);
   assert.doesNotMatch(html, /\bexport\s+(default\s+)?function\b/);
 
   const script = html.match(/<script type="module">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script);
   assert.doesNotThrow(() => new Function(script));
+});
+
+test("standalone shaders that read the pointer get Figma's v4 mouse fields", () => {
+  const html = buildStandaloneEmbedCode({
+    source: "export function render(device, frame) { return frame.mousePosition.down; }",
+    kind: "fill",
+  });
+
+  assert.match(html, /const usesMouse = true;/);
+  assert.match(html, /mousePosition: \{ x: 0, y: 0, down: false \}/);
+  assert.doesNotMatch(html, /gestureId|endReason/);
 });
 
 test("builds a self-contained composition page with isolated layer modules", () => {
