@@ -3,6 +3,7 @@ import { buildCurrentShaderTurn, buildSystemPrompt } from "./prompt.ts";
 import { isCursorAgentId, parseCursorModels, streamCursorChat } from "./cursor.ts";
 import { anthropicOutputConfig } from "./anthropic.ts";
 import { loadFigmaAuthoringReference } from "./figmaAuthoringReference.mjs";
+import { resolveOpenAIReasoningEffort } from "./openaiModels.mjs";
 import { FIGMA_SHADER_SKILL_REVISION } from "../_shared/figmaShaderGuidance.mjs";
 
 const CORS_HEADERS: Record<string, string> = {
@@ -37,6 +38,7 @@ type RequestBody = {
   features?: { isAnimated?: boolean; usesMouse?: boolean };
   figmaSkillRevision?: string;
   mode?: "agent" | "plan";
+  reasoningEffort?: unknown;
   cursorAgentId?: string;
   compileError?: string;
 };
@@ -452,7 +454,7 @@ async function streamOpenAICompatible(
   model: string,
   system: string,
   messages: ChatMessage[],
-  options: { url: string; label: string },
+  options: { url: string; label: string; reasoningEffort?: string },
 ): Promise<Response> {
   const fetchCompletion = (partialResponse = "") =>
     fetch(options.url, {
@@ -463,6 +465,7 @@ async function streamOpenAICompatible(
       },
       body: JSON.stringify({
         model,
+        ...(options.reasoningEffort === undefined ? {} : { reasoning_effort: options.reasoningEffort }),
         stream: true,
         max_completion_tokens: OPENAI_MAX_COMPLETION_TOKENS,
         messages: toOpenAIMessages(
@@ -515,10 +518,12 @@ async function streamOpenAI(
   model: string,
   system: string,
   messages: ChatMessage[],
+  reasoningEffort: string | undefined,
 ): Promise<Response> {
   return streamOpenAICompatible(apiKey, model, system, messages, {
     url: "https://api.openai.com/v1/chat/completions",
     label: "OpenAI",
+    reasoningEffort,
   });
 }
 
@@ -850,6 +855,17 @@ Deno.serve(async (req) => {
   if (!isAllowedModel(provider, model)) {
     return jsonResponse(400, { error: `Model not allowed: ${provider}/${model}` });
   }
+  const reasoningEffort = provider === "openai"
+    ? resolveOpenAIReasoningEffort(model, body.reasoningEffort)
+    : undefined;
+  if (
+    provider === "openai" &&
+    body.reasoningEffort !== undefined &&
+    body.reasoningEffort !== "default" &&
+    reasoningEffort === undefined
+  ) {
+    return jsonResponse(400, { error: `Choose a supported reasoning effort for ${model}, or use Default.` });
+  }
   if (!source.trim()) {
     return jsonResponse(400, { error: "source is required" });
   }
@@ -911,7 +927,7 @@ Deno.serve(async (req) => {
         signal: req.signal,
       });
     } else if (provider === "openai") {
-      response = await streamOpenAI(apiKey, model, system, history);
+      response = await streamOpenAI(apiKey, model, system, history, reasoningEffort);
     } else if (provider === "grok") {
       response = await streamGrok(apiKey, model, system, history);
     } else if (provider === "anthropic") {

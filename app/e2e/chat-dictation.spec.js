@@ -55,7 +55,7 @@ test("dictation replaces the chat footer and inserts text without sending", asyn
   await expect(footer.getByRole("status", { name: "Recording dictation" })).toBeVisible();
   await expect(footer.getByRole("button", { name: "Send", exact: true })).toHaveCount(0);
   await expect(footer.getByRole("button", { name: "Attach media" })).toHaveCount(0);
-  await expect(footer.locator(".chat-model-select")).toHaveCount(0);
+  await expect(footer.locator(".chat-model-picker-trigger")).toHaveCount(0);
   await expect(footer.getByRole("button", { name: "Cancel dictation" })).toHaveCount(0);
   await expect(input).not.toBeEditable();
   await expect(page.locator("fig-input-text.chat-input")).toHaveCSS("box-shadow", "none");

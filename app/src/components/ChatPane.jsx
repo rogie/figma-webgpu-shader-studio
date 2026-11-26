@@ -1,5 +1,4 @@
 import {
-  Fragment,
   forwardRef,
   memo,
   useCallback,
@@ -27,12 +26,15 @@ import {
 } from "../lib/chatAttachments.js";
 import {
   DEFAULT_CHAT_MODEL,
-  chatModelValue,
   findChatModel,
   findSelectableChatModel,
   groupsForAvailableProviderModels,
   reconcileAvailableChatModel,
 } from "../lib/chatModels.js";
+import {
+  openAIReasoningEfforts,
+  resolveOpenAIReasoningEffort,
+} from "../../../supabase/functions/chat/openaiModels.mjs";
 import {
   CHAT_THREAD_TRANSFER_EVENT,
   loadChatThreads,
@@ -41,10 +43,17 @@ import {
 } from "../lib/chatThreads.js";
 import {
   buildPlanImplementationPrompt,
+  hasBuiltPlanInHistory,
+  isLocalPlanBuilt,
   isPlanDocument,
   loadLocalPlan,
+  markLocalPlanBuilt,
+  planBuildStorageKey,
   planDocumentSubject,
+  planRevision,
   removeLocalPlan,
+  restoreChatPlan,
+  samePlanMarkdown,
   saveLocalPlan,
 } from "../lib/chatPlans.js";
 import {
@@ -68,12 +77,15 @@ import {
 } from "../services/chat.js";
 import {
   downloadShaderPlan,
+  isShaderPlanBuilt,
+  markShaderPlanBuilt,
   uploadShaderPlan,
 } from "../services/shaders.js";
 import { measurePerf, perfNow } from "../runtime/perf.js";
 import SendIcon from "./SendIcon.jsx";
 import StopIcon from "./StopIcon.jsx";
 import ChatDictationControls, { DictateIcon } from "./ChatDictationControls.jsx";
+import ChatModelPicker from "./ChatModelPicker.jsx";
 import UndoIcon from "./UndoIcon.jsx";
 import PastedText from "./PastedText.jsx";
 import UserAvatar from "./UserAvatar.jsx";
@@ -87,6 +99,7 @@ import { useChatDictation } from "../hooks/useChatDictation.js";
 import "../chat.css";
 
 const MODEL_STORAGE_KEY = "shader-studio.chatModel";
+const EFFORT_STORAGE_KEY = "shader-studio.chatEffortByModel";
 const MODE_STORAGE_KEY = "shader-studio.chatMode";
 const MAX_UNDO = 12;
 const MAX_AUTO_HEAL_ATTEMPTS = 2;
@@ -130,6 +143,15 @@ function loadSavedMode() {
   return localStorage.getItem(MODE_STORAGE_KEY) === "plan"
     ? "plan"
     : "agent";
+}
+
+function loadSavedEfforts() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(EFFORT_STORAGE_KEY));
+    return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {};
+  } catch {
+    return {};
+  }
 }
 
 function messageKey(shaderKey) {
@@ -213,10 +235,13 @@ const ChatComposer = memo(function ChatComposer({
   imageInputRef,
   mode,
   model,
-  modelControlRef,
   modelGroups,
+  effort,
+  effortOptions,
   onAttachmentChosen,
   onDictationError,
+  onEffortChange,
+  onModelChange,
   onPromptPaste,
   onSend,
   onStop,
@@ -385,33 +410,15 @@ const ChatComposer = memo(function ChatComposer({
                     <PlanIcon />
                   </fig-button>
                 </fig-tooltip>
-                <fig-tooltip text={`Model: ${model.label}`}>
-                  <fig-select
-                    ref={modelControlRef}
-                    class="chat-model-select"
-                    variant="ghost"
-                    label="Model"
-                    position="top left"
-                    value={chatModelValue(model)}
-                    disabled={streaming ? "" : undefined}
-                  >
-                    <fig-select-options>
-                      {modelGroups.map((group) => (
-                        <Fragment key={group.label}>
-                          <fig-separator label={group.label} />
-                          {group.models.map((entry) => (
-                            <fig-select-option
-                              key={chatModelValue(entry)}
-                              value={chatModelValue(entry)}
-                            >
-                              {entry.label}
-                            </fig-select-option>
-                          ))}
-                        </Fragment>
-                      ))}
-                    </fig-select-options>
-                  </fig-select>
-                </fig-tooltip>
+                <ChatModelPicker
+                  model={model}
+                  modelGroups={modelGroups}
+                  onModelChange={onModelChange}
+                  efforts={effortOptions}
+                  effort={effort}
+                  onEffortChange={onEffortChange}
+                  disabled={streaming || hidden}
+                />
                 <fig-tooltip text={dictation.supported ? "Dictate" : "Dictation unavailable in this browser"}>
                   <fig-button
                     type="button"
@@ -485,6 +492,7 @@ const ChatPane = forwardRef(function ChatPane(
   ref
 ) {
   const [model, setModel] = useState(loadSavedModel);
+  const [effortByModel, setEffortByModel] = useState(loadSavedEfforts);
   const [mode, setMode] = useState(loadSavedMode);
   const [draft, setDraft] = useState("");
   const [threads, setThreads] = useState(loadChatThreads);
@@ -496,21 +504,23 @@ const ChatPane = forwardRef(function ChatPane(
   const [attachments, setAttachments] = useState([]);
   const [zoomedAttachment, setZoomedAttachment] = useState(null);
   const [latestActivity, setLatestActivity] = useState("");
+  const [activePlan, setActivePlan] = useState(null);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const listFadeRef = useOverflowFade(listRef);
   const followingLatestRef = useRef(true);
   const undoStackRef = useRef([]);
-  const modelControlRef = useRef(null);
   const imageInputRef = useRef(null);
   const pendingAttachmentsRef = useRef(null);
   const attachmentZoomRef = useRef(null);
   const activeRequestRef = useRef(null);
   const chatResetRef = useRef(0);
+  const planWriteRef = useRef(0);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
 
   const threadId = messageKey(shaderKey);
+  const planScope = JSON.stringify([threadId, planOwnerId, planShaderId]);
   const activeThreadIdRef = useRef(threadId);
   activeThreadIdRef.current = threadId;
   const messages = useMemo(
@@ -572,11 +582,27 @@ const ChatPane = forwardRef(function ChatPane(
     () => modelGroups.flatMap((group) => group.models),
     [modelGroups]
   );
+  const selectModel = useCallback((value) => {
+    const next = findSelectableChatModel(selectableModels, value);
+    if (next) {
+      setModel(next);
+      setError("");
+    }
+  }, [selectableModels]);
   const apiKey = useMemo(
     () => getProviderKey(model.provider),
     [model.provider, keyVersion]
   );
   const hasKey = Boolean(apiKey);
+  const effortOptions = openAIReasoningEfforts(model.provider === "openai" ? model.id : "");
+  const reasoningEffort = model.provider === "openai"
+    ? resolveOpenAIReasoningEffort(model.id, effortByModel[model.id])
+    : undefined;
+  const selectEffort = useCallback((effort) => {
+    setEffortByModel((current) => current[model.id] === effort
+      ? current
+      : { ...current, [model.id]: effort });
+  }, [model.id]);
   const videoSupported = providerSupportsChatVideo(model.provider);
   const canSend =
     hasKey && Boolean(draft.trim() || attachments.length) && !streaming;
@@ -630,13 +656,15 @@ const ChatPane = forwardRef(function ChatPane(
     }
   }
   let pendingPlan = null;
-  if (!streaming) {
+  if (!streaming && activePlan?.scope === planScope) {
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const message = messages[index];
       if (
         message.role !== "assistant" ||
         !isPlanMode(message.mode) ||
-        !isPlanDocument(message.content)
+        message.pending ||
+        message.planInterrupted ||
+        !samePlanMarkdown(message.content, activePlan.markdown)
       ) {
         continue;
       }
@@ -700,54 +728,85 @@ const ChatPane = forwardRef(function ChatPane(
   }, [mode]);
 
   useEffect(() => {
-    let cancelled = false;
-    const resetVersion = chatResetRef.current;
+    try {
+      localStorage.setItem(EFFORT_STORAGE_KEY, JSON.stringify(effortByModel));
+    } catch (storageError) {
+      console.warn("Could not save reasoning effort", storageError);
+    }
+  }, [effortByModel]);
+
+  useEffect(() => {
+    let lookup = 0;
     const hydratePlan = async () => {
+      const lookupId = ++lookup;
+      const resetVersion = chatResetRef.current;
+      const writeVersion = planWriteRef.current;
+      const stillCurrent = () =>
+        lookup === lookupId && chatResetRef.current === resetVersion &&
+        planWriteRef.current === writeVersion &&
+        activeThreadIdRef.current === threadId;
       let markdown = loadLocalPlan(threadId);
-      if (planOwnerId && planShaderId) {
-        try {
-          const cloudPlan = await downloadShaderPlan(planOwnerId, planShaderId);
-          if (cloudPlan.trim()) {
-            markdown = cloudPlan;
-            removeLocalPlan(threadId);
+      const hasCloudPlan = Boolean(planOwnerId && planShaderId);
+      try {
+        if (!markdown && hasCloudPlan) {
+          try {
+            markdown = await downloadShaderPlan(planOwnerId, planShaderId);
+          } catch {
+            // The shader may not have a cloud plan yet.
           }
-        } catch {
-          // A shader may not have a plan.md yet; retain any local fallback.
         }
+        if (!stillCurrent()) return;
+        if (!isPlanDocument(markdown)) {
+          setActivePlan((current) => current?.scope === planScope ? null : current);
+          return;
+        }
+
+        const revision = await planRevision(markdown);
+        const builtLocally = isLocalPlanBuilt(threadId, revision) ||
+          hasBuiltPlanInHistory(threadsRef.current[threadId] || [], markdown);
+        let builtInCloud = false;
+        if (hasCloudPlan) {
+          try {
+            builtInCloud = await isShaderPlanBuilt(planOwnerId, planShaderId, revision);
+          } catch (error) {
+            console.warn("Failed to read plan build status", error);
+          }
+        }
+        if (!stillCurrent()) return;
+        const built = builtLocally || builtInCloud;
+        if (built) markLocalPlanBuilt(threadId, revision);
+        setThreads((prev) => {
+          const current = prev[threadId] || [];
+          if (!stillCurrent() || current.some((message) => message.pending)) return prev;
+          const next = restoreChatPlan(current, { markdown, built, planId: crypto.randomUUID() });
+          return next === current ? prev : { ...prev, [threadId]: next };
+        });
+        setActivePlan({ scope: planScope, markdown });
+        if (builtLocally && hasCloudPlan && !builtInCloud) {
+          // Backfill applied markers from older chat history and retry local-only writes.
+          try {
+            await markShaderPlanBuilt(planOwnerId, planShaderId, revision);
+          } catch (error) {
+            console.warn("Failed to sync plan build status", error);
+          }
+        }
+      } catch (error) {
+        console.warn("Failed to restore plan status", error);
       }
-      if (cancelled || chatResetRef.current !== resetVersion || !isPlanDocument(markdown)) return;
-      setThreads((prev) => {
-        const current = prev[threadId] || [];
-        if (current.some((message) => message.pending)) return prev;
-        if (
-          current.some(
-            (message) =>
-              message.role === "assistant" &&
-              message.mode === "plan" &&
-              message.content === markdown
-          )
-        ) {
-          return prev;
-        }
-        return {
-          ...prev,
-          [threadId]: [
-            ...current,
-            {
-              role: "assistant",
-              mode: "plan",
-              planId: crypto.randomUUID(),
-              content: markdown,
-            },
-          ],
-        };
-      });
     };
-    hydratePlan();
+    const refresh = () => void hydratePlan();
+    const syncFromWindow = ({ key }) => {
+      if (key?.startsWith(planBuildStorageKey(threadId))) refresh();
+    };
+    refresh();
+    if (planOwnerId && planShaderId) window.addEventListener("focus", refresh);
+    window.addEventListener("storage", syncFromWindow);
     return () => {
-      cancelled = true;
+      lookup += 1;
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("storage", syncFromWindow);
     };
-  }, [planOwnerId, planShaderId, threadId]);
+  }, [planOwnerId, planScope, planShaderId, threadId]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => saveChatThreads(threads), 400);
@@ -893,27 +952,6 @@ const ChatPane = forwardRef(function ChatPane(
     setZoomedAttachment(null);
   }, [attachments, zoomedAttachment]);
 
-  useEffect(() => {
-    const control = modelControlRef.current;
-    if (!control) return;
-    const onChange = (event) => {
-      const detail = event.detail;
-      const value =
-        detail && typeof detail === "object" && "value" in detail
-          ? detail.value
-          : (detail ?? event.target?.value);
-      const next = findSelectableChatModel(selectableModels, value);
-      if (next) {
-        setModel(next);
-        setError("");
-      }
-    };
-    control.addEventListener("change", onChange);
-    return () => {
-      control.removeEventListener("change", onChange);
-    };
-  }, [selectableModels]);
-
   const updateThread = (updater) => {
     setThreads((prev) => {
       const current = prev[threadId] || [];
@@ -921,18 +959,35 @@ const ChatPane = forwardRef(function ChatPane(
     });
   };
 
-  const markPlanApplied = (planId) => {
+  const markPlanApplied = (planId, revision) => {
     if (!planId) return;
     updateThread((current) =>
       current.map((entry) =>
         entry.planId === planId ? { ...entry, planApplied: true } : entry
       )
     );
+    if (!revision) return; // Older deferred edits are backfilled from chat history on reopen.
+    markLocalPlanBuilt(threadId, revision);
+    if (planOwnerId && planShaderId) {
+      markShaderPlanBuilt(planOwnerId, planShaderId, revision).catch((error) => {
+        console.warn("Failed to sync plan build status", error);
+        onNotice?.("Plan built. Its status was saved on this device, but cloud sync failed.", { error: true });
+      });
+    }
   };
 
   const persistCompletedPlan = async (markdown) => {
     if (!isPlanDocument(markdown)) return;
+    const resetVersion = chatResetRef.current;
+    planWriteRef.current += 1;
     saveLocalPlan(threadId, markdown);
+    const revision = await planRevision(markdown);
+    if (chatResetRef.current === resetVersion && activeThreadIdRef.current === threadId) {
+      if (isLocalPlanBuilt(threadId, revision)) {
+        updateThread((current) => restoreChatPlan(current, { markdown, built: true }));
+      }
+      setActivePlan({ scope: planScope, markdown });
+    }
     if (!planOwnerId || !planShaderId) return;
     try {
       await uploadShaderPlan({
@@ -940,7 +995,7 @@ const ChatPane = forwardRef(function ChatPane(
         shaderId: planShaderId,
         markdown,
       });
-      removeLocalPlan(threadId);
+      if (loadLocalPlan(threadId) === markdown) removeLocalPlan(threadId);
     } catch (planError) {
       console.warn("Failed to upload plan.md", planError);
       onNotice?.("Plan saved on this device; cloud sync failed.", {
@@ -984,7 +1039,7 @@ const ChatPane = forwardRef(function ChatPane(
       summary: summary || prose,
       description,
     });
-    markPlanApplied(pendingApply.message.buildPlanId);
+    markPlanApplied(pendingApply.message.buildPlanId, pendingApply.message.buildPlanRevision);
     updateThread((current) =>
       current.map((entry) =>
         entry === pendingApply.message ? { ...entry, applied: true } : entry
@@ -1098,11 +1153,27 @@ const ChatPane = forwardRef(function ChatPane(
     const split = text
       ? await splitComposerPaste({ text })
       : { content: "", pastes: [] };
+    const requestPlanRevision = options.planMarkdown
+      ? await planRevision(options.planMarkdown)
+      : undefined;
+    let planAlreadyBuilt = requestPlanRevision && isLocalPlanBuilt(threadId, requestPlanRevision);
+    if (requestPlanRevision && !planAlreadyBuilt && planOwnerId && planShaderId) {
+      planAlreadyBuilt = await isShaderPlanBuilt(planOwnerId, planShaderId, requestPlanRevision)
+        .catch((statusError) => {
+          console.warn("Failed to check plan build status", statusError);
+          return false;
+        });
+    }
     if (
       chatResetRef.current !== resetVersion ||
       activeThreadIdRef.current !== threadId ||
       abortRef.current
     ) return;
+    if (planAlreadyBuilt || (requestPlanRevision && isLocalPlanBuilt(threadId, requestPlanRevision))) {
+      markLocalPlanBuilt(threadId, requestPlanRevision);
+      markPlanApplied(requestPlanId);
+      return;
+    }
 
     setError("");
     if (textOverride == null) setDraft("");
@@ -1133,6 +1204,7 @@ const ChatPane = forwardRef(function ChatPane(
       mode: requestMode,
       planId: requestMode === "plan" ? crypto.randomUUID() : undefined,
       buildPlanId: requestPlanId || undefined,
+      buildPlanRevision: requestPlanRevision,
       content: "",
       pending: true,
       phase: requestMode === "plan" ? "planning" : "waiting",
@@ -1191,7 +1263,7 @@ const ChatPane = forwardRef(function ChatPane(
       });
     };
 
-    const finishAssistant = (content, { applied = false, editReady = false } = {}) => {
+    const finishAssistant = (content, { applied = false, editReady = false, planInterrupted = false } = {}) => {
       updateThread((current) => {
         const next = pruneEmptyAssistants([...current]);
         const last = next[next.length - 1];
@@ -1205,10 +1277,12 @@ const ChatPane = forwardRef(function ChatPane(
           mode: requestMode,
           planId: last.planId,
           buildPlanId: last.buildPlanId,
+          buildPlanRevision: last.buildPlanRevision,
           content,
           pending: false,
           applied: Boolean(applied || last.applied),
           editReady,
+          planInterrupted,
         };
         return next;
       });
@@ -1259,7 +1333,7 @@ const ChatPane = forwardRef(function ChatPane(
         source: moduleSource,
       });
       markAssistantApplied();
-      markPlanApplied(requestPlanId);
+      markPlanApplied(requestPlanId, requestPlanRevision);
       return moduleSource;
     };
 
@@ -1294,6 +1368,7 @@ const ChatPane = forwardRef(function ChatPane(
             pending: true,
             autoRepair: true,
             buildPlanId: requestPlanId || undefined,
+            buildPlanRevision: requestPlanRevision,
             phase: "repairing",
           },
         ]);
@@ -1303,6 +1378,7 @@ const ChatPane = forwardRef(function ChatPane(
         for await (const event of streamChat({
           provider: model.provider,
           model: model.id,
+          reasoningEffort,
           apiKey,
           messages: [...repairHistory, { role: "user", content: repairPrompt }],
           source: brokenSource,
@@ -1391,6 +1467,7 @@ const ChatPane = forwardRef(function ChatPane(
       for await (const event of streamChat({
         provider: model.provider,
         model: model.id,
+        reasoningEffort,
         apiKey,
         messages: history,
         source: baselineSource,
@@ -1467,7 +1544,7 @@ const ChatPane = forwardRef(function ChatPane(
       const responseComplete =
         sawDone && !sawError && !controller.signal.aborted;
       if (isPlanMode(requestMode)) {
-        finishAssistant(assembled.trim() ? assembled : "");
+        finishAssistant(assembled, { planInterrupted: !responseComplete });
         if (responseComplete && isPlanDocument(assembled)) {
           await persistCompletedPlan(assembled);
         } else if (!sawError && !controller.signal.aborted && !assembled.trim()) {
@@ -1529,7 +1606,7 @@ const ChatPane = forwardRef(function ChatPane(
       if (!aborted) {
         setError(err.message || String(err));
       }
-      finishAssistant(assembled);
+      finishAssistant(assembled, { planInterrupted: isPlanMode(requestMode) });
     } finally {
       if (activeRequestRef.current?.controller === controller) {
         abortRef.current = null;
@@ -1555,6 +1632,7 @@ const ChatPane = forwardRef(function ChatPane(
       requestTextOverride: buildPlanImplementationPrompt(fileName, pendingPlan.content),
       modeOverride: "agent",
       planId,
+      planMarkdown: pendingPlan.content,
       ignoreAttachments: true,
     });
   };
@@ -1658,6 +1736,7 @@ const ChatPane = forwardRef(function ChatPane(
           }
           if (
             isPlanMode(message.mode) &&
+            !message.planInterrupted &&
             isPlanDocument(message.content, {
               allowIncomplete: Boolean(message.pending),
             })
@@ -1685,6 +1764,7 @@ const ChatPane = forwardRef(function ChatPane(
           if (isPlanMode(message.mode)) {
             return (
               <fig-chat-message key={index} from="agent">
+                {message.planInterrupted && <div className="chat-prose">Plan interrupted.</div>}
                 {message.content ? (
                   <MarkdownProse className="chat-prose">
                     {message.content}
@@ -1840,10 +1920,13 @@ const ChatPane = forwardRef(function ChatPane(
             imageInputRef={imageInputRef}
             mode={mode}
             model={model}
-            modelControlRef={modelControlRef}
             modelGroups={modelGroups}
+            effort={reasoningEffort}
+            effortOptions={effortOptions}
             onAttachmentChosen={handleAttachmentChosen}
             onDictationError={setError}
+            onEffortChange={selectEffort}
+            onModelChange={selectModel}
             onPromptPaste={handlePromptPaste}
             onSend={handleSend}
             onStop={stop}

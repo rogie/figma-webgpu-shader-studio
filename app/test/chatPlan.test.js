@@ -3,10 +3,15 @@ import { beforeEach, test } from "node:test";
 import { isPlanMode } from "../src/lib/chatApply.js";
 import {
   buildPlanImplementationPrompt,
+  hasBuiltPlanInHistory,
+  isLocalPlanBuilt,
   isPlanDocument,
   loadLocalPlan,
+  markLocalPlanBuilt,
   planDocumentSubject,
+  planRevision,
   removeLocalPlan,
+  restoreChatPlan,
   saveLocalPlan,
   shaderPlanPath,
 } from "../src/lib/chatPlans.js";
@@ -164,6 +169,40 @@ test("local plan fallback and deterministic cloud path", () => {
   assert.equal(shaderPlanPath("owner", "shader"), "owner/shader/plan.md");
   removeLocalPlan("preset:draft:1");
   assert.equal(loadLocalPlan("preset:draft:1"), "");
+});
+
+test("build status belongs to the exact plan revision and shader", async () => {
+  const original = "# Plan\n\nUse a small brush.";
+  const revised = "# Plan\n\nUse a large brush.";
+  const revision = await planRevision(original);
+  assert.equal(revision, await planRevision("  # Plan\r\n\r\nUse a small brush.\n"));
+  markLocalPlanBuilt("effect", revision);
+  removeLocalPlan("effect");
+  assert.equal(isLocalPlanBuilt("effect", revision), true);
+  assert.equal(isLocalPlanBuilt("effect", await planRevision(revised)), false);
+  assert.equal(isLocalPlanBuilt("fill", revision), false);
+});
+
+test("restores built plans in fresh history and recovers matching legacy build evidence", () => {
+  const original = { role: "assistant", mode: "plan", planId: "old", content: "# Plan" };
+  const appliedEdit = { role: "assistant", buildPlanId: "old", applied: true, content: "Shader edit" };
+  assert.equal(hasBuiltPlanInHistory([original, appliedEdit], "# Plan"), true);
+  assert.equal(hasBuiltPlanInHistory([original, appliedEdit], "# Revised plan"), false);
+  assert.equal(hasBuiltPlanInHistory([original], "# Plan"), false);
+  assert.deepEqual(restoreChatPlan([], { markdown: "# Plan", built: true, planId: "current" }), [
+    { role: "assistant", mode: "plan", content: "# Plan", planId: "current", planApplied: true },
+  ]);
+  assert.deepEqual(restoreChatPlan([original], { markdown: "# Plan", built: true }), [
+    { ...original, planApplied: true },
+  ]);
+});
+
+test("a plan still streaming when chat is saved is restored as interrupted", () => {
+  const plan = { role: "assistant", mode: "plan", content: "# Unfinished", pending: true };
+  saveChatThreads({ shader: [plan] });
+  assert.deepEqual(loadChatThreads().shader, [
+    { role: "assistant", mode: "plan", content: "# Unfinished", planInterrupted: true },
+  ]);
 });
 
 test("clarifications stay in chat while completed plan responses become plan.md", () => {

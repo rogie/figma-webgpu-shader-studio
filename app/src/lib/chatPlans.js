@@ -1,7 +1,79 @@
 const STORAGE_KEY = "shader-studio.chatPlans.v1";
+const BUILD_STORAGE_PREFIX = "shader-studio.chatPlanBuild.v1:";
 
 export function shaderPlanPath(ownerId, shaderId) {
   return `${ownerId}/${shaderId}/plan.md`;
+}
+
+export function shaderPlanBuildFolder(ownerId, shaderId) {
+  return `${ownerId}/${shaderId}/plan-builds`;
+}
+
+export function planBuildStorageKey(shaderKey, revision = "") {
+  return `${BUILD_STORAGE_PREFIX}${shaderKey}:${revision}`;
+}
+
+function normalizedPlan(markdown) {
+  return markdown.trim().replace(/\r\n/g, "\n");
+}
+
+export function samePlanMarkdown(left, right) {
+  return normalizedPlan(left) === normalizedPlan(right);
+}
+
+export async function planRevision(markdown) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(normalizedPlan(markdown)),
+  );
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export function isLocalPlanBuilt(shaderKey, revision) {
+  try {
+    return localStorage.getItem(planBuildStorageKey(shaderKey, revision)) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function markLocalPlanBuilt(shaderKey, revision) {
+  try {
+    localStorage.setItem(planBuildStorageKey(shaderKey, revision), "1");
+  } catch (error) {
+    console.warn("Failed to persist plan build status locally", error);
+  }
+}
+
+export function hasBuiltPlanInHistory(messages, markdown) {
+  const samePlan = normalizedPlan(markdown);
+  const appliedPlanIds = new Set(messages
+    .filter((message) => message.role === "assistant" && message.applied && message.buildPlanId)
+    .map((message) => message.buildPlanId));
+  return messages.some((message) => (
+    message.role === "assistant" &&
+    message.mode === "plan" &&
+    normalizedPlan(message.content) === samePlan &&
+    (message.planApplied || appliedPlanIds.has(message.planId))
+  ));
+}
+
+export function restoreChatPlan(messages, { markdown, built, planId }) {
+  let found = false;
+  let changed = false;
+  const samePlan = normalizedPlan(markdown);
+  const next = messages.map((message) => {
+    if (
+      message.role !== "assistant" || message.mode !== "plan" || message.pending ||
+      message.planInterrupted || normalizedPlan(message.content) !== samePlan
+    ) return message;
+    found = true;
+    if (!built || message.planApplied) return message;
+    changed = true;
+    return { ...message, planApplied: true };
+  });
+  if (found) return changed ? next : messages;
+  return [...next, { role: "assistant", mode: "plan", planId, content: markdown, planApplied: built }];
 }
 
 export function isPlanDocument(markdown, { allowIncomplete = false } = {}) {

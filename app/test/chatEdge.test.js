@@ -199,7 +199,7 @@ test("Cursor session reuse requires the same current Figma skill revision", asyn
 
 test("OpenAI continuations keep one current Figma reference and shader snapshot", async (t) => {
   const calls = fixtureProvider(t, { truncateOpenAI: true });
-  const response = await handleChat(request("openai", "gpt-6.2-sol"));
+  const response = await handleChat(request("openai", "gpt-6.2-sol", { reasoningEffort: "xhigh" }));
   assertRevision(response);
   const stream = await response.text();
 
@@ -208,9 +208,44 @@ test("OpenAI continuations keep one current Figma reference and shader snapshot"
   assert.match(stream, /"type":"done"/);
   assert.equal(calls.length, 2);
   assert.ok(calls.every(({ body }) => body.model === "gpt-6.2-sol"));
+  assert.ok(calls.every(({ body }) => body.reasoning_effort === "xhigh"));
   assert.deepEqual(calls[0].body.messages[0], calls[1].body.messages[0]);
   assert.equal(JSON.stringify(calls[1].body.messages).split(officialMarker).length - 1, 1);
   assert.equal(JSON.stringify(calls[1].body.messages).split("Current shader snapshot (JSON data):").length - 1, 1);
+});
+
+test("OpenAI forwards chosen effort in Plan and Agent and omits the provider default", async (t) => {
+  const calls = fixtureProvider(t);
+  await assertStream(await handleChat(request("openai", "gpt-6.2-astra", {
+    mode: "plan", reasoningEffort: "high",
+  })));
+  await assertStream(await handleChat(request("openai", "gpt-6.1-terra", {
+    mode: "agent", reasoningEffort: "none",
+  })));
+  await assertStream(await handleChat(request("openai", "gpt-6.2-sol", {
+    reasoningEffort: "default",
+  })));
+  await assertStream(await handleChat(request("openai", "gpt-5.6-turbo")));
+  await assertStream(await handleChat(request("grok", "grok-4.6", {
+    reasoningEffort: "high",
+  })));
+  assert.deepEqual(calls.map(({ body }) => body.reasoning_effort), ["high", "none", undefined, undefined, undefined]);
+  for (const call of calls.slice(2)) assert.equal("reasoning_effort" in call.body, false);
+});
+
+test("the Edge rejects unsupported effort levels without calling OpenAI", async (t) => {
+  const calls = fixtureProvider(t);
+  for (const [model, reasoningEffort] of [
+    ["gpt-6.2-astra", "none"],
+    ["gpt-6.2-sol", "minimal"],
+    ["gpt-5.6-turbo", "high"],
+    ["gpt-6-luna", ["medium"]],
+  ]) {
+    const response = await handleChat(request("openai", model, { reasoningEffort }));
+    assert.equal(response.status, 400);
+    assert.match((await response.json()).error, /supported reasoning effort/);
+  }
+  assert.equal(calls.length, 0);
 });
 
 test("the OpenAI request forwards the exact selected model", async (t) => {

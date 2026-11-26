@@ -96,13 +96,18 @@ import {
   applyDefaultValuesToSource,
 } from "./lib/definePropertiesDefaults.js";
 import {
+  hasBuiltPlanInHistory,
+  isLocalPlanBuilt,
   isPlanDocument,
   loadLocalPlan,
+  markLocalPlanBuilt,
+  planRevision,
   removeLocalPlan,
   saveLocalPlan,
 } from "./lib/chatPlans.js";
 import {
   copyChatThreadKey,
+  loadChatThreads,
   migrateChatThreadKey,
 } from "./lib/chatThreads.js";
 import {
@@ -356,7 +361,9 @@ import {
   getShaderVersion,
   getAppRoute,
   getShaderRouteId,
+  isShaderPlanBuilt,
   listShaderAssetPaths,
+  listShaderPlanBuildPaths,
   listShaderThumbnailPaths,
   listShaderVersions,
   listShaders,
@@ -367,6 +374,7 @@ import {
   makeProfileUrl,
   makeShareUrl,
   makeViewUrl,
+  markShaderPlanBuilt,
   MAX_MEDIA_BYTES,
   THUMBNAIL_BUCKET,
   removeAssets,
@@ -500,18 +508,11 @@ function promotePendingAgentCheckpoint(
 const INITIAL_DRAFTS = savedDrafts();
 
 async function migrateLocalPlanToCloud(localKey, ownerId, shaderId) {
-  const markdown = loadLocalPlan(localKey);
-  if (!isPlanDocument(markdown)) return;
+  const plan = await readPlanForCopy({ threadKey: localKey });
+  if (!plan) return;
   const cloudKey = `cloud:${shaderId}`;
-  try {
-    await uploadShaderPlan({ ownerId, shaderId, markdown });
-    removeLocalPlan(localKey);
-    removeLocalPlan(cloudKey);
-  } catch (error) {
-    saveLocalPlan(cloudKey, markdown);
-    if (cloudKey !== localKey) removeLocalPlan(localKey);
-    console.warn("Failed to migrate plan.md to cloud storage", error);
-  }
+  await copyPlanToCloud(cloudKey, plan, ownerId, shaderId);
+  if (cloudKey !== localKey) removeLocalPlan(localKey);
 }
 
 async function readPlanForCopy({
@@ -519,21 +520,27 @@ async function readPlanForCopy({
   ownerId = null,
   shaderId = null,
 }) {
-  const local = loadLocalPlan(threadKey);
-  if (isPlanDocument(local)) return local;
-  if (!ownerId || !shaderId) return "";
-  try {
-    const cloud = await downloadShaderPlan(ownerId, shaderId);
-    return isPlanDocument(cloud) ? cloud : "";
-  } catch {
-    return "";
+  let markdown = loadLocalPlan(threadKey);
+  if (!isPlanDocument(markdown) && ownerId && shaderId) {
+    markdown = await downloadShaderPlan(ownerId, shaderId).catch(() => "");
   }
+  if (!isPlanDocument(markdown)) return null;
+  const revision = await planRevision(markdown);
+  let built = isLocalPlanBuilt(threadKey, revision) ||
+    hasBuiltPlanInHistory(loadChatThreads()[threadKey] || [], markdown);
+  if (!built && ownerId && shaderId) {
+    built = await isShaderPlanBuilt(ownerId, shaderId, revision).catch(() => false);
+  }
+  return { markdown, revision, built };
 }
 
-async function copyPlanToCloud(threadKey, markdown, ownerId, shaderId) {
-  if (!isPlanDocument(markdown)) return;
+async function copyPlanToCloud(threadKey, plan, ownerId, shaderId) {
+  if (!plan) return;
+  const { markdown, revision, built } = plan;
+  if (built) markLocalPlanBuilt(threadKey, revision);
   try {
     await uploadShaderPlan({ ownerId, shaderId, markdown });
+    if (built) await markShaderPlanBuilt(ownerId, shaderId, revision);
     removeLocalPlan(threadKey);
   } catch {
     saveLocalPlan(threadKey, markdown);
@@ -6693,7 +6700,7 @@ export default function App() {
           if (cancelled) continue;
           const sourceThreadKey = `preset:${draft.id}`;
           const targetThreadKey = `cloud:${saved.id}`;
-          const plan = loadLocalPlan(sourceThreadKey);
+          const plan = await readPlanForCopy({ threadKey: sourceThreadKey });
           await copyPlanToCloud(
             targetThreadKey,
             plan,
@@ -8233,7 +8240,7 @@ export default function App() {
         if (isDraftId(saveTargetId)) {
           await copyPlanToCloud(
             targetThreadKey,
-            loadLocalPlan(planLocalKey),
+            await readPlanForCopy({ threadKey: planLocalKey }),
             user.id,
             saved.id,
           );
@@ -9662,8 +9669,9 @@ export default function App() {
       };
       setDrafts((current) => [draft, ...current]);
       const targetThreadKey = `preset:${id}`;
-      if (isPlanDocument(copiedPlan)) {
-        saveLocalPlan(targetThreadKey, copiedPlan);
+      if (copiedPlan) {
+        saveLocalPlan(targetThreadKey, copiedPlan.markdown);
+        if (copiedPlan.built) markLocalPlanBuilt(targetThreadKey, copiedPlan.revision);
       }
       copyChatThreadKey(sourceThreadKey, targetThreadKey);
       copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
@@ -9717,10 +9725,14 @@ export default function App() {
             `Delete or unpublish the referencing ${parents.length === 1 ? "item" : "items"} first: ${parents.map((item) => item.name).join(", ")}.`
           );
         }
-        const [assetPaths, thumbnailPaths, retainedAssets] = await Promise.all([
+        const [assetPaths, thumbnailPaths, retainedAssets, planBuildPaths] = await Promise.all([
           listShaderAssetPaths(shader.owner_id, shader.id),
           listShaderThumbnailPaths(shader.owner_id, shader.id),
           listRetainedShaderAssetPaths(shader.id),
+          listShaderPlanBuildPaths(shader.owner_id, shader.id).catch((error) => {
+            console.warn("Failed to list plan build files for cleanup", error);
+            return [];
+          }),
         ]);
         const retained = new Set(retainedAssets);
         const disposableAssets = assetPaths.filter(
@@ -9728,7 +9740,7 @@ export default function App() {
         );
         await deleteShader(shader.id);
         const cleanupResults = await Promise.allSettled([
-          removeShaderPlan(shader.owner_id, shader.id),
+          removeShaderPlan(shader.owner_id, shader.id, planBuildPaths),
           removeAssets(disposableAssets),
           removeThumbnailAssets(thumbnailPaths),
         ]);

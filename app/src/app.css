@@ -1110,8 +1110,12 @@ dialog[is="fig-toast"] fig-button {
 dialog.export-dialog {
   width: 320px;
 
+  fig-tab-content[hidden] {
+    display: none;
+  }
+
   fig-header {
-    padding-left: 0;
+    padding-left: var(--spacer-1);
   }
 
   fig-field {

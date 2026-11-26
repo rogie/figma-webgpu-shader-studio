@@ -38,8 +38,12 @@ function sanitizeMessage(message) {
   if (typeof message.buildPlanId === "string") {
     out.buildPlanId = message.buildPlanId;
   }
+  if (typeof message.buildPlanRevision === "string") out.buildPlanRevision = message.buildPlanRevision;
   if (message.planApplied === true) out.planApplied = true;
   if (message.planDismissed === true) out.planDismissed = true;
+  if (message.mode === "plan" && (message.planInterrupted || message.pending)) {
+    out.planInterrupted = true;
+  }
   if (message.role === "assistant" && message.applied === true) {
     out.applied = true;
   }

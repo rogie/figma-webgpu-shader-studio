@@ -1,3 +1,5 @@
+import { resolveOpenAIReasoningEffort } from "../../../supabase/functions/chat/openaiModels.mjs";
+
 /** Reattach extracted pastes so the model still sees the code. */
 export function userContentForApi(message) {
   const pastes = Array.isArray(message?.pastes) ? message.pastes : [];
@@ -103,6 +105,7 @@ export function buildChatRequest({
   skills,
   figmaSkillRevision,
   mode = "agent",
+  reasoningEffort,
   cursorAgentId,
   compileError,
 }) {
@@ -123,6 +126,10 @@ export function buildChatRequest({
   };
   if (typeof cursorAgentId === "string" && cursorAgentId) {
     request.cursorAgentId = cursorAgentId;
+  }
+  if (provider === "openai") {
+    const effort = resolveOpenAIReasoningEffort(model, reasoningEffort);
+    if (effort !== undefined) request.reasoningEffort = effort;
   }
   const diagnostic = typeof compileError === "string" ? compileError.trim() : "";
   if (diagnostic) request.compileError = diagnostic;

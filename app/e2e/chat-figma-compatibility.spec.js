@@ -80,7 +80,7 @@ test("old shader chat uses the selected OpenAI model and only applies completed 
   const initialSource = await editor.innerText();
   const input = page.locator("fig-input-text.chat-input textarea");
   const stop = page.getByRole("button", { name: "Stop", exact: true });
-  const modelPicker = page.getByRole("button", { name: "Model", exact: true });
+  const modelPicker = page.locator(".chat-model-picker-trigger");
 
   async function send(prompt, result) {
     await input.fill(prompt);
@@ -104,7 +104,11 @@ test("old shader chat uses the selected OpenAI model and only applies completed 
   expect(await editor.innerText()).toBe(initialSource);
 
   await modelPicker.click();
-  await page.getByText("GPT-6.2 Astra", { exact: true }).click();
+  const modelPopup = page.getByRole("dialog", { name: "Model and effort", exact: true });
+  await modelPopup.getByRole("button", { name: "Model", exact: true }).click();
+  await modelPopup.getByRole("option", { name: "GPT-6.2 Astra", exact: true }).click();
+  await modelPicker.click();
+  await expect(modelPicker).toHaveAccessibleName(/GPT-6\.2 Astra/);
   await send("Add a held-button effect");
   expect(requests.at(-1)).toMatchObject({ provider: "openai", model: "gpt-6.2-astra" });
   await expect(editor).toContainText("Completed native edit");

@@ -63,6 +63,7 @@ export async function listAvailableProviderModels(
  * @param {string} [options.skills]
  * @param {string} [options.figmaSkillRevision]
  * @param {"agent"|"plan"} [options.mode]
+ * @param {string} [options.reasoningEffort]
  * @param {string} [options.cursorAgentId]
  * @param {AbortSignal} [options.signal]
  */
@@ -78,6 +79,7 @@ export async function* streamChat({
   skills,
   figmaSkillRevision,
   mode,
+  reasoningEffort,
   cursorAgentId,
   compileError,
   signal,
@@ -116,6 +118,7 @@ export async function* streamChat({
       skills,
       figmaSkillRevision,
       mode,
+      reasoningEffort,
       cursorAgentId,
       compileError,
     })),

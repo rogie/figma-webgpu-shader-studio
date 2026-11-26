@@ -12,7 +12,7 @@ import {
 } from "../lib/profileHandles.js";
 import { supabase } from "../lib/supabase.js";
 import { formatSupabaseError } from "../lib/supabaseFetch.js";
-import { shaderPlanPath } from "../lib/chatPlans.js";
+import { shaderPlanBuildFolder, shaderPlanPath } from "../lib/chatPlans.js";
 
 export { shaderPlanPath };
 
@@ -618,16 +618,38 @@ export async function downloadShaderPlan(ownerId, shaderId) {
   const blob = unwrap(
     await requireClient()
       .storage.from(PLAN_BUCKET)
-      .download(shaderPlanPath(ownerId, shaderId))
+      .download(shaderPlanPath(ownerId, shaderId), {}, { cache: "no-store" })
   );
   return blob.text();
 }
 
-export async function removeShaderPlan(ownerId, shaderId) {
+export async function isShaderPlanBuilt(ownerId, shaderId, revision) {
+  const filename = `${revision}.md`;
+  const rows = unwrap(await requireClient().storage.from(PLAN_BUCKET).list(
+    shaderPlanBuildFolder(ownerId, shaderId),
+    { search: filename, limit: 1 },
+  ));
+  return rows?.some((row) => row.name === filename) ?? false;
+}
+
+export async function markShaderPlanBuilt(ownerId, shaderId, revision) {
+  const path = `${shaderPlanBuildFolder(ownerId, shaderId)}/${revision}.md`;
+  const marker = new Blob(["Built\n"], { type: "text/markdown" });
+  unwrap(await requireClient().storage.from(PLAN_BUCKET).upload(path, marker, {
+    upsert: true,
+    contentType: "text/markdown",
+    cacheControl: "0",
+  }));
+}
+
+export async function listShaderPlanBuildPaths(ownerId, shaderId) {
+  return listAssetFolder(requireClient(), shaderPlanBuildFolder(ownerId, shaderId), PLAN_BUCKET);
+}
+
+export async function removeShaderPlan(ownerId, shaderId, buildPaths = []) {
   unwrap(
-    await requireClient()
-      .storage.from(PLAN_BUCKET)
-      .remove([shaderPlanPath(ownerId, shaderId)])
+    await requireClient().storage.from(PLAN_BUCKET)
+      .remove([shaderPlanPath(ownerId, shaderId), ...buildPaths])
   );
 }
 

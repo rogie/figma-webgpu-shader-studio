@@ -70,13 +70,13 @@ export default function ExportDialog({
     >
       <fig-header dialog-header="">
         <fig-tabs ref={tabsRef} name="export-kind" value={tab}>
-          <fig-tab value="image" content="#export-tab-image">
+          <fig-tab id="export-kind-image" value="image" aria-controls="export-tab-image">
             Image
           </fig-tab>
-          <fig-tab value="video" content="#export-tab-video">
+          <fig-tab id="export-kind-video" value="video" aria-controls="export-tab-video">
             Video
           </fig-tab>
-          <fig-tab value="embed" content="#export-tab-embed">
+          <fig-tab id="export-kind-embed" value="embed" aria-controls="export-tab-embed">
             Embed
           </fig-tab>
         </fig-tabs>
@@ -92,7 +92,12 @@ export default function ExportDialog({
         </fig-tooltip>
       </fig-header>
       <fig-content>
-        <fig-tab-content id="export-tab-image">
+        <fig-tab-content
+          id="export-tab-image"
+          role="tabpanel"
+          aria-labelledby="export-kind-image"
+          hidden={tab === "image" ? undefined : ""}
+        >
           <fig-field direction="horizontal" columns="thirds">
             <label>Format</label>
             <fig-select
@@ -144,7 +149,12 @@ export default function ExportDialog({
             </fig-field>
           )}
         </fig-tab-content>
-        <fig-tab-content id="export-tab-video">
+        <fig-tab-content
+          id="export-tab-video"
+          role="tabpanel"
+          aria-labelledby="export-kind-video"
+          hidden={tab === "video" ? undefined : ""}
+        >
           <fig-field direction="horizontal" columns="thirds">
             <label>Format</label>
             <fig-select
@@ -228,7 +238,12 @@ export default function ExportDialog({
             </fig-field>
           ) : null}
         </fig-tab-content>
-        <fig-tab-content id="export-tab-embed">
+        <fig-tab-content
+          id="export-tab-embed"
+          role="tabpanel"
+          aria-labelledby="export-kind-embed"
+          hidden={tab === "embed" ? undefined : ""}
+        >
           <fig-field direction="horizontal" columns="thirds">
             <label>Format</label>
             <fig-segmented-control

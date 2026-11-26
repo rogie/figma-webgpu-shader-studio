@@ -473,6 +473,53 @@
   cursor: zoom-in;
 }
 
+.chat-model-picker-trigger {
+  box-sizing: border-box;
+  gap: var(--spacer-1);
+  white-space: nowrap;
+
+  &[aria-expanded="true"] {
+    --fig-button-control-padding: 0 var(--spacer-1);
+
+    > fig-icon[slot="append"] {
+      display: none;
+    }
+  }
+
+  .chat-model-picker-name {
+    min-inline-size: 0;
+    max-inline-size: 12rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-model-picker-effort {
+    color: var(--figma-color-text-secondary);
+  }
+}
+
+dialog[is="fig-popup"].chat-model-picker-popup {
+  box-sizing: border-box;
+  inline-size: 10rem;
+  max-inline-size: calc(100vw - var(--spacer-4));
+  pointer-events: auto;
+
+  > fig-content {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    padding-bottom: var(--spacer-2);
+
+    > fig-stack {
+      text-align: left;
+    }
+  }
+
+  .chat-effort-label {
+    margin: 0;
+  }
+}
+
 /* Modal dialog renders in the top layer, so the chat panel's overflow and
    layout do not clip it. Resets FigUI3's panel-sized dialog defaults. */
 #root dialog.chat-attachment-zoom {
