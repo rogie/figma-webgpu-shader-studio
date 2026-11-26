@@ -20,6 +20,14 @@ export function planDocumentSubject(markdown) {
   return heading || "";
 }
 
+export function buildPlanImplementationPrompt(fileName, markdown) {
+  return `Implement the following plan in the current ${fileName} module. Recheck the plan’s technical assumptions against the current authoring skills for its target. Preserve the user’s requirements. If a conditional fallback is no longer needed on that target, implement the primary behavior. Return the complete updated module using the required response format.
+
+<plan>
+${markdown}
+</plan>`;
+}
+
 function loadPlans() {
   try {
     const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}");

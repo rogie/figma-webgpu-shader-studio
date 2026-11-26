@@ -154,13 +154,24 @@ OpenAI, Anthropic, Gemini, or Grok API key.
    provider secrets are required.
 3. In Chat, pick an available model from the dropdown. The OpenAI shortlist
    includes GPT-6.2 Sol and Astra, GPT-6.1 Terra, and GPT-6 Luna. GPT-5.6 Turbo
-   appears only if your API key lists that exact model. Send a message, and
-   when the model returns a full TypeScript fence it is applied to the editor
-   (with Undo apply).
+   appears only if your API key lists that exact model. Shader edits apply after
+   the response completes and the module passes the Figma compatibility check.
+   Advice and incomplete responses stay in chat.
 
-Each request includes the current module source plus bundled authoring skills
-(`figma-shader-coder`, `v3` module contract, WGSL, WebGPU). Chat history is
-saved per shader in `localStorage` and resumed when you reopen Chat.
+The chat Edge Function refreshes the [official Figma MCP shader reference](https://github.com/figma/mcp-server-guide/blob/main/skills/figma-shaders/references/authoring.md)
+from Figma's repository. During an outage it uses a previously verified copy
+or the reviewed contract bundled with the app. The editor checks generated
+code against that reviewed contract before applying it. Review new documented
+runtime features against the preview and compatibility checks before enabling
+them. Figma's native build is the final shader validation.
+
+Chat history is saved per shader in `localStorage`. Saved plans and old messages
+are context for the current guidance. Cursor resumes only when the shader and
+skill revision match. **Clear chat** detaches its provider session.
+
+Roll out changes to the server guidance with `supabase functions deploy chat`
+and publish the frontend for the matching editor checks. The Figma shader sync
+function does not handle chat.
 
 Use the **Plan mode** toggle to request a Markdown implementation plan without
 changing the editor. Plan turns cannot apply or auto-repair code. The latest

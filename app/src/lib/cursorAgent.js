@@ -14,14 +14,14 @@ function normalizeThreadId(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function sourceFingerprint(source) {
-  if (typeof source !== "string") return undefined;
+function textFingerprint(text) {
+  if (typeof text !== "string") return undefined;
   let hash = 2166136261;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
     hash = Math.imul(hash, 16777619);
   }
-  return `${source.length}:${(hash >>> 0).toString(16)}`;
+  return `${text.length}:${(hash >>> 0).toString(16)}`;
 }
 
 function modelMatchesStored(model, storedModelId) {
@@ -51,6 +51,12 @@ function normalizeBinding(value) {
     value.sourceFingerprint
   ) {
     binding.sourceFingerprint = value.sourceFingerprint;
+  }
+  if (typeof value.skillFingerprint === "string" && value.skillFingerprint) {
+    binding.skillFingerprint = value.skillFingerprint;
+  }
+  if (typeof value.figmaSkillRevision === "string" && value.figmaSkillRevision) {
+    binding.figmaSkillRevision = value.figmaSkillRevision;
   }
   return binding;
 }
@@ -136,7 +142,10 @@ export function loadCursorAgent(threadId) {
  *   runId?: string,
  *   threadId?: string,
  *   source?: string,
- *   sourceFingerprint?: string
+ *   sourceFingerprint?: string,
+ *   skills?: string,
+ *   skillFingerprint?: string,
+ *   figmaSkillRevision?: string
  * }} next
  */
 export function saveCursorAgent(next) {
@@ -155,13 +164,18 @@ export function saveCursorAgent(next) {
     normalizedThreadId ||
     (sameAgent ? stored.threadId : undefined);
   const nextSourceFingerprint =
-    sourceFingerprint(next.source) ||
+    textFingerprint(next.source) ||
     (typeof next.sourceFingerprint === "string" && next.sourceFingerprint
       ? next.sourceFingerprint
       : undefined);
   const storedSourceFingerprint = sameAgent
     ? stored.sourceFingerprint
     : undefined;
+  const skillFingerprint = textFingerprint(next.skills) ||
+    next.skillFingerprint || (sameAgent ? stored.skillFingerprint : undefined);
+  const figmaSkillRevision = typeof next.figmaSkillRevision === "string" && next.figmaSkillRevision
+    ? next.figmaSkillRevision
+    : sameAgent ? stored.figmaSkillRevision : undefined;
   store.bindings[key] = {
     agentId: next.agentId,
     modelId: next.modelId.trim(),
@@ -173,12 +187,23 @@ export function saveCursorAgent(next) {
             nextSourceFingerprint || storedSourceFingerprint,
         }
       : {}),
+    ...(skillFingerprint ? { skillFingerprint } : {}),
+    ...(figmaSkillRevision ? { figmaSkillRevision } : {}),
   };
   store.lastBindingKey = key;
   writeStore(store);
 }
 
-export function clearCursorAgent() {
+export function clearCursorAgent(threadId) {
+  const key = normalizeThreadId(threadId);
+  if (key) {
+    const store = readStore();
+    if (!store.bindings[key]) return;
+    delete store.bindings[key];
+    if (store.lastBindingKey === key) store.lastBindingKey = null;
+    writeStore(store);
+    return;
+  }
   localStorage.removeItem(STORAGE_KEY);
   localStorage.removeItem(LEGACY_STORAGE_KEY);
 }
@@ -230,7 +255,7 @@ export function bindCursorAgentToSource(model, { threadId, source } = {}) {
 
 /**
  * @param {{ provider?: string, id?: string, aliases?: string[] }} model
- * @param {{ threadId?: string, source?: string }} [context]
+ * @param {{ threadId?: string, source?: string, skills?: string }} [context]
  */
 export function cursorAgentIdForModel(model, context) {
   if (model?.provider !== "cursor" || !model.id) return undefined;
@@ -239,7 +264,7 @@ export function cursorAgentIdForModel(model, context) {
   if (!stored) return undefined;
   if (!modelMatchesStored(model, stored.modelId)) return undefined;
   if (context) {
-    const fingerprint = sourceFingerprint(context.source);
+    const fingerprint = textFingerprint(context.source);
     if (
       !contextThreadId ||
       !fingerprint ||
@@ -248,6 +273,7 @@ export function cursorAgentIdForModel(model, context) {
     ) {
       return undefined;
     }
+    if (stored.skillFingerprint !== textFingerprint(context.skills)) return undefined;
   }
   return stored.agentId;
 }

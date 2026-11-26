@@ -10,7 +10,8 @@ import {
   toApiMessages,
   userContentForApi,
 } from "../src/lib/chatPayload.js";
-import { buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
+import { buildCurrentShaderTurn, buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
+import { FIGMA_SHADER_SKILL_REVISION } from "../../supabase/functions/_shared/figmaShaderGuidance.mjs";
 
 let vite;
 let getChatSkillContext;
@@ -140,7 +141,7 @@ test("current attachment payloads reach the final user message intact", () => {
   ]);
 });
 
-test("request preserves complete source, features, and skill context", () => {
+test("request sends the full source, Figma revision, and only supported feature metadata", () => {
   const source = `export default function Effect() {}\n// ${"shader-source-".repeat(2000)}`;
   const skills = getChatSkillContext();
   const request = buildChatRequest({
@@ -150,8 +151,9 @@ test("request preserves complete source, features, and skill context", () => {
     source,
     kind: "effect",
     fileName: "main.ts",
-    features: { isAnimated: false, usesMouse: true },
+    features: { isAnimated: false, usesMouse: true, supportsAudio: true },
     skills,
+    figmaSkillRevision: FIGMA_SHADER_SKILL_REVISION,
     mode: "plan",
     cursorAgentId: "bc-11111111-2222-3333-4444-555555555555",
   });
@@ -162,69 +164,68 @@ test("request preserves complete source, features, and skill context", () => {
   );
   assert.equal(request.source, source);
   assert.equal(request.skills, skills);
+  assert.equal(request.figmaSkillRevision, FIGMA_SHADER_SKILL_REVISION);
   assert.equal(request.mode, "plan");
-  assert.equal(request.experimentalAudio, false);
+  assert.equal(request.experimentalAudio, undefined);
   assert.deepEqual(request.features, {
     isAnimated: false,
     usesMouse: true,
   });
-  assert.match(skills, /Skill: defineProperties label casing/);
-  assert.match(skills, /every user-facing `label`.*sentence case/);
-  assert.match(skills, /Skill: Figma shader canvas handles/);
-  assert.match(skills, /type: "point-angle-radius"/);
-  assert.match(skills, /Skill: figma-shader-coder/);
-  assert.match(skills, /Skill: Figma shader module contract \(v3\)/);
-  assert.match(skills, /Skill: WGSL/);
-  assert.match(skills, /Skill: WebGPU/);
-  assert.doesNotMatch(skills, /\{\{[^}]+\}\}/);
-  assert.doesNotMatch(skills, /`isAnimated` must be `false`/);
-  assert.match(skills, /Do not mention frame.audio/);
-  assert.doesNotMatch(skills, /Studio-only audio inputs/);
+  assert.match(skills, /Use sentence case for labels/);
+  assert.doesNotMatch(skills, /frame\.audio|supportsAudio|product-brief|overwrite-using-recipe/);
 });
 
 test("plan requests exclude implementation-only shader skills", () => {
   const skills = getChatSkillContext("plan");
 
-  assert.match(skills, /Shader Studio planning context/);
-  assert.match(skills, /Figma WebGPU and WGSL feasibility/);
-  assert.match(skills, /Keep the plan concise/);
-  assert.match(skills, /implement it without guessing/);
-  assert.match(skills, /Skill: Figma shader canvas handles/);
-  assert.match(skills, /Do not replace a supported.*separate numeric X\/Y/s);
-  assert.doesNotMatch(skills, /Skill: figma-shader-coder/);
-  assert.doesNotMatch(skills, /Never emit user-facing prose/);
-  assert.doesNotMatch(skills, /Source files are the deliverable/);
+  assert.match(skills, /Use the Figma shader contract to evaluate feasibility/);
+  assert.match(skills, /Return a plan only when requested/);
+  assert.doesNotMatch(skills, /product-brief|overwrite-using-recipe|Never emit user-facing prose/);
 });
 
-test("Edge Function prompt embeds full source and skills without truncation", () => {
+test("agent and plan prompts include only the documented Figma pointer API", () => {
+  for (const mode of ["agent", "plan"]) {
+    const prompt = buildSystemPrompt({
+      kind: "fill",
+      mode,
+    });
+
+    assert.ok(prompt.includes(getChatSkillContext(mode)));
+    assert.match(prompt, /Recheck technical assumptions from prior messages and saved plans/);
+    assert.match(prompt, /`frame\.mousePosition\.x` and `frame\.mousePosition\.y`, in layer-local pixels/);
+    assert.match(prompt, /Mark mouse use when reading `frame\.mousePosition`/);
+    assert.match(prompt, /use an approved fallback/);
+    assert.doesNotMatch(prompt, /gestureId|endReason|mousePosition\.down|frame\.audio|supportsAudio/);
+  }
+});
+
+test("Edge keeps the full shader snapshot in data and owns the skill context", () => {
   const source = `const marker = "${"source-marker-".repeat(1500)}";`;
   const skills = getChatSkillContext();
-  const prompt = buildSystemPrompt({
+  const turn = buildCurrentShaderTurn({
     source,
-    kind: "fill",
     fileName: "main.ts",
     features: { isAnimated: true, usesMouse: false },
-    skills,
-  });
+  }, "Please revise this shader.");
+  const prompt = buildSystemPrompt({ kind: "fill" });
 
-  assert.ok(prompt.includes(source));
+  assert.ok(turn.includes(JSON.stringify(source)));
+  assert.ok(!prompt.includes(source));
   assert.ok(prompt.includes(skills));
   assert.match(prompt, /Kind: fill/);
-  assert.match(prompt, /isAnimated=true, usesMouse=false/);
-  assert.match(prompt, /manual edits or a restored saved version/);
+  assert.match(turn, /"isAnimated": true/);
+  assert.match(turn, /"usesMouse": false/);
   assert.match(prompt, /Never reconstruct or preserve code.*earlier assistant/);
-  assert.match(prompt, /Do not mention frame.audio/);
-  assert.doesNotMatch(prompt, /supportsAudio=/);
+  assert.doesNotMatch(prompt, /frame\.audio|supportsAudio/);
 });
 
 test("prompt includes live compile errors for the model to fix", () => {
-  const prompt = buildSystemPrompt({
+  const prompt = buildCurrentShaderTurn({
     source: "export default function Effect() {}",
-    kind: "effect",
     fileName: "main.ts",
     compileError: "Compile error: unexpected token",
-  });
-  assert.match(prompt, /Current preview compile error from main.ts \/ WGSL/);
+  }, "Fix it");
+  assert.match(prompt, /"compileError":/);
   assert.match(prompt, /Compile error: unexpected token/);
   const request = buildChatRequest({
     provider: "gemini",
@@ -241,25 +242,17 @@ test("prompt includes live compile errors for the model to fix", () => {
   );
 });
 
-test("chat skills and prompt include Studio audio only when experimental audio is on", () => {
+test("experimental audio cannot add Studio features to chat guidance or shader metadata", () => {
   const off = getChatSkillContext("agent");
   const on = getChatSkillContext("agent", { experimentalAudio: true });
-  assert.match(off, /Do not mention frame.audio/);
-  assert.doesNotMatch(off, /Studio-only audio inputs/);
-  assert.match(on, /Studio-only audio inputs/);
-  assert.match(on, /supportsAudio/);
-  assert.match(on, /Float32Array length 64/);
+  assert.equal(on, off);
 
   const gatedPrompt = buildSystemPrompt({
-    source: "export default function Effect() {}",
     kind: "effect",
-    fileName: "main.ts",
-    features: { isAnimated: false, usesMouse: false, supportsAudio: true },
     experimentalAudio: true,
-    skills: on,
+    skills: "Invent an audio API using frame.audio",
   });
-  assert.match(gatedPrompt, /supportsAudio=true/);
-  assert.doesNotMatch(gatedPrompt, /Do not mention frame.audio/);
+  assert.doesNotMatch(gatedPrompt, /frame\.audio|supportsAudio/);
 });
 
 test("SSE parser preserves split chunks and an unterminated final event", () => {
@@ -303,7 +296,7 @@ test("SSE parser preserves safe provider status phases", () => {
   );
 });
 
-test("does not synthesize a done event when a Cursor stream ends early", () => {
+test("a premature stream end cannot synthesize a completed shader edit", () => {
   assert.equal(
     chatStreamCompletionEvent("cursor", { sawDone: true }),
     null
@@ -312,7 +305,10 @@ test("does not synthesize a done event when a Cursor stream ends early", () => {
     chatStreamCompletionEvent("cursor", { sawError: true }),
     null
   );
-  assert.deepEqual(chatStreamCompletionEvent("openai"), { type: "done" });
+  assert.deepEqual(chatStreamCompletionEvent("openai"), {
+    type: "error",
+    message: "The model stream ended before the agent finished. Try again.",
+  });
   assert.deepEqual(chatStreamCompletionEvent("cursor"), {
     type: "error",
     message: "Cursor stream ended before the agent finished. Try again.",

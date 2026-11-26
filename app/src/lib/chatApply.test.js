@@ -29,51 +29,27 @@ test("marks syntax failures as automatically repairable", () => {
   assert.match(result.reason, /(?:Compile|Syntax) error:/);
 });
 
-test("auto-apply accepts complete code when the terminal stream event is lost", () => {
-  const response = `Updated.
+const completedEdit = `<summary>Will soften the glow.</summary>
+<description>A soft glow surrounds bright details.</description>
 \`\`\`typescript
 export function render(device, frame) {
   return frame;
 }
 \`\`\``;
-  assert.equal(
-    extractAutoApplyModuleSource(response),
-    "export function render(device, frame) {\n  return frame;\n}\n"
-  );
+
+test("auto-apply requires a tagged edit, one closed fence, and stream completion", () => {
+  const done = { streamCompleted: true };
+  assert.equal(extractAutoApplyModuleSource(completedEdit), null);
+  assert.equal(extractAutoApplyModuleSource(completedEdit, { ...done, aborted: true }), null);
+  assert.equal(extractAutoApplyModuleSource(completedEdit.slice(0, -3), done), null);
+  assert.equal(extractAutoApplyModuleSource(completedEdit.slice(completedEdit.indexOf("```")), done), null);
+  assert.equal(extractAutoApplyModuleSource(`${completedEdit}\n\`\`\`ts\nextra\n\`\`\``, done), null);
+  assert.equal(extractAutoApplyModuleSource(completedEdit, done), extractModuleSource(completedEdit));
 });
 
-test("auto-apply only accepts an open fence after explicit stream completion", () => {
-  const response = `Updated.
-\`\`\`typescript
-export function render(device, frame) {
-  return frame;
-}`;
-  assert.equal(extractModuleSource(response), null);
-  assert.equal(extractAutoApplyModuleSource(response), null);
-  assert.equal(
-    extractAutoApplyModuleSource(response, { streamCompleted: true }),
-    "export function render(device, frame) {\n  return frame;\n}\n"
-  );
-  assert.equal(
-    extractAutoApplyModuleSource(response, {
-      streamCompleted: true,
-      aborted: true,
-    }),
-    null
-  );
-});
-
-test("applied open-fence code still produces a persistence checkpoint", () => {
-  const response = `<summary>Will soften the glow.</summary>
-<description>A soft glow surrounds bright details.</description>
-\`\`\`typescript
-export function render(device, frame) {
-  return frame;
-}`;
-  const source = extractAutoApplyModuleSource(response, {
-    streamCompleted: true,
-  });
-  assert.deepEqual(buildAppliedModuleCheckpoint(response, source), {
+test("a completed shader edit produces a persistence checkpoint", () => {
+  const source = extractAutoApplyModuleSource(completedEdit, { streamCompleted: true });
+  assert.deepEqual(buildAppliedModuleCheckpoint(completedEdit, source), {
     source: "export function render(device, frame) {\n  return frame;\n}\n",
     summary: "Will soften the glow.",
     description: "A soft glow surrounds bright details.",

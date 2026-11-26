@@ -1,13 +1,16 @@
 import { isAllowedModel, isProvider, MODELS, type Provider } from "./models.ts";
-import { buildSystemPrompt } from "./prompt.ts";
+import { buildCurrentShaderTurn, buildSystemPrompt } from "./prompt.ts";
 import { isCursorAgentId, parseCursorModels, streamCursorChat } from "./cursor.ts";
 import { anthropicOutputConfig } from "./anthropic.ts";
+import { loadFigmaAuthoringReference } from "./figmaAuthoringReference.mjs";
+import { FIGMA_SHADER_SKILL_REVISION } from "../_shared/figmaShaderGuidance.mjs";
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers":
     "authorization, x-client-info, apikey, content-type, x-user-api-key",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Expose-Headers": "X-Figma-Skill-Revision",
 };
 
 type Attachment = {
@@ -31,9 +34,8 @@ type RequestBody = {
   source?: string;
   kind?: string;
   fileName?: string;
-  features?: { isAnimated?: boolean; usesMouse?: boolean; supportsAudio?: boolean };
-  experimentalAudio?: boolean;
-  skills?: string;
+  features?: { isAnimated?: boolean; usesMouse?: boolean };
+  figmaSkillRevision?: string;
   mode?: "agent" | "plan";
   cursorAgentId?: string;
   compileError?: string;
@@ -836,7 +838,7 @@ Deno.serve(async (req) => {
   const model = body.model?.trim() ?? "";
   const messages = Array.isArray(body.messages) ? body.messages : [];
   const source = typeof body.source === "string" ? body.source : "";
-  const kind = typeof body.kind === "string" ? body.kind : "effect";
+  const kind = body.kind === "fill" ? "fill" : "effect";
   const fileName = typeof body.fileName === "string" ? body.fileName : "main.ts";
   const mode = body.mode === "plan" ? "plan" : "agent";
 
@@ -855,19 +857,6 @@ Deno.serve(async (req) => {
     return jsonResponse(400, { error: "messages is required" });
   }
 
-  const skills = typeof body.skills === "string" ? body.skills : "";
-
-  const system = buildSystemPrompt({
-    source,
-    kind,
-    fileName,
-    features: body.features,
-    skills,
-    mode,
-    experimentalAudio: Boolean(body.experimentalAudio),
-    compileError: typeof body.compileError === "string" ? body.compileError : "",
-  });
-
   const history: ChatMessage[] = [];
   for (const m of messages) {
     if (!m || (m.role !== "user" && m.role !== "assistant")) continue;
@@ -881,19 +870,35 @@ Deno.serve(async (req) => {
     });
   }
 
-  if (history.length === 0) {
-    return jsonResponse(400, { error: "messages is required" });
+  const latestUserTurn = history.findLast((message) => message.role === "user");
+  if (!latestUserTurn) {
+    return jsonResponse(400, { error: "A user message is required" });
   }
+  latestUserTurn.content = buildCurrentShaderTurn({
+    source,
+    fileName,
+    features: body.features,
+    compileError: typeof body.compileError === "string" ? body.compileError : "",
+  }, latestUserTurn.content);
 
   try {
     const allAttachments = history.flatMap((m) => m.attachments || []);
     assertProviderAttachments(provider, allAttachments);
+    const officialReference = await loadFigmaAuthoringReference();
+    const skillRevision = officialReference?.revision ?? FIGMA_SHADER_SKILL_REVISION;
+    const system = buildSystemPrompt({
+      kind,
+      mode,
+      officialReference: officialReference?.text,
+    });
 
+    let response: Response;
     if (provider === "cursor") {
-      const cursorAgentId = isCursorAgentId(body.cursorAgentId)
-        ? body.cursorAgentId
-        : undefined;
-      return streamCursorChat({
+      const cursorAgentId =
+        body.figmaSkillRevision === skillRevision && isCursorAgentId(body.cursorAgentId)
+          ? body.cursorAgentId
+          : undefined;
+      response = streamCursorChat({
         apiKey,
         model,
         system,
@@ -903,17 +908,17 @@ Deno.serve(async (req) => {
         corsHeaders: CORS_HEADERS,
         signal: req.signal,
       });
+    } else if (provider === "openai") {
+      response = await streamOpenAI(apiKey, model, system, history);
+    } else if (provider === "grok") {
+      response = await streamGrok(apiKey, model, system, history);
+    } else if (provider === "anthropic") {
+      response = await streamAnthropic(apiKey, model, system, history, mode);
+    } else {
+      response = await streamGemini(apiKey, model, system, history);
     }
-    if (provider === "openai") {
-      return await streamOpenAI(apiKey, model, system, history);
-    }
-    if (provider === "grok") {
-      return await streamGrok(apiKey, model, system, history);
-    }
-    if (provider === "anthropic") {
-      return await streamAnthropic(apiKey, model, system, history, mode);
-    }
-    return await streamGemini(apiKey, model, system, history);
+    response.headers.set("X-Figma-Skill-Revision", skillRevision);
+    return response;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return jsonResponse(502, { error: message });

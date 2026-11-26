@@ -43,6 +43,9 @@ function sanitizeMessage(message) {
   if (message.role === "assistant" && message.applied === true) {
     out.applied = true;
   }
+  if (message.role === "assistant" && message.editReady === true) {
+    out.editReady = true;
+  }
   const attachments = (
     Array.isArray(message.attachments)
       ? message.attachments

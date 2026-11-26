@@ -8,6 +8,9 @@ const SUMMARY_TAG_RE = /<summary>\s*([\s\S]*?)\s*<\/summary>/i;
 const DESCRIPTION_TAG_RE =
   /<description>\s*([\s\S]*?)\s*<\/description>/i;
 const METADATA_TAG_RE = /<\/?(?:summary|description)>/gi;
+const SHADER_EDIT_RE =
+  /^\s*<summary>([^<>]+)<\/summary>\s*<description>([^<>]+)<\/description>\s*```(?:typescript|ts)[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i;
+const NESTED_FENCE_RE = /(?:^|\n)[ \t]*```/;
 
 export function isPlanMode(mode) {
   return mode === "plan";
@@ -75,9 +78,7 @@ export function extractModuleSource(text, { allowIncomplete = false } = {}) {
 }
 
 /**
- * Select code that is safe to auto-apply after a chat stream stops.
- * A complete fence can survive a missing terminal event, while an open fence
- * is only trusted after the provider explicitly completed the response.
+ * Only a complete, tagged edit from a completed chat can change the editor.
  * @param {string} text
  * @param {{ streamCompleted?: boolean, aborted?: boolean }} [options]
  * @returns {string|null}
@@ -86,18 +87,20 @@ export function extractAutoApplyModuleSource(
   text,
   { streamCompleted = false, aborted = false } = {}
 ) {
-  if (aborted) return null;
-  return extractModuleSource(text, {
-    allowIncomplete: Boolean(streamCompleted),
-  });
+  if (!streamCompleted || aborted) return null;
+  const match = SHADER_EDIT_RE.exec(String(text || ""));
+  if (!match || !match[1].trim() || !match[2].trim() || !match[3].trim()) return null;
+  if (NESTED_FENCE_RE.test(match[3])) return null;
+  return normalizeModuleSource(match[3]);
 }
 
 /**
  * Light validation before applying into the editor.
  * @param {string} source
+ * @param {{ propertyTypes?: readonly string[] }} [options]
  * @returns {{ ok: true } | { ok: false, reason: string }}
  */
-export function validateModuleSource(source) {
+export function validateModuleSource(source, { propertyTypes } = {}) {
   const trimmed = (source || "").trim();
   if (!trimmed) {
     return { ok: false, reason: "Empty code block." };
@@ -109,7 +112,25 @@ export function validateModuleSource(source) {
     return { ok: false, reason: "Code block is missing an export." };
   }
   try {
-    loadModule(source);
+    const { props } = loadModule(source);
+    if (propertyTypes) {
+      for (const [key, definition] of Object.entries(props)) {
+        if (!propertyTypes.includes(definition?.type)) {
+          return { ok: false, reason: `Figma MCP does not support the property type for "${key}".` };
+        }
+        if (definition.type !== "number" || definition.control == null) continue;
+        if (!["slider", "input", "select"].includes(definition.control)) {
+          return { ok: false, reason: `Figma MCP does not support the number control for "${key}".` };
+        }
+        if (definition.control === "select" && (
+          !Array.isArray(definition.options) ||
+          !definition.options.length ||
+          !definition.options.every((option) => Number.isFinite(option?.value))
+        )) {
+          return { ok: false, reason: `Figma MCP requires numeric menu options for "${key}".` };
+        }
+      }
+    }
     return { ok: true };
   } catch (error) {
     const reason = error?.message || String(error);

@@ -101,9 +101,9 @@ export function buildChatRequest({
   fileName,
   features,
   skills,
+  figmaSkillRevision,
   mode = "agent",
   cursorAgentId,
-  experimentalAudio,
   compileError,
 }) {
   const request = {
@@ -113,10 +113,13 @@ export function buildChatRequest({
     source,
     kind,
     fileName,
-    features,
+    features: features && {
+      isAnimated: Boolean(features.isAnimated),
+      usesMouse: Boolean(features.usesMouse),
+    },
     skills,
+    figmaSkillRevision,
     mode: mode === "plan" ? "plan" : "agent",
-    experimentalAudio: Boolean(experimentalAudio),
   };
   if (typeof cursorAgentId === "string" && cursorAgentId) {
     request.cursorAgentId = cursorAgentId;
@@ -128,13 +131,10 @@ export function buildChatRequest({
 
 export function chatStreamCompletionEvent(provider, { sawDone, sawError } = {}) {
   if (sawDone || sawError) return null;
-  if (provider === "cursor") {
-    return {
-      type: "error",
-      message: "Cursor stream ended before the agent finished. Try again.",
-    };
-  }
-  return { type: "done" };
+  return {
+    type: "error",
+    message: `${provider === "cursor" ? "Cursor" : "The model"} stream ended before the agent finished. Try again.`,
+  };
 }
 
 export function createChatSseParser() {

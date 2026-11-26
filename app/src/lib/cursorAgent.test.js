@@ -150,6 +150,42 @@ test("rejects malformed Cursor agent ids", () => {
   assert.equal(loadCursorAgent(), null);
 });
 
+test("starts a fresh Cursor agent when the active skills change", () => {
+  memory.clear();
+  const model = { provider: "cursor", id: "composer-2.5" };
+  const agentId = "bc-11111111-2222-3333-4444-555555555555";
+  const context = { threadId: "cloud:older-shader", source: "export function render() {}" };
+
+  saveCursorAgent({ ...context, agentId, modelId: model.id });
+  assert.equal(cursorAgentIdForModel(model, { ...context, skills: "Current skills" }), undefined);
+
+  saveCursorAgent({ ...context, agentId, modelId: model.id, skills: "Current skills" });
+  assert.equal(cursorAgentIdForModel(model, { ...context, skills: "Current skills" }), agentId);
+  assert.equal(cursorAgentIdForModel(model, { ...context, skills: "Revised skills" }), undefined);
+
+  const edited = { ...context, source: "export function render() { return 1 }" };
+  bindCursorAgentToSource(model, edited);
+  assert.equal(cursorAgentIdForModel(model, { ...edited, skills: "Current skills" }), agentId);
+  assert.equal(cursorAgentIdForModel(model, { ...edited, skills: "Revised skills" }), undefined);
+  assert.doesNotMatch(memory.get("shader-studio.cursorAgents.v2"), /Current skills/);
+});
+
+test("clearing a chat detaches only its Cursor agent", () => {
+  memory.clear();
+  const model = { provider: "cursor", id: "composer-2.5" };
+  const first = { threadId: "cloud:first", source: "first source", skills: "Current skills" };
+  const second = { ...first, threadId: "cloud:second" };
+  const firstAgent = "bc-11111111-2222-3333-4444-555555555555";
+  const secondAgent = "bc-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  saveCursorAgent({ ...first, agentId: firstAgent, modelId: model.id });
+  saveCursorAgent({ ...second, agentId: secondAgent, modelId: model.id });
+
+  clearCursorAgent(first.threadId);
+
+  assert.equal(cursorAgentIdForModel(model, first), undefined);
+  assert.equal(cursorAgentIdForModel(model, second), secondAgent);
+});
+
 test("migrates the legacy singleton into its shader binding", () => {
   memory.clear();
   memory.set(

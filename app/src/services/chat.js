@@ -58,10 +58,10 @@ export async function listAvailableProviderModels(
  * @param {string} options.source
  * @param {string} options.kind
  * @param {string} options.fileName
- * @param {{ isAnimated?: boolean, usesMouse?: boolean, supportsAudio?: boolean }} [options.features]
- * @param {boolean} [options.experimentalAudio]
+ * @param {{ isAnimated?: boolean, usesMouse?: boolean }} [options.features]
  * @param {string} [options.compileError]
  * @param {string} [options.skills]
+ * @param {string} [options.figmaSkillRevision]
  * @param {"agent"|"plan"} [options.mode]
  * @param {string} [options.cursorAgentId]
  * @param {AbortSignal} [options.signal]
@@ -76,9 +76,9 @@ export async function* streamChat({
   fileName,
   features,
   skills,
+  figmaSkillRevision,
   mode,
   cursorAgentId,
-  experimentalAudio,
   compileError,
   signal,
 }) {
@@ -114,9 +114,9 @@ export async function* streamChat({
       fileName,
       features,
       skills,
+      figmaSkillRevision,
       mode,
       cursorAgentId,
-      experimentalAudio,
       compileError,
     })),
     signal,
@@ -148,6 +148,7 @@ export async function* streamChat({
   }
 
   const reader = response.body.getReader();
+  const activeSkillRevision = response.headers.get("X-Figma-Skill-Revision") || figmaSkillRevision;
   const decoder = new TextDecoder();
   const parser = createChatSseParser();
   const idleTimeoutMs =
@@ -218,7 +219,7 @@ export async function* streamChat({
       }
       if (event.type === "done") sawDone = true;
       if (event.type === "error") sawError = true;
-      yield event;
+      yield event.agentId ? { ...event, figmaSkillRevision: activeSkillRevision } : event;
     }
     if (done) break;
   }

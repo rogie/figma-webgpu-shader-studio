@@ -12110,7 +12110,6 @@ export default function App() {
                     planOwnerId={isOwner ? user.id : null}
                     planShaderId={isOwner ? currentShader.id : null}
                     featuresRef={shaderFeaturesRef}
-                    experimentalAudioRef={experimentalAudioRef}
                     compileErrorRef={compileErrorRef}
                     user={user}
                     onApplySource={onSourceChange}

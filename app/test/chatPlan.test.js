@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { beforeEach, test } from "node:test";
 import { isPlanMode } from "../src/lib/chatApply.js";
 import {
+  buildPlanImplementationPrompt,
   isPlanDocument,
   loadLocalPlan,
   planDocumentSubject,
@@ -16,6 +17,16 @@ import {
 } from "../src/lib/chatThreads.js";
 import { anthropicOutputConfig } from "../../supabase/functions/chat/anthropic.ts";
 import { buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
+
+test("building a saved plan rechecks old assumptions with current skills", () => {
+  const plan = "# Cloth\n\nUse the hover fallback if the target lacks press input.";
+  const prompt = buildPlanImplementationPrompt("cloth-sim.ts", plan);
+
+  assert.match(prompt, /current cloth-sim\.ts module/);
+  assert.match(prompt, /Recheck the plan’s technical assumptions against the current authoring skills for its target/);
+  assert.match(prompt, /Preserve the user’s requirements/);
+  assert.ok(prompt.endsWith(`<plan>\n${plan}\n</plan>`));
+});
 
 const storage = new Map();
 globalThis.localStorage = {
@@ -58,8 +69,8 @@ test("plan prompt forbids applying a complete module", () => {
   });
 
   assert.match(prompt, /discussion and design phase/);
-  assert.match(prompt, /Planning context \(use for technical reasoning only\)/);
-  assert.doesNotMatch(prompt, /Authoring skills \(follow these/);
+  assert.match(prompt, /Use the Figma shader contract to evaluate feasibility/);
+  assert.doesNotMatch(prompt, /Use sentence case for labels/);
   assert.match(prompt, /primary intent is to get information or to change/);
   assert.match(prompt, /what may be missing, answer directly/);
   assert.match(prompt, /Do not classify intent from punctuation alone/);
@@ -97,7 +108,7 @@ test("agent prompt retains the complete-module apply contract", () => {
   assert.match(prompt, /Can you add X/);
   assert.match(prompt, /Do not claim the implementation is complete/);
   assert.match(prompt, /COMPLETE updated module source/);
-  assert.match(prompt, /applied automatically to the live editor/);
+  assert.match(prompt, /validates the fenced module before applying it/);
 });
 
 test("Anthropic plan requests do not force low output effort", () => {

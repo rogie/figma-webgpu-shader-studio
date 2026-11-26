@@ -17,8 +17,8 @@ import {
   formatChatError,
   isPlanMode,
   splitAssistantContent,
-  validateModuleSource,
 } from "../lib/chatApply.js";
+import { validateChatModuleSource } from "../lib/chatValidation.js";
 import { ANON_YOU_LABEL } from "../lib/shaderLibrary.js";
 import {
   attachmentMeta,
@@ -40,6 +40,7 @@ import {
   saveChatThreads,
 } from "../lib/chatThreads.js";
 import {
+  buildPlanImplementationPrompt,
   isPlanDocument,
   loadLocalPlan,
   planDocumentSubject,
@@ -52,10 +53,13 @@ import {
 } from "../lib/providerKeys.js";
 import {
   bindCursorAgentToSource,
+  clearCursorAgent,
   cursorAgentIdForModel,
+  loadCursorAgent,
   saveCursorAgent,
 } from "../lib/cursorAgent.js";
 import { toApiMessages } from "../lib/chatPayload.js";
+import { FIGMA_SHADER_SKILL_REVISION, getChatSkillContext } from "../lib/chatSkills.js";
 import { splitComposerPaste } from "../lib/pastedText.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import {
@@ -140,7 +144,7 @@ function isEmptyAssistant(message) {
   );
 }
 
-function rememberCursorAgent(event, model, { threadId, source } = {}) {
+function rememberCursorAgent(event, model, { threadId, source, skills } = {}) {
   if (model?.provider !== "cursor") return;
   if (typeof event?.agentId === "string" && event.agentId) {
     saveCursorAgent({
@@ -149,8 +153,18 @@ function rememberCursorAgent(event, model, { threadId, source } = {}) {
       runId: event.runId,
       threadId,
       source,
+      skills,
+      figmaSkillRevision: event.figmaSkillRevision,
     });
   }
+}
+
+function cursorRequestOptions(model, context) {
+  const cursorAgentId = cursorAgentIdForModel(model, context);
+  const storedRevision = cursorAgentId
+    ? loadCursorAgent(context.threadId)?.figmaSkillRevision
+    : null;
+  return { cursorAgentId, figmaSkillRevision: storedRevision || FIGMA_SHADER_SKILL_REVISION };
 }
 
 function pruneEmptyAssistants(thread) {
@@ -459,7 +473,6 @@ const ChatPane = forwardRef(function ChatPane(
     planOwnerId,
     planShaderId,
     featuresRef,
-    experimentalAudioRef,
     compileErrorRef,
     user,
     onApplySource,
@@ -493,6 +506,7 @@ const ChatPane = forwardRef(function ChatPane(
   const pendingAttachmentsRef = useRef(null);
   const attachmentZoomRef = useRef(null);
   const activeRequestRef = useRef(null);
+  const chatResetRef = useRef(0);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
 
@@ -605,9 +619,11 @@ const ChatPane = forwardRef(function ChatPane(
       ) {
         continue;
       }
-      const { source, incomplete } = splitAssistantContent(message.content);
+      if (message.applied) break;
+      if (message.editReady !== true) continue;
+      const source = extractAutoApplyModuleSource(message.content, { streamCompleted: true });
       if (!source) continue;
-      if (!incomplete && !message.applied && source !== sourceRef.current) {
+      if (source !== sourceRef.current) {
         pendingApply = { message, source };
       }
       break;
@@ -685,6 +701,7 @@ const ChatPane = forwardRef(function ChatPane(
 
   useEffect(() => {
     let cancelled = false;
+    const resetVersion = chatResetRef.current;
     const hydratePlan = async () => {
       let markdown = loadLocalPlan(threadId);
       if (planOwnerId && planShaderId) {
@@ -698,7 +715,7 @@ const ChatPane = forwardRef(function ChatPane(
           // A shader may not have a plan.md yet; retain any local fallback.
         }
       }
-      if (cancelled || !isPlanDocument(markdown)) return;
+      if (cancelled || chatResetRef.current !== resetVersion || !isPlanDocument(markdown)) return;
       setThreads((prev) => {
         const current = prev[threadId] || [];
         if (current.some((message) => message.pending)) return prev;
@@ -948,7 +965,7 @@ const ChatPane = forwardRef(function ChatPane(
 
   const applyPendingUpdate = () => {
     if (!pendingApply) return;
-    const check = validateModuleSource(pendingApply.source);
+    const check = validateChatModuleSource(pendingApply.source, kind);
     if (!check.ok) {
       setError(check.reason);
       return;
@@ -976,24 +993,28 @@ const ChatPane = forwardRef(function ChatPane(
     onNotice?.("Applied the generated main.ts.");
   };
 
-  const clearCurrentChat = () => {
-    if (messages.length === 0) return;
-    if (streaming) stop();
-    setThreads((prev) => {
-      const next = { ...prev };
-      delete next[threadId];
-      return next;
-    });
+  const clearCurrentChat = useCallback(() => {
+    chatResetRef.current += 1;
+    if (activeRequestRef.current?.threadId === threadId) {
+      activeRequestRef.current = null;
+      stop();
+    }
+    clearCursorAgent(threadId);
+    const next = { ...threadsRef.current };
+    delete next[threadId];
+    threadsRef.current = next;
+    setThreads(next);
+    saveChatThreads(next);
     setAttachments([]);
     setError("");
-  };
+  }, [threadId, stop]);
 
   useImperativeHandle(
     ref,
     () => ({
       clearChat: clearCurrentChat,
     }),
-    [threadId, streaming]
+    [clearCurrentChat]
   );
 
   const addAttachments = async (files) => {
@@ -1053,6 +1074,7 @@ const ChatPane = forwardRef(function ChatPane(
     const text = String(textOverride ?? draft).trim();
     if ((!text && requestAttachments.length === 0) || streaming) return;
     const requestMode = modeOverride ?? mode;
+    const resetVersion = chatResetRef.current;
 
     if (!isSupabaseConfigured) {
       setError("Supabase is not configured for the chat proxy.");
@@ -1070,25 +1092,21 @@ const ChatPane = forwardRef(function ChatPane(
       return;
     }
 
-    let skills;
-    try {
-      skills = (await import("../lib/chatSkills.js")).getChatSkillContext(
-        requestMode,
-        { experimentalAudio: Boolean(experimentalAudioRef?.current) }
-      );
-    } catch (skillError) {
-      setError(skillError.message || "Unable to load shader authoring guidance.");
-      return;
-    }
+    const skills = getChatSkillContext(requestMode);
 
-    setError("");
-    if (textOverride == null) setDraft("");
     const currentAttachments = requestAttachments;
-    if (options.ignoreAttachments !== true) setAttachments([]);
-
     const split = text
       ? await splitComposerPaste({ text })
       : { content: "", pastes: [] };
+    if (
+      chatResetRef.current !== resetVersion ||
+      activeThreadIdRef.current !== threadId ||
+      abortRef.current
+    ) return;
+
+    setError("");
+    if (textOverride == null) setDraft("");
+    if (options.ignoreAttachments !== true) setAttachments([]);
     const pastes = split.pastes || [];
     const content =
       pastes.length > 0
@@ -1146,6 +1164,7 @@ const ChatPane = forwardRef(function ChatPane(
       threadId: requestThreadId,
       fileName: requestFileName,
       mode: requestMode,
+      controller,
       notifiedAway: false,
     };
     const features = featuresRef.current;
@@ -1172,7 +1191,7 @@ const ChatPane = forwardRef(function ChatPane(
       });
     };
 
-    const finishAssistant = (content, { applied = false } = {}) => {
+    const finishAssistant = (content, { applied = false, editReady = false } = {}) => {
       updateThread((current) => {
         const next = pruneEmptyAssistants([...current]);
         const last = next[next.length - 1];
@@ -1189,6 +1208,7 @@ const ChatPane = forwardRef(function ChatPane(
           content,
           pending: false,
           applied: Boolean(applied || last.applied),
+          editReady,
         };
         return next;
       });
@@ -1212,10 +1232,6 @@ const ChatPane = forwardRef(function ChatPane(
     const tryApplyModule = (moduleSource) => {
       if (!moduleSource || moduleSource === lastApplied) return null;
       if (moduleSource === baselineSource && !didPushUndo) return null;
-      const validationStartedAt = perfNow();
-      const check = validateModuleSource(moduleSource);
-      measurePerf("chat.validateModule", validationStartedAt);
-      if (!check.ok) return null;
       const targetStatus = chatApplyTargetStatus({
         requestShaderKey: requestThreadId,
         activeShaderKey: activeThreadIdRef.current,
@@ -1283,6 +1299,7 @@ const ChatPane = forwardRef(function ChatPane(
         ]);
 
         let repairedText = "";
+        let repairComplete = false;
         for await (const event of streamChat({
           provider: model.provider,
           model: model.id,
@@ -1293,17 +1310,19 @@ const ChatPane = forwardRef(function ChatPane(
           fileName,
           features,
           skills,
-          experimentalAudio: Boolean(experimentalAudioRef?.current),
           compileError: String(compileErrorRef?.current || ""),
-          cursorAgentId: cursorAgentIdForModel(model, {
+          ...cursorRequestOptions(model, {
             threadId: requestThreadId,
             source: brokenSource,
+            skills,
           }),
           signal: controller.signal,
         })) {
+          if (controller.signal.aborted) break;
           rememberCursorAgent(event, model, {
             threadId: requestThreadId,
             source: brokenSource,
+            skills,
           });
           if (event.type === "error") {
             throw new Error(event.message || "Automatic repair failed.");
@@ -1313,6 +1332,7 @@ const ChatPane = forwardRef(function ChatPane(
             continue;
           }
           if (event.type === "done") {
+            repairComplete = true;
             updateLastAssistant({ phase: "validating" });
             continue;
           }
@@ -1337,15 +1357,16 @@ const ChatPane = forwardRef(function ChatPane(
           });
         }
 
-        const candidate = extractModuleSource(repairedText, {
-          allowIncomplete: true,
+        if (controller.signal.aborted) return false;
+        const candidate = extractAutoApplyModuleSource(repairedText, {
+          streamCompleted: repairComplete,
         });
         const check = candidate
-          ? validateModuleSource(candidate)
-          : { ok: false, reason: "Repair did not return a code module." };
+          ? validateChatModuleSource(candidate, kind)
+          : { ok: false, reason: "Repair did not return a complete shader edit." };
         const appliedSource = check.ok ? tryApplyModule(candidate) : null;
         const applied = Boolean(appliedSource);
-        finishAssistant(repairedText, { applied });
+        finishAssistant(repairedText, { applied, editReady: Boolean(blockedApplyReason) });
         if (appliedSource) {
           checkpointAppliedResponse(repairedText, appliedSource);
           return "applied";
@@ -1375,20 +1396,22 @@ const ChatPane = forwardRef(function ChatPane(
         source: baselineSource,
         kind,
         fileName,
-          features,
-          skills,
-          mode: requestMode,
-          experimentalAudio: Boolean(experimentalAudioRef?.current),
+        features,
+        skills,
+        mode: requestMode,
         compileError: String(compileErrorRef?.current || ""),
-        cursorAgentId: cursorAgentIdForModel(model, {
+        ...cursorRequestOptions(model, {
           threadId: requestThreadId,
           source: baselineSource,
+          skills,
         }),
         signal: controller.signal,
       })) {
+        if (controller.signal.aborted) break;
         rememberCursorAgent(event, model, {
           threadId: requestThreadId,
           source: baselineSource,
+          skills,
         });
         if (event.type === "delta") {
           assembled += event.text;
@@ -1440,6 +1463,7 @@ const ChatPane = forwardRef(function ChatPane(
         }
       }
 
+      if (activeRequestRef.current?.controller !== controller) return;
       const responseComplete =
         sawDone && !sawError && !controller.signal.aborted;
       if (isPlanMode(requestMode)) {
@@ -1456,7 +1480,10 @@ const ChatPane = forwardRef(function ChatPane(
           streamCompleted: responseComplete,
           aborted: controller.signal.aborted,
         });
-        const appliedSource = candidate ? tryApplyModule(candidate) : null;
+        const validationStartedAt = perfNow();
+        const check = candidate ? validateChatModuleSource(candidate, kind) : null;
+        if (candidate) measurePerf("chat.validateModule", validationStartedAt);
+        const appliedSource = check?.ok ? tryApplyModule(candidate) : null;
         const applied = Boolean(appliedSource);
 
         if (sawError || !assembled.trim()) {
@@ -1467,7 +1494,7 @@ const ChatPane = forwardRef(function ChatPane(
             );
           }
         } else {
-          finishAssistant(assembled, { applied });
+          finishAssistant(assembled, { applied, editReady: Boolean(blockedApplyReason) });
         }
 
         if (appliedSource) {
@@ -1476,14 +1503,14 @@ const ChatPane = forwardRef(function ChatPane(
         } else if (blockedApplyReason) {
           notifyBlockedApply();
         } else if (
-          candidate &&
+          check &&
           !sawError &&
           !controller.signal.aborted
         ) {
-          const check = validateModuleSource(candidate);
           if (!check.ok && check.autoHealable) {
             onNotice?.("Syntax error detected. Repairing code…");
             const healed = await autoHealSyntaxError(candidate, check.reason);
+            if (controller.signal.aborted) return;
             if (healed === "applied") {
               onNotice?.("Syntax error fixed automatically.");
             } else if (healed !== "deferred") {
@@ -1492,33 +1519,23 @@ const ChatPane = forwardRef(function ChatPane(
               });
             }
           } else if (!check.ok) {
-            onNotice?.(check.reason, { error: true });
+            setError(check.reason);
           }
         }
       }
     } catch (err) {
+      if (activeRequestRef.current?.controller !== controller) return;
       const aborted = err?.name === "AbortError" || controller.signal.aborted;
-      let appliedSource = null;
-      if (!aborted) {
-        const candidate = extractAutoApplyModuleSource(assembled);
-        appliedSource = candidate ? tryApplyModule(candidate) : null;
-      }
       if (!aborted) {
         setError(err.message || String(err));
       }
-      finishAssistant(assembled, { applied: Boolean(appliedSource) });
-      if (appliedSource) {
-        checkpointAppliedResponse(assembled, appliedSource);
-        onNotice?.("Code updated from chat.");
-      } else if (blockedApplyReason) {
-        notifyBlockedApply();
-      }
+      finishAssistant(assembled);
     } finally {
-      abortRef.current = null;
-      if (activeRequestRef.current?.threadId === requestThreadId) {
+      if (activeRequestRef.current?.controller === controller) {
+        abortRef.current = null;
         activeRequestRef.current = null;
+        setStreaming(false);
       }
-      setStreaming(false);
     }
   };
 
@@ -1535,11 +1552,7 @@ const ChatPane = forwardRef(function ChatPane(
     setMode("agent");
     send({
       textOverride: "Build the current plan.md.",
-      requestTextOverride: `Implement the following plan in the current ${fileName} module. Follow the plan completely and return the complete updated module using the required response format.
-
-<plan>
-${pendingPlan.content}
-</plan>`,
+      requestTextOverride: buildPlanImplementationPrompt(fileName, pendingPlan.content),
       modeOverride: "agent",
       planId,
       ignoreAttachments: true,
