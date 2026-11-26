@@ -155,10 +155,6 @@
   height: auto;
 }
 
-#root .composer-viewer .shader-properties-panel {
-  flex: 0 1 calc(var(--sidebar-fluid-width) + 1rem);
-}
-
 @container editor (max-width: 900px) {
   #root .composer-viewer {
     display: flex;

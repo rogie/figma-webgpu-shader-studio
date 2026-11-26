@@ -9,6 +9,7 @@ export default function ShaderActionsMenu({
   saving = false,
   saveDisabled = false,
   saveLabel = "Save",
+  showPresent = false,
   showDownload = true,
   showFigmaPush = false,
   figmaLinked = false,
@@ -72,6 +73,7 @@ export default function ShaderActionsMenu({
       )}
       <fig-menu-item value="share">Copy link</fig-menu-item>
       {published && <fig-menu-item value="view">View</fig-menu-item>}
+      {showPresent && <fig-menu-item value="present">Present in a new window</fig-menu-item>}
       <fig-separator />
       <fig-menu-item value="duplicate">Duplicate</fig-menu-item>
       {owner && <fig-menu-item value="delete">Delete</fig-menu-item>}

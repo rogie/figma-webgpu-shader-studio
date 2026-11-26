@@ -9989,9 +9989,10 @@ export default function App() {
         if (!visualizer) return;
 
         const startY = event.clientY;
-        const startHeight = visualizer.getBoundingClientRect().height;
+        const previewBounds = visualizer.getBoundingClientRect();
+        const startHeight = previewBounds.height;
         const available =
-          viewer.getBoundingClientRect().height -
+          viewer.getBoundingClientRect().bottom - previewBounds.top -
           handle.getBoundingClientRect().height -
           MIN_STACKED_SIDEBAR;
         const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, available);
@@ -10606,12 +10607,10 @@ export default function App() {
     <>
       {viewMode === "view" ? (
         renderShaderViewHeader(viewDialog)
-      ) : (
+      ) : (isComposerView || isShaderFillPanel) && (
         <fig-header>
           <h2>{propertiesPanelTitle}</h2>
-          {isComposerView
-            ? null
-            : renderPropertyHeaderActions(isShaderFillPanel ? "fill" : null)}
+          {!isComposerView && renderPropertyHeaderActions("fill")}
         </fig-header>
       )}
 
@@ -10828,7 +10827,7 @@ export default function App() {
             <div className="properties-pane">
               {sessionKind === "effect" && (
                 <fig-header borderless="">
-                  <h3>Effect properties</h3>
+                  <h3>Effect</h3>
                   {renderPropertyHeaderActions("effect")}
                 </fig-header>
               )}
@@ -10924,12 +10923,13 @@ export default function App() {
     </>
   );
 
-  const renderPropertiesPanel = () => (
+  const renderPropertiesPanel = (editorHeader = null) => (
     <aside
       ref={propertiesPanelRef}
       className="shader-properties-panel"
       aria-label={propertiesPanelTitle}
     >
+      {editorHeader}
       {renderPropertiesPanelContent()}
     </aside>
   );
@@ -11182,6 +11182,7 @@ export default function App() {
       unpublishShader().catch(() => {});
     } else if (value === "duplicate") duplicateShader();
     else if (value === "share") copyShareLink();
+    else if (value === "present") openPresentWindow();
     else if (value === "view") {
       if (!currentShader?.id || !currentShader.is_public) return;
       openViewRoute(currentShader.id, currentShader.kind || kind);
@@ -11205,6 +11206,7 @@ export default function App() {
     hasUncheckpointedChanges,
     isOwner,
     kind,
+    openPresentWindow,
     openViewRoute,
     removeCurrentShader,
     restoringVersion,
@@ -11215,7 +11217,7 @@ export default function App() {
     user,
   ]);
   const shaderEditorHeader = (
-          <fig-header class="shader-editor-header" borderless>
+          <fig-header class="shader-editor-header" borderless={isComposerView ? "" : undefined}>
             {libraryNavMotion === "open" ? null : (
             <fig-tooltip text="Show library">
               <fig-button
@@ -11327,26 +11329,28 @@ export default function App() {
                     onDuplicate={duplicateShaderVersion}
                   />
                 )}
-                <fig-tooltip text="Present">
-                  <fig-button
-                    type="button"
-                    variant="ghost"
-                    icon="true"
-                    aria-label="Present in a new window"
-                    onClick={openPresentWindow}
-                  >
-                    <PopoutIcon />
-                  </fig-button>
-                </fig-tooltip>
                 {protectedPreview ? (
-                  <fig-button
-                    type="button"
-                    variant="primary"
-                    disabled={duplicating}
-                    onClick={() => duplicateShader()}
-                  >
-                    {duplicating ? "Duplicating…" : "Duplicate"}
-                  </fig-button>
+                  <>
+                    <fig-tooltip text="Present">
+                      <fig-button
+                        type="button"
+                        variant="ghost"
+                        icon="true"
+                        aria-label="Present in a new window"
+                        onClick={openPresentWindow}
+                      >
+                        <PopoutIcon />
+                      </fig-button>
+                    </fig-tooltip>
+                    <fig-button
+                      type="button"
+                      variant="primary"
+                      disabled={duplicating}
+                      onClick={() => duplicateShader()}
+                    >
+                      {duplicating ? "Duplicating…" : "Duplicate"}
+                    </fig-button>
+                  </>
                 ) : (
                   <ShaderActionsMenu
                     signedIn={Boolean(user)}
@@ -11361,6 +11365,7 @@ export default function App() {
                       )
                     }
                     saveLabel={saving ? "Saving…" : "Save"}
+                    showPresent
                     showDownload={!isComposerView}
                     showFigmaPush={
                       FIGMA_LIBRARY_UI_ENABLED &&
@@ -11799,7 +11804,7 @@ export default function App() {
                     <fig-icon name="arrow-left" />
                   </fig-button>
                 </fig-tooltip>
-                <h2 className="app-nav-library-title">Editor</h2>
+                <h3 className="app-nav-library-title">Editor</h3>
               </hstack>
               <fig-tooltip text="Hide library">
                 <fig-button
@@ -11998,7 +12003,6 @@ export default function App() {
               ? { "--preview-height": `${previewHeight}px` }
               : {}),
           }}
-          header={shaderEditorHeader}
           codeCollapsed={effectiveCodeCollapsed}
           chatCollapsed={protectedPreview ? false : chatCollapsed}
           stacked={stacked}
@@ -12135,7 +12139,7 @@ export default function App() {
             </>
           }
           preview={editorPreviewContent}
-          properties={renderPropertiesPanel()}
+          properties={renderPropertiesPanel(shaderEditorHeader)}
           onResizeCode={resizeCodePane}
           onResetCodeSize={() =>
             stacked
@@ -12150,11 +12154,11 @@ export default function App() {
               const handle = event.currentTarget;
               const visualizer = visualizerRef.current;
               if (!viewer || !visualizer) return;
-              const current =
-                previewHeight ?? visualizer.getBoundingClientRect().height;
+              const previewBounds = visualizer.getBoundingClientRect();
+              const current = previewHeight ?? previewBounds.height;
               const maxHeight = Math.max(
                 MIN_PREVIEW_HEIGHT,
-                viewer.getBoundingClientRect().height -
+                viewer.getBoundingClientRect().bottom - previewBounds.top -
                   handle.getBoundingClientRect().height -
                   MIN_STACKED_SIDEBAR
               );

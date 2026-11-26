@@ -1,19 +1,14 @@
 #root .shader-viewer {
+  --shader-properties-track-width: calc(var(--shader-properties-width) - 1rem);
   display: grid;
   grid-template-columns:
     var(--code-width)
     var(--spacer-3)
     minmax(220px, 1fr)
     var(--spacer-3)
-    var(--sidebar-fluid-width);
-  grid-template-rows: auto minmax(0, 1fr);
+    var(--shader-properties-track-width);
+  grid-template-rows: var(--spacer-3) minmax(0, 1fr);
   min-height: 0;
-
-  > .shader-editor-header {
-    grid-column: 1 / 5;
-    grid-row: 1;
-    min-width: 0;
-  }
 
   .shader-viewer-sidebar {
     grid-column: 1;
@@ -38,7 +33,7 @@
 
   > .pane-resizer:not(.pane-resizer-row) {
     grid-column: 2;
-    grid-row: 2 / -1;
+    grid-row: 2;
   }
 
   > .shader-preview.shader-viewer-visualizer,
@@ -55,7 +50,6 @@
   > .shader-properties-panel {
     grid-column: 5;
     grid-row: 1 / -1;
-    box-sizing: border-box;
     margin-left: 0;
   }
 
@@ -196,17 +190,12 @@
       minmax(0, 1fr)
       minmax(0, 1fr)
       var(--spacer-3)
-      var(--sidebar-fluid-width);
+      var(--shader-properties-track-width);
     grid-template-rows:
-      auto
+      var(--spacer-3)
       minmax(180px, auto)
       var(--spacer-3)
       minmax(200px, 1fr);
-  }
-
-  #root .shader-viewer > .shader-editor-header {
-    grid-column: 1 / 3;
-    grid-row: 1;
   }
 
   #root

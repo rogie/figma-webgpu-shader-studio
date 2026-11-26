@@ -22,13 +22,7 @@ body,
 :root {
   --global-app-nav-width: 3rem;
   --panel-drag-handle-width: var(--spacer-4);
-  --sidebar-width: 240px;
-  --sidebar-min-width: 12rem;
-  --sidebar-fluid-width: clamp(
-    var(--sidebar-min-width),
-    20cqw,
-    var(--sidebar-width)
-  );
+  --shader-properties-width: 280px;
   --code-width: 480px;
   --viewer-radius: 0.5rem;
 }
@@ -415,7 +409,6 @@ fig-header[borderless]:has(+ fig-header) {
       }
     }
 
-    > .shader-editor-header,
     .composer-viewer > .shader-editor-header,
     .composer-stage > .shader-editor-header {
       padding-left: var(--spacer-0);
@@ -1203,11 +1196,10 @@ dialog.delete-shader-dialog {
 
 .shader-properties-panel {
   display: flex;
-  flex: 0 1 var(--sidebar-fluid-width);
+  flex: 0 0 auto;
   flex-direction: column;
-  width: calc(var(--sidebar-fluid-width) + 1rem);
-  min-width: var(--sidebar-min-width);
-  max-width: calc(var(--sidebar-width) + 1rem);
+  box-sizing: border-box;
+  width: var(--shader-properties-width);
   height: calc(100% + 1rem);
   min-height: 0;
   margin-left: var(--spacer-3);
