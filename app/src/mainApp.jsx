@@ -23,6 +23,10 @@ const showChatComposerPlayground = playground === "chat-composer";
 const showToastPlayground = playground === "toasts";
 const showPastedTextPlayground = playground === "pasted-text";
 const showFillUploadPlayground = playground === "fill-upload";
+const showCanvasControlsPlayground = playground === "canvas-controls";
+const CanvasControlsPlayground = showCanvasControlsPlayground
+  ? lazy(() => import("./components/CanvasControlsPlayground.jsx"))
+  : null;
 const StreamingCodeBlockPlayground = showStreamingCodePlayground
   ? lazy(() => import("./components/StreamingCodeBlockPlayground.jsx"))
   : null;
@@ -47,7 +51,11 @@ const Agentation = import.meta.env.DEV
 createRoot(document.getElementById("root")).render(
   <StrictMode>
     <>
-      {showStreamingCodePlayground ? (
+      {showCanvasControlsPlayground ? (
+        <Suspense fallback={null}>
+          <CanvasControlsPlayground />
+        </Suspense>
+      ) : showStreamingCodePlayground ? (
         <Suspense fallback={null}>
           <StreamingCodeBlockPlayground />
         </Suspense>

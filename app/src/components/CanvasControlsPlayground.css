@@ -1,0 +1,96 @@
+#root > .canvas-controls-playground {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
+  padding: var(--spacer-5);
+  background: var(--bg-app);
+  color: var(--figma-color-text);
+}
+
+.canvas-controls-playground-heading {
+  margin-bottom: var(--spacer-5);
+
+  h1 {
+    margin: 0 0 var(--spacer-2);
+    font-size: 1.5rem;
+  }
+
+  p {
+    margin: 0;
+    color: var(--figma-color-text-secondary);
+    font-size: var(--body-large-fontSize);
+  }
+}
+
+.canvas-controls-playground-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr));
+  align-items: start;
+  gap: var(--spacer-4);
+}
+
+.canvas-control-example {
+  min-width: 0;
+  border-radius: var(--viewer-radius);
+  background: var(--figma-color-bg);
+
+  > fig-header h2 {
+    font-size: var(--body-large-fontSize);
+  }
+}
+
+.canvas-control-example-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: var(--spacer-3);
+  padding: 0 var(--spacer-3) var(--spacer-3);
+}
+
+.canvas-control-example-surface {
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  height: 260px;
+  border-radius: var(--viewer-radius);
+  background-color: var(--bg-app);
+  background-image:
+    linear-gradient(var(--figma-color-bordertranslucent) 1px, transparent 1px),
+    linear-gradient(90deg, var(--figma-color-bordertranslucent) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+
+  :is(fig-handle, fig-tooltip) {
+    pointer-events: auto;
+  }
+}
+
+.canvas-control-example-properties {
+  min-width: 0;
+  background: var(--figma-color-bg);
+
+  > fig-header {
+    padding-top: 0;
+  }
+}
+
+.canvas-control-example-value {
+  padding: var(--spacer-3);
+  border-top: 1px solid var(--figma-color-border);
+  color: var(--figma-color-text-secondary);
+
+  summary {
+    cursor: pointer;
+  }
+
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 620px) {
+  .canvas-control-example-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
