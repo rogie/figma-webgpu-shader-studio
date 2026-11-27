@@ -12,7 +12,7 @@ import {
   readCanvasColorOverride,
   readCanvasControlsVisible,
   readChatHeight,
-  readCodeWidth,
+  readCodePaneShare,
   readEditorFilters,
   readExperimentalAudio,
   readLibraryView,
@@ -80,8 +80,9 @@ test("layout readers validate persisted numeric bounds", () => {
     ),
     DEFAULT_APP_NAV_WIDTH,
   );
-  assert.equal(readCodeWidth(storage(), 1000), 380);
-  assert.equal(readCodeWidth(storage(), 1400), 480);
+  assert.equal(readCodePaneShare(storage()), 0.5);
+  assert.equal(readCodePaneShare(storage({ "figma-shader-studio:code-pane-share": "0.62" })), 0.62);
+  assert.equal(readCodePaneShare(storage({ "figma-shader-studio:code-pane-share": "1" })), 0.5);
   assert.equal(readPropertiesWidth(storage()), 260);
   assert.equal(
     readPropertiesWidth(storage({ "figma-shader-studio:properties-width": "320" })),

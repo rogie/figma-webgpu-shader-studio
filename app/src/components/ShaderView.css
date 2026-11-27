@@ -1,61 +1,138 @@
 #root .shader-viewer {
-  --shader-properties-track-width: var(--shader-properties-width);
-  --available-code-width: calc(
-    100% - 220px - 2 * var(--spacer-3) - var(--shader-properties-track-width)
+  --shader-code-min-height: 140px;
+  --shader-chat-min-height: 220px;
+  --shader-sidebar-min-height: calc(
+    var(--shader-code-min-height) + var(--shader-chat-min-height) + var(--spacer-3)
   );
+  --shader-sidebar-resize-room: 48px;
   display: grid;
-  grid-template-columns:
-    min(var(--code-width), max(0px, var(--available-code-width)))
+  grid-template-columns: minmax(0, 1fr) var(--spacer-3) var(--shader-properties-width);
+  grid-template-rows:
     var(--spacer-3)
-    minmax(220px, 1fr)
+    max-content
     var(--spacer-3)
-    var(--shader-properties-track-width);
-  grid-template-rows: var(--spacer-3) minmax(0, 1fr);
+    minmax(calc(var(--shader-sidebar-min-height) + var(--shader-sidebar-resize-room)), 1fr);
   min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
 
-  .shader-viewer-sidebar {
+  &:has(> .shader-viewer-sidebar[data-code-collapsed="true"]) {
+    --shader-code-min-height: 40px;
+    --shader-sidebar-resize-room: 0px;
+  }
+
+  &:has(> .shader-viewer-sidebar[data-chat-collapsed="true"]) {
+    --shader-chat-min-height: 40px;
+    --shader-sidebar-resize-room: 0px;
+  }
+
+  &[data-tools-layout="columns"] {
+    --shader-sidebar-min-height: max(var(--shader-code-min-height), var(--shader-chat-min-height));
+    --shader-sidebar-resize-room: 0px;
+  }
+
+  &[data-tools-layout="code-only"] {
+    --shader-sidebar-min-height: var(--shader-code-min-height);
+    --shader-sidebar-resize-room: 0px;
+  }
+
+  > .shader-preview.shader-viewer-visualizer {
     grid-column: 1;
     grid-row: 2;
-    display: flex;
-    flex-direction: column;
+    width: 100%;
     min-width: 0;
-    min-height: 0;
-    width: auto;
-    height: auto;
+    height: var(--preview-height, auto);
+    min-height: 160px;
+    max-height: max(208px, calc(
+      100dvh - 3 * var(--spacer-3) - var(--shader-sidebar-min-height) - var(--shader-sidebar-resize-room)
+    ));
+    aspect-ratio: 16 / 9;
+    margin: 0;
+  }
+
+  > .shader-preview-resizer {
+    grid-column: 1;
+    grid-row: 3;
+  }
+
+  .shader-viewer-sidebar {
+    --code-pane-track: minmax(var(--shader-code-min-height), 1fr);
+    --chat-pane-track: clamp(
+      var(--shader-chat-min-height),
+      var(--chat-height),
+      calc(100% - var(--shader-code-min-height) - var(--spacer-3))
+    );
+    grid-column: 1;
+    grid-row: 4;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--code-pane-track) var(--spacer-3) var(--chat-pane-track);
+    min-width: 0;
+    min-height: var(--shader-sidebar-min-height);
     margin: 0;
     padding: 0;
+
+    &[data-code-collapsed="true"] {
+      --code-pane-track: 40px;
+      --chat-pane-track: minmax(var(--shader-chat-min-height), 1fr);
+    }
+
+    &[data-chat-collapsed="true"] {
+      --chat-pane-track: 40px;
+    }
+
+    > .shader-viewer-code {
+      grid-row: 1;
+    }
+
+    > .shader-tools-resizer {
+      grid-row: 2;
+    }
+
+    > .shader-viewer-chat {
+      grid-row: 3;
+      container: shader-chat / inline-size;
+    }
   }
 
-  .shader-viewer-sidebar:is(
-      [data-code-collapsed="true"],
-      [data-chat-collapsed="true"]
-    )
-    .shader-viewer-code {
-    margin-bottom: var(--spacer-3);
+  &[data-tools-layout="code-only"] .shader-viewer-sidebar {
+    grid-template-rows: minmax(0, 1fr);
   }
 
-  > .shader-code-resizer {
-    grid-column: 2;
-    grid-row: 2;
-  }
+  &[data-tools-layout="columns"] .shader-viewer-sidebar {
+    grid-template-columns:
+      minmax(0, calc((100% - var(--spacer-3)) * var(--code-pane-share)))
+      var(--spacer-3)
+      minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
 
-  > .shader-preview.shader-viewer-visualizer,
-  > .shader-viewer-visualizer {
-    grid-column: 3;
-    grid-row: 2;
-    min-width: 0;
-    min-height: 0;
-    width: auto;
-    height: 100%;
-    margin: 0;
+    > * {
+      grid-row: 1;
+    }
+
+    > .shader-viewer-code {
+      grid-column: 1;
+    }
+
+    > .shader-tools-resizer {
+      grid-column: 2;
+    }
+
+    > .shader-viewer-chat {
+      grid-column: 3;
+    }
+
+    > [data-collapsed="true"] {
+      align-self: start;
+    }
   }
 
   > .shader-properties-panel {
-    grid-column: 5;
+    grid-column: 3;
     grid-row: 2 / -1;
     width: 100%;
     height: auto;
-    max-height: 100%;
+    max-height: min(100%, calc(100dvh - 2 * var(--spacer-3)));
     align-self: start;
     margin: 0;
     border: 0;
@@ -68,7 +145,7 @@
   }
 
   > .shader-properties-resizer {
-    grid-column: 4;
+    grid-column: 2;
     grid-row: 2 / -1;
   }
 
@@ -191,109 +268,18 @@
     min-height: 140px;
   }
 
-  .shader-viewer-sidebar > .shader-viewer-chat:not([data-collapsed="true"]) {
-    flex-shrink: 1;
-  }
-
   .pane-resizer {
     width: 100%;
     height: 100%;
     cursor: col-resize;
 
-    &.pane-resizer-row {
-      flex: 0 0 var(--spacer-3);
-      width: 100%;
-      height: auto;
+    &[aria-orientation="horizontal"] {
       min-height: var(--spacer-3);
       cursor: row-resize;
-      z-index: 2;
-    }
-  }
-}
-
-@container editor (max-width: 1600px) {
-  #root .shader-viewer {
-    --shader-sidebar-min-height: calc(140px + 220px + var(--spacer-3));
-    grid-template-columns:
-      minmax(0, 1fr)
-      minmax(0, 1fr)
-      var(--spacer-3)
-      var(--shader-properties-track-width);
-    grid-template-rows:
-      var(--spacer-3)
-      minmax(160px, auto)
-      var(--spacer-3)
-      minmax(var(--shader-sidebar-min-height), 1fr);
-
-    &:has(> .shader-viewer-sidebar[data-code-collapsed="true"]) {
-      --shader-sidebar-min-height: calc(40px + 220px + var(--spacer-3));
-    }
-
-    &:has(> .shader-viewer-sidebar[data-chat-collapsed="true"]) {
-      --shader-sidebar-min-height: calc(140px + 40px + var(--spacer-3));
-    }
-
-    &:has(> .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]) {
-      --shader-sidebar-min-height: calc(40px + 40px + var(--spacer-3));
     }
   }
 
-  #root
-    .shader-viewer
-    > :is(.shader-preview.shader-viewer-visualizer, .shader-viewer-visualizer) {
-    grid-column: 1 / 3;
-    grid-row: 2;
-    width: 100%;
-    min-width: 0;
-    height: var(--preview-height, auto);
-    max-height: max(160px, calc(100dvh - 3 * var(--spacer-3) - var(--shader-sidebar-min-height)));
-    min-height: 160px;
-    aspect-ratio: 16 / 9;
-  }
-
-  #root .shader-viewer > .shader-code-resizer {
-    grid-column: 1 / 3;
-    grid-row: 3;
-    width: 100%;
-    height: 100%;
-    min-height: var(--spacer-3);
-    cursor: row-resize;
-
-    &::after {
-      width: var(--panel-drag-handle-width);
-      max-width: 100%;
-      height: 2px;
-      max-height: none;
-    }
-  }
-
-  #root .shader-viewer .shader-viewer-sidebar {
-    grid-column: 1 / 3;
-    grid-row: 4;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: var(--shader-sidebar-min-height);
-  }
-
-  #root .shader-viewer > .shader-properties-panel {
-    grid-column: 4;
-    grid-row: 2 / -1;
-    height: auto;
-    margin-left: 0;
-    margin-right: 0;
-  }
-
-  #root .shader-viewer > .shader-properties-resizer {
-    grid-column: 3;
-    grid-row: 2 / -1;
-  }
-}
-
-@container editor (min-width: 741px) and (max-width: 1600px) {
-  #root .shader-viewer:has(
-    > .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]
-  ) {
+  &:has(> .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]) {
     grid-template-rows: var(--spacer-3) minmax(160px, 1fr) var(--spacer-3) max-content;
 
     > .shader-viewer-visualizer {
@@ -302,7 +288,7 @@
       aspect-ratio: auto;
     }
 
-    > .shader-code-resizer {
+    > .shader-preview-resizer {
       visibility: hidden;
     }
   }
@@ -311,26 +297,23 @@
 @container editor (max-width: 740px) {
   #root .shader-viewer {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: var(--spacer-3) auto var(--spacer-3) auto auto;
-    align-content: start;
-    overflow-y: auto;
+    grid-template-rows:
+      var(--spacer-3)
+      max-content
+      var(--spacer-3)
+      minmax(calc(var(--shader-sidebar-min-height) + var(--shader-sidebar-resize-room)), 1fr)
+      auto;
     padding-inline: var(--spacer-2);
-  }
 
-  #root .shader-viewer > :is(
-    .shader-preview.shader-viewer-visualizer,
-    .shader-viewer-visualizer,
-    .shader-code-resizer,
-    .shader-viewer-sidebar,
-    .shader-properties-panel
-  ) {
-    grid-column: 1;
+    &:has(> .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]) {
+      grid-template-rows: var(--spacer-3) minmax(160px, 1fr) var(--spacer-3) max-content auto;
+    }
   }
 
   #root .shader-viewer > .shader-properties-panel {
+    grid-column: 1;
     grid-row: 5;
-    width: 100%;
-    height: auto;
+    max-height: none;
     margin: var(--spacer-3) 0 0;
   }
 
@@ -340,7 +323,6 @@
 }
 
 #root .shader-viewer[data-layout="composition"] {
-  grid-template-columns: minmax(0, 1fr) var(--spacer-3) var(--shader-properties-track-width);
   grid-template-rows: var(--spacer-3) minmax(0, 1fr);
 
   > .shader-viewer-visualizer {

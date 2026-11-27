@@ -7,17 +7,16 @@ export default function ShaderView({
   style,
   codeCollapsed = false,
   chatCollapsed = false,
-  stacked = false,
-  codeWidth,
+  toolsSideBySide,
+  showChat,
   previewHeight,
-  minCodeWidth,
   minPreviewHeight,
   sidebar,
   preview,
   properties,
-  onResizeCode,
-  onResetCodeSize,
-  onKeyResizeCode,
+  onResizePreview,
+  onResetPreviewSize,
+  onKeyResizePreview,
   propertiesWidth,
   minPropertiesWidth,
   maxPropertiesWidth,
@@ -30,6 +29,7 @@ export default function ShaderView({
       ref={viewerRef}
       className="shader-viewer"
       data-layout={sidebar ? undefined : "composition"}
+      data-tools-layout={sidebar && (showChat ? (toolsSideBySide ? "columns" : "rows") : "code-only")}
       style={style}
     >
       {sidebar && (
@@ -44,16 +44,16 @@ export default function ShaderView({
           </div>
 
           <div
-            className="pane-resizer shader-code-resizer"
+            className="pane-resizer shader-preview-resizer"
             role="separator"
             aria-label="Resize code and preview panes"
-            aria-orientation={stacked ? "horizontal" : "vertical"}
-            aria-valuemin={stacked ? minPreviewHeight : minCodeWidth}
-            aria-valuenow={stacked ? previewHeight ?? undefined : codeWidth}
+            aria-orientation="horizontal"
+            aria-valuemin={minPreviewHeight}
+            aria-valuenow={previewHeight ?? undefined}
             tabIndex={0}
-            onPointerDown={onResizeCode}
-            onDoubleClick={onResetCodeSize}
-            onKeyDown={onKeyResizeCode}
+            onPointerDown={onResizePreview}
+            onDoubleClick={onResetPreviewSize}
+            onKeyDown={onKeyResizePreview}
           />
         </>
       )}

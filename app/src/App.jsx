@@ -212,25 +212,23 @@ import {
   mediaType,
   revokeObjectUrl as revokeThumbnailUrl,
 } from "./lib/mediaFiles.js";
-import { createRafCssWriter } from "./lib/panelResize.js";
+import { resizePanelWithKey, startPanelResize } from "./lib/panelResize.js";
 import {
   CANVAS_COLOR_STORAGE_KEY,
   CANVAS_CONTROLS_STORAGE_KEY,
   COMPACT_APP_NAV_WIDTH,
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
-  defaultCodeWidth,
+  DEFAULT_CODE_PANE_SHARE,
   EDITOR_FILTERS_STORAGE_KEY,
   LIBRARY_VIEW_STORAGE_KEY,
-  MAX_PROPERTIES_WIDTH,
+  MAX_CODE_PANE_SHARE,
+  MIN_CODE_PANE_SHARE,
   MIN_APP_NAV_WIDTH,
   MIN_PROPERTIES_WIDTH,
   MIN_CHAT_HEIGHT,
   MIN_CODE_EDITOR_HEIGHT,
-  MIN_CODE_WIDTH,
   MIN_PREVIEW_HEIGHT,
-  MIN_PREVIEW_WIDTH,
-  MIN_STACKED_SIDEBAR,
   PLAY_STORAGE_KEY,
   defaultCanvasColorForTheme,
   normalizeCanvasColor,
@@ -1559,13 +1557,14 @@ export default function App() {
   const {
     appNavWidth,
     appNavMaxWidth,
-    codeWidth,
+    codePaneShare,
     chatHeight,
     previewHeight,
     propertiesWidth,
-    stacked,
+    propertiesMaxWidth,
+    toolsSideBySide,
     saveAppNavWidth,
-    saveCodeWidth,
+    saveCodePaneShare,
     saveChatHeight,
     savePreviewHeight,
     savePropertiesWidth,
@@ -9851,239 +9850,95 @@ export default function App() {
   ]);
 
   const resizeAppNav = useCallback((event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
+    const modules = event.currentTarget.previousElementSibling;
+    const rail = event.currentTarget.parentElement;
+    if (!modules || !rail) return;
 
-    const handle = event.currentTarget;
-    const nav = handle.previousElementSibling;
-    const rail = handle.parentElement;
-    if (!nav || !rail) return;
-
-    const pointerId = event.pointerId;
-    const startX = event.clientX;
-    const startWidth = nav.getBoundingClientRect().width;
+    const size = modules.getBoundingClientRect().width;
     const startedCompact = rail.hasAttribute("data-thumbnail-only");
-    let width = startWidth;
-    const cssWriter = createRafCssWriter(nav, "--app-nav-width");
-    handle.setPointerCapture(pointerId);
-
-    const onPointerMove = (moveEvent) => {
-      if (moveEvent.pointerId !== pointerId) return;
-      width = Math.min(
-        appNavMaxWidth,
-        Math.max(COMPACT_APP_NAV_WIDTH, startWidth + moveEvent.clientX - startX),
-      );
-      if (startedCompact) {
-        rail.toggleAttribute("data-revealing-labels", width > startWidth);
-      }
-      cssWriter.write(width);
-    };
-
-    const listeners = new AbortController();
-    const options = { capture: true, signal: listeners.signal };
-    const finishResize = (commit) => {
-      listeners.abort();
-      if (handle.hasPointerCapture(pointerId)) {
-        handle.releasePointerCapture(pointerId);
-      }
-      const finalWidth = commit && width !== startWidth
-        ? saveAppNavWidth(width)
-        : startWidth;
-      cssWriter.write(finalWidth);
-      cssWriter.flush();
-      rail.removeAttribute("data-revealing-labels");
-    };
-    const onPointerEnd = (endEvent) => {
-      if (endEvent.pointerId === pointerId) {
-        finishResize(endEvent.type === "pointerup");
-      }
-    };
-
-    // Resizing can continue if the browser releases capture before pointerup.
-    window.addEventListener("pointermove", onPointerMove, options);
-    window.addEventListener("pointerup", onPointerEnd, options);
-    window.addEventListener("pointercancel", onPointerEnd, options);
-    window.addEventListener("blur", () => finishResize(false), {
-      signal: listeners.signal,
+    startPanelResize(event, {
+      element: modules,
+      property: "--app-nav-width",
+      size,
+      min: COMPACT_APP_NAV_WIDTH,
+      max: appNavMaxWidth,
+      axis: "x",
+      onMove: startedCompact
+        ? (width) => rail.toggleAttribute("data-revealing-labels", width > size)
+        : undefined,
+      onCommit: saveAppNavWidth,
+      onFinish: () => rail.removeAttribute("data-revealing-labels"),
     });
   }, [appNavMaxWidth, saveAppNavWidth]);
 
-  const resizeProperties = useCallback((event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-    const handle = event.currentTarget;
+  function resizeProperties(event, resize) {
     const viewer = viewerRef.current;
-    const panel = handle.nextElementSibling;
+    const panel = propertiesPanelRef.current;
     if (!viewer || !panel) return;
-    const startX = event.clientX;
-    const startWidth = panel.getBoundingClientRect().width;
-    let finalWidth = startWidth;
-    const cssWriter = createRafCssWriter(viewer, "--shader-properties-width");
-    handle.setPointerCapture(event.pointerId);
-    const onPointerMove = (moveEvent) => {
-      finalWidth = Math.min(MAX_PROPERTIES_WIDTH, Math.max(
-        MIN_PROPERTIES_WIDTH, startWidth + startX - moveEvent.clientX,
-      ));
-      cssWriter.write(finalWidth);
-    };
-    const onPointerUp = (upEvent) => {
-      if (handle.hasPointerCapture(upEvent.pointerId)) {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", onPointerUp);
-      handle.removeEventListener("pointercancel", onPointerUp);
-      cssWriter.flush();
-      savePropertiesWidth(finalWidth);
-    };
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerUp);
-  }, [savePropertiesWidth]);
+    resize(event, {
+      element: viewer,
+      property: "--shader-properties-width",
+      size: panel.getBoundingClientRect().width,
+      min: MIN_PROPERTIES_WIDTH,
+      max: propertiesMaxWidth,
+      axis: "x",
+      direction: -1,
+      onCommit: savePropertiesWidth,
+    });
+  }
 
-  const resizeCodePane = useCallback(
-    (event) => {
-      if (event.button !== 0) return;
-      event.preventDefault();
+  function resizePreview(event, resize) {
+    const viewer = viewerRef.current;
+    const preview = visualizerRef.current;
+    if (!viewer || !preview) return;
 
-      const handle = event.currentTarget;
-      const viewer = viewerRef.current;
-      if (!viewer) return;
+    const size = preview.getBoundingClientRect().height;
+    resize(event, {
+      element: viewer,
+      property: "--preview-height",
+      size,
+      min: MIN_PREVIEW_HEIGHT,
+      max: Math.max(size, Number.parseFloat(getComputedStyle(preview).maxHeight) || size),
+      axis: "y",
+      onCommit: savePreviewHeight,
+    });
+  }
 
-      if (stacked) {
-        const visualizer = visualizerRef.current;
-        if (!visualizer) return;
-
-        const startY = event.clientY;
-        const previewBounds = visualizer.getBoundingClientRect();
-        const startHeight = previewBounds.height;
-        const available =
-          viewer.getBoundingClientRect().bottom - previewBounds.top -
-          handle.getBoundingClientRect().height -
-          (Number.parseFloat(getComputedStyle(sidebarRef.current).minHeight) || MIN_STACKED_SIDEBAR);
-        const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, available);
-        let finalHeight = startHeight;
-        const cssWriter = createRafCssWriter(viewer, "--preview-height");
-        handle.setPointerCapture(event.pointerId);
-
-        const onPointerMove = (moveEvent) => {
-          const next = Math.min(
-            maxHeight,
-            Math.max(
-              MIN_PREVIEW_HEIGHT,
-              startHeight + moveEvent.clientY - startY
-            )
-          );
-          finalHeight = next;
-          cssWriter.write(next);
-        };
-
-        const onPointerUp = (upEvent) => {
-          if (handle.hasPointerCapture(upEvent.pointerId)) {
-            handle.releasePointerCapture(upEvent.pointerId);
-          }
-          handle.removeEventListener("pointermove", onPointerMove);
-          handle.removeEventListener("pointerup", onPointerUp);
-          handle.removeEventListener("pointercancel", onPointerUp);
-          cssWriter.flush();
-          savePreviewHeight(finalHeight);
-        };
-
-        handle.addEventListener("pointermove", onPointerMove);
-        handle.addEventListener("pointerup", onPointerUp);
-        handle.addEventListener("pointercancel", onPointerUp);
-        return;
-      }
-
-      const codePane = sidebarRef.current;
-      if (!codePane) return;
-      const propertiesWidth =
-        propertiesPanelRef.current?.getBoundingClientRect().width || 0;
-
-      const startX = event.clientX;
-      const startWidth = codePane.getBoundingClientRect().width;
-      const available =
-        viewer.getBoundingClientRect().width -
-        handle.getBoundingClientRect().width -
-        propertiesWidth -
-        MIN_PREVIEW_WIDTH;
-      const maxWidth = Math.max(MIN_CODE_WIDTH, available);
-      let finalWidth = startWidth;
-      const cssWriter = createRafCssWriter(viewer, "--code-width");
-      handle.setPointerCapture(event.pointerId);
-
-      const onPointerMove = (moveEvent) => {
-        const next = Math.min(
-          maxWidth,
-          Math.max(MIN_CODE_WIDTH, startWidth + moveEvent.clientX - startX)
-        );
-        finalWidth = next;
-        cssWriter.write(next);
-      };
-
-      const onPointerUp = (upEvent) => {
-        if (handle.hasPointerCapture(upEvent.pointerId)) {
-          handle.releasePointerCapture(upEvent.pointerId);
-        }
-        handle.removeEventListener("pointermove", onPointerMove);
-        handle.removeEventListener("pointerup", onPointerUp);
-        handle.removeEventListener("pointercancel", onPointerUp);
-        cssWriter.flush();
-        saveCodeWidth(finalWidth);
-      };
-
-      handle.addEventListener("pointermove", onPointerMove);
-      handle.addEventListener("pointerup", onPointerUp);
-      handle.addEventListener("pointercancel", onPointerUp);
-    },
-    [saveCodeWidth, savePreviewHeight, stacked]
-  );
-
-  const resizeChatPane = useCallback((event) => {
-    if (event.button !== 0) return;
-    event.preventDefault();
-
-    const handle = event.currentTarget;
+  function resizeTools(event, resize) {
+    const viewer = viewerRef.current;
     const sidebar = sidebarRef.current;
-    if (!sidebar) return;
+    const handle = event.currentTarget;
+    const code = handle.previousElementSibling;
+    const chat = handle.nextElementSibling;
+    if (!viewer || !sidebar || !code || !chat) return;
 
-    const startY = event.clientY;
-    const startHeight = chatHeight;
-    const sidebarRect = sidebar.getBoundingClientRect();
-    const handleHeight = handle.getBoundingClientRect().height;
-    const maxHeight = Math.max(
-      MIN_CHAT_HEIGHT,
-      sidebarRect.height - handleHeight - MIN_CODE_EDITOR_HEIGHT
-    );
-    let finalHeight = startHeight;
-    const cssWriter = createRafCssWriter(viewerRef.current, "--chat-height");
-    handle.setPointerCapture(event.pointerId);
+    if (toolsSideBySide) {
+      const available = sidebar.getBoundingClientRect().width - handle.getBoundingClientRect().width;
+      resize(event, {
+        element: viewer,
+        property: "--code-pane-share",
+        size: code.getBoundingClientRect().width,
+        min: available * MIN_CODE_PANE_SHARE,
+        max: available * MAX_CODE_PANE_SHARE,
+        axis: "x",
+        format: (width) => String(width / available),
+        onCommit: (width) => saveCodePaneShare(width / available),
+      });
+      return;
+    }
 
-    const onPointerMove = (moveEvent) => {
-      // Dragging the divider up grows chat; down shrinks it.
-      const next = Math.min(
-        maxHeight,
-        Math.max(MIN_CHAT_HEIGHT, startHeight + (startY - moveEvent.clientY))
-      );
-      finalHeight = next;
-      cssWriter.write(next);
-    };
-
-    const onPointerUp = (upEvent) => {
-      if (handle.hasPointerCapture(upEvent.pointerId)) {
-        handle.releasePointerCapture(upEvent.pointerId);
-      }
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", onPointerUp);
-      handle.removeEventListener("pointercancel", onPointerUp);
-      cssWriter.flush();
-      saveChatHeight(finalHeight);
-    };
-
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerUp);
-  }, [chatHeight, saveChatHeight]);
+    const size = chat.getBoundingClientRect().height;
+    resize(event, {
+      element: viewer,
+      property: "--chat-height",
+      size,
+      min: MIN_CHAT_HEIGHT,
+      max: Math.max(MIN_CHAT_HEIGHT, size + code.getBoundingClientRect().height - MIN_CODE_EDITOR_HEIGHT),
+      axis: "y",
+      direction: -1,
+      onCommit: saveChatHeight,
+    });
+  }
 
   useEffect(() => {
     const gen = ++thumbnailCaptureGenRef.current;
@@ -11937,7 +11792,7 @@ export default function App() {
           sidebarRef={sidebarRef}
           visualizerRef={visualizerRef}
           style={{
-            "--code-width": `${codeWidth}px`,
+            "--code-pane-share": codePaneShare,
             "--shader-properties-width": `${propertiesWidth}px`,
             "--chat-height": `${chatHeight}px`,
             ...(previewHeight != null
@@ -11946,23 +11801,15 @@ export default function App() {
           }}
           codeCollapsed={effectiveCodeCollapsed}
           chatCollapsed={protectedPreview ? false : chatCollapsed}
-          stacked={stacked}
+          toolsSideBySide={toolsSideBySide}
+          showChat={!protectedPreview}
           propertiesWidth={propertiesWidth}
           minPropertiesWidth={MIN_PROPERTIES_WIDTH}
-          maxPropertiesWidth={MAX_PROPERTIES_WIDTH}
-          onResizeProperties={resizeProperties}
+          maxPropertiesWidth={propertiesMaxWidth}
+          onResizeProperties={(event) => resizeProperties(event, startPanelResize)}
           onResetPropertiesSize={() => savePropertiesWidth(MIN_PROPERTIES_WIDTH)}
-          onKeyResizeProperties={(event) => {
-            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
-            event.preventDefault();
-            const next = event.key === "Home" ? MIN_PROPERTIES_WIDTH
-              : event.key === "End" ? MAX_PROPERTIES_WIDTH
-              : propertiesWidth + (event.key === "ArrowLeft" ? 16 : -16);
-            savePropertiesWidth(Math.min(MAX_PROPERTIES_WIDTH, Math.max(MIN_PROPERTIES_WIDTH, next)));
-          }}
-          codeWidth={codeWidth}
+          onKeyResizeProperties={(event) => resizeProperties(event, resizePanelWithKey)}
           previewHeight={previewHeight}
-          minCodeWidth={MIN_CODE_WIDTH}
           minPreviewHeight={MIN_PREVIEW_HEIGHT}
           sidebar={!isComposerView && (
             <>
@@ -12039,30 +11886,20 @@ export default function App() {
                 !effectiveCodeCollapsed &&
                 !chatCollapsed && (
                   <div
-                    className="pane-resizer pane-resizer-row"
+                    className="pane-resizer shader-tools-resizer"
                     role="separator"
                     aria-label="Resize code and chat panes"
-                    aria-orientation="horizontal"
-                    aria-valuemin={MIN_CHAT_HEIGHT}
-                    aria-valuenow={chatHeight}
+                    aria-orientation={toolsSideBySide ? "vertical" : "horizontal"}
+                    aria-valuemin={toolsSideBySide ? MIN_CODE_PANE_SHARE * 100 : MIN_CHAT_HEIGHT}
+                    aria-valuemax={toolsSideBySide ? MAX_CODE_PANE_SHARE * 100 : undefined}
+                    aria-valuenow={toolsSideBySide ? Math.round(codePaneShare * 100) : chatHeight}
+                    aria-valuetext={toolsSideBySide ? `${Math.round(codePaneShare * 100)}% Code` : undefined}
                     tabIndex={0}
-                    onPointerDown={resizeChatPane}
-                    onDoubleClick={() => saveChatHeight(DEFAULT_CHAT_HEIGHT)}
-                    onKeyDown={(event) => {
-                      if (
-                        event.key !== "ArrowUp" &&
-                        event.key !== "ArrowDown"
-                      ) {
-                        return;
-                      }
-                      event.preventDefault();
-                      saveChatHeight(
-                        Math.max(
-                          MIN_CHAT_HEIGHT,
-                          chatHeight + (event.key === "ArrowUp" ? 16 : -16)
-                        )
-                      );
-                    }}
+                    onPointerDown={(event) => resizeTools(event, startPanelResize)}
+                    onDoubleClick={() => toolsSideBySide
+                      ? saveCodePaneShare(DEFAULT_CODE_PANE_SHARE)
+                      : saveChatHeight(DEFAULT_CHAT_HEIGHT)}
+                    onKeyDown={(event) => resizeTools(event, resizePanelWithKey)}
                   />
                 )}
 
@@ -12094,51 +11931,9 @@ export default function App() {
           )}
           preview={editorPreviewContent}
           properties={renderPropertiesPanel(shaderEditorHeader)}
-          onResizeCode={resizeCodePane}
-          onResetCodeSize={() =>
-            stacked
-              ? savePreviewHeight(null)
-              : saveCodeWidth(defaultCodeWidth())
-          }
-          onKeyResizeCode={(event) => {
-            if (stacked) {
-              if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
-              event.preventDefault();
-              const viewer = viewerRef.current;
-              const handle = event.currentTarget;
-              const visualizer = visualizerRef.current;
-              if (!viewer || !visualizer) return;
-              const previewBounds = visualizer.getBoundingClientRect();
-            const current = previewBounds.height;
-              const maxHeight = Math.max(
-                MIN_PREVIEW_HEIGHT,
-                viewer.getBoundingClientRect().bottom - previewBounds.top -
-                  handle.getBoundingClientRect().height -
-                  (Number.parseFloat(getComputedStyle(sidebarRef.current).minHeight) || MIN_STACKED_SIDEBAR)
-              );
-              savePreviewHeight(
-                Math.min(
-                  maxHeight,
-                  Math.max(
-                    MIN_PREVIEW_HEIGHT,
-                    current + (event.key === "ArrowDown" ? 16 : -16)
-                  )
-                )
-              );
-              return;
-            }
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            const current = sidebarRef.current?.getBoundingClientRect().width;
-            const preview = visualizerRef.current?.getBoundingClientRect().width;
-            if (current == null || preview == null) return;
-            saveCodeWidth(
-              Math.min(
-                current + Math.max(0, preview - MIN_PREVIEW_WIDTH),
-                Math.max(MIN_CODE_WIDTH, current + (event.key === "ArrowLeft" ? -16 : 16)),
-              ),
-            );
-          }}
+          onResizePreview={(event) => resizePreview(event, startPanelResize)}
+          onResetPreviewSize={() => savePreviewHeight(null)}
+          onKeyResizePreview={(event) => resizePreview(event, resizePanelWithKey)}
         />
       )}
       </div>

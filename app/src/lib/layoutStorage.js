@@ -4,20 +4,19 @@ export const MIN_APP_NAV_WIDTH = 160;
 export const MAX_APP_NAV_WIDTH = 400;
 export const MIN_PROPERTIES_WIDTH = 260;
 export const MAX_PROPERTIES_WIDTH = MAX_APP_NAV_WIDTH;
-export const DEFAULT_CODE_WIDTH = 480;
-export const MIN_CODE_WIDTH = 320;
-export const MIN_PREVIEW_WIDTH = 220;
+export const DEFAULT_CODE_PANE_SHARE = 0.5;
+export const MIN_CODE_PANE_SHARE = 0.3;
+export const MAX_CODE_PANE_SHARE = 0.7;
 export const MIN_PREVIEW_HEIGHT = 160;
-export const MIN_STACKED_SIDEBAR = 280;
 export const DEFAULT_CHAT_HEIGHT = 260;
 export const MIN_CHAT_HEIGHT = 220;
 export const MIN_CODE_EDITOR_HEIGHT = 140;
-export const STACKED_BREAKPOINT = 1600;
-export const STACKED_MEDIA_QUERY = `(max-width: ${STACKED_BREAKPOINT}px)`;
+export const TOOLS_STACK_BREAKPOINT = 1000;
+export const COMPACT_EDITOR_BREAKPOINT = 740;
 
 export const APP_NAV_WIDTH_STORAGE_KEY =
   "figma-shader-studio:app-nav-width";
-export const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
+export const CODE_PANE_SHARE_STORAGE_KEY = "figma-shader-studio:code-pane-share";
 export const PROPERTIES_WIDTH_STORAGE_KEY = "figma-shader-studio:properties-width";
 export const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
 export const PREVIEW_HEIGHT_STORAGE_KEY =
@@ -69,10 +68,6 @@ export function writeLayoutPreference(key, value, storage = layoutPreferenceStor
   }
 }
 
-export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
-  return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
-}
-
 export function snapAppNavWidth(width) {
   return width < MIN_APP_NAV_WIDTH ? COMPACT_APP_NAV_WIDTH : Math.round(width);
 }
@@ -86,17 +81,14 @@ export function readAppNavWidth(
     value >= COMPACT_APP_NAV_WIDTH &&
     value <= MAX_APP_NAV_WIDTH
     ? snapAppNavWidth(value)
-    : viewportWidth <= 740 ? COMPACT_APP_NAV_WIDTH : DEFAULT_APP_NAV_WIDTH;
+    : viewportWidth <= COMPACT_EDITOR_BREAKPOINT ? COMPACT_APP_NAV_WIDTH : DEFAULT_APP_NAV_WIDTH;
 }
 
-export function readCodeWidth(
-  storage = layoutPreferenceStorage(),
-  viewportWidth = globalThis.innerWidth,
-) {
-  const value = Number(readLayoutPreference(storage, CODE_WIDTH_STORAGE_KEY));
-  return Number.isFinite(value) && value >= MIN_CODE_WIDTH
+export function readCodePaneShare(storage = layoutPreferenceStorage()) {
+  const value = Number(readLayoutPreference(storage, CODE_PANE_SHARE_STORAGE_KEY));
+  return Number.isFinite(value) && value >= MIN_CODE_PANE_SHARE && value <= MAX_CODE_PANE_SHARE
     ? value
-    : defaultCodeWidth(viewportWidth);
+    : DEFAULT_CODE_PANE_SHARE;
 }
 
 export function readPropertiesWidth(storage = layoutPreferenceStorage()) {
@@ -130,12 +122,6 @@ export function readSidebarSections(storage = layoutPreferenceStorage()) {
   } catch {
     return { codeCollapsed: false, chatCollapsed: false };
   }
-}
-
-export function isStackedLayout(
-  matchMedia = globalThis.matchMedia?.bind(globalThis),
-) {
-  return Boolean(matchMedia?.(STACKED_MEDIA_QUERY).matches);
 }
 
 export function readTheme(storage = layoutPreferenceStorage()) {

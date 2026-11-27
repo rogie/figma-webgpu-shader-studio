@@ -2,34 +2,48 @@ import { useCallback, useEffect, useState } from "react";
 import {
   APP_NAV_WIDTH_STORAGE_KEY,
   CHAT_HEIGHT_STORAGE_KEY,
-  CODE_WIDTH_STORAGE_KEY,
+  CODE_PANE_SHARE_STORAGE_KEY,
+  COMPACT_EDITOR_BREAKPOINT,
   MAX_APP_NAV_WIDTH,
+  MAX_PROPERTIES_WIDTH,
   MIN_APP_NAV_WIDTH,
+  MIN_PROPERTIES_WIDTH,
   PREVIEW_HEIGHT_STORAGE_KEY,
   PROPERTIES_WIDTH_STORAGE_KEY,
   readAppNavWidth,
   readChatHeight,
-  readCodeWidth,
+  readCodePaneShare,
   readPreviewHeight,
   readPropertiesWidth,
   snapAppNavWidth,
-  STACKED_BREAKPOINT,
+  TOOLS_STACK_BREAKPOINT,
   writeLayoutPreference,
 } from "../lib/layoutStorage.js";
 
 export function usePanelLayout(editorViewRef, editorMounted) {
   const [savedAppNavWidth, setAppNavWidth] = useState(readAppNavWidth);
-  const [codeWidth, setCodeWidth] = useState(readCodeWidth);
+  const [codePaneShare, setCodePaneShare] = useState(readCodePaneShare);
   const [chatHeight, setChatHeight] = useState(readChatHeight);
   const [previewHeight, setPreviewHeight] = useState(readPreviewHeight);
-  const [propertiesWidth, setPropertiesWidth] = useState(readPropertiesWidth);
+  const [savedPropertiesWidth, setPropertiesWidth] = useState(readPropertiesWidth);
   const [editorWidth, setEditorWidth] = useState(() => globalThis.innerWidth);
-  const stacked = editorWidth <= STACKED_BREAKPOINT;
+  const toolsSideBySide = editorWidth > TOOLS_STACK_BREAKPOINT;
+  const compact = editorWidth <= COMPACT_EDITOR_BREAKPOINT;
+  // Leave space for the preview and four 16px gutters around the columns.
+  const railWidthBudget = editorWidth - 64 - (toolsSideBySide ? 400 : 250);
+  const appNavWidth = Math.min(savedAppNavWidth, Math.max(
+    MIN_APP_NAV_WIDTH,
+    compact ? editorWidth - 420 : railWidthBudget - MIN_PROPERTIES_WIDTH,
+  ));
+  const propertiesMaxWidth = Math.max(
+    MIN_PROPERTIES_WIDTH,
+    Math.min(MAX_PROPERTIES_WIDTH, railWidthBudget - appNavWidth),
+  );
+  const propertiesWidth = Math.min(savedPropertiesWidth, propertiesMaxWidth);
   const appNavMaxWidth = Math.max(
     MIN_APP_NAV_WIDTH,
-    Math.min(MAX_APP_NAV_WIDTH, editorWidth - 420),
+    Math.min(MAX_APP_NAV_WIDTH, compact ? editorWidth - 420 : railWidthBudget - propertiesWidth),
   );
-  const appNavWidth = Math.min(savedAppNavWidth, appNavMaxWidth);
 
   useEffect(() => {
     const root = editorViewRef?.current;
@@ -58,10 +72,9 @@ export function usePanelLayout(editorViewRef, editorMounted) {
     writeLayoutPreference(PROPERTIES_WIDTH_STORAGE_KEY, String(rounded));
   }, []);
 
-  const saveCodeWidth = useCallback((width) => {
-    const rounded = Math.round(width);
-    setCodeWidth(rounded);
-    writeLayoutPreference(CODE_WIDTH_STORAGE_KEY, String(rounded));
+  const saveCodePaneShare = useCallback((share) => {
+    setCodePaneShare(share);
+    writeLayoutPreference(CODE_PANE_SHARE_STORAGE_KEY, String(share));
   }, []);
 
   const saveChatHeight = useCallback((height) => {
@@ -84,13 +97,14 @@ export function usePanelLayout(editorViewRef, editorMounted) {
   return {
     appNavWidth,
     appNavMaxWidth,
-    codeWidth,
+    codePaneShare,
     chatHeight,
     previewHeight,
     propertiesWidth,
-    stacked,
+    propertiesMaxWidth,
+    toolsSideBySide,
     saveAppNavWidth,
-    saveCodeWidth,
+    saveCodePaneShare,
     saveChatHeight,
     savePreviewHeight,
     savePropertiesWidth,

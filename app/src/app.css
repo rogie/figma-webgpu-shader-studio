@@ -24,7 +24,6 @@ body,
   --global-app-nav-width: 3rem;
   --panel-drag-handle-width: var(--spacer-4);
   --shader-properties-width: 260px;
-  --code-width: 480px;
   --viewer-radius: var(--radius-large);
 }
 
@@ -343,8 +342,7 @@ dialog[is="fig-popup"].preview-settings-popup {
       background: var(--figma-color-border-selected);
     }
 
-    &[aria-orientation="horizontal"],
-    &.pane-resizer-row {
+    &[aria-orientation="horizontal"] {
       &::after {
         width: var(--panel-drag-handle-width);
         max-width: 100%;
@@ -1376,12 +1374,6 @@ dialog.delete-shader-dialog {
   > fig-header {
   flex: 0 0 auto;
   padding-right: var(--spacer-2);
-}
-
-@media (max-width: 1180px) {
-  :root {
-    --code-width: 380px;
-  }
 }
 
 /* Match the library and viewer gutters at the viewport edges. */

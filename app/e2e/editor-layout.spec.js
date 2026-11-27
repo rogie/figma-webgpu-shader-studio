@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("collapsing code and chat gives the remaining height to the preview", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.setViewportSize({ width: 1000, height: 1000 });
   await page.addInitScript(() => {
     localStorage.setItem("figma-shader-studio:preview-height", "300");
   });
@@ -19,6 +19,45 @@ test("collapsing code and chat gives the remaining height to the preview", async
   expect(sidebarBounds.height).toBe(96);
   await page.getByRole("button", { name: "Expand AI chat", exact: true }).click();
   await expect(preview).toHaveCSS("height", "300px");
+});
+
+test("code and AI chat share a row beneath the preview on wide editors", async ({ page }) => {
+  await page.setViewportSize({ width: 1548, height: 1319 });
+  await page.addInitScript(() => {
+    localStorage.setItem("figma-shader-studio:app-nav-width", "64");
+  });
+  await page.goto("/shader/dither");
+
+  const preview = page.locator(".shader-viewer-visualizer");
+  const code = page.locator(".shader-viewer-code");
+  const chat = page.locator(".shader-viewer-chat");
+  const previewDivider = page.getByRole("separator", { name: "Resize code and preview panes" });
+  const chatDivider = page.getByRole("separator", { name: "Resize code and chat panes" });
+  await expect(chat).toBeVisible();
+  await expect(previewDivider).toHaveAttribute("aria-orientation", "horizontal");
+  await expect(chatDivider).toHaveAttribute("aria-orientation", "vertical");
+  const previewBounds = await preview.boundingBox();
+  const codeBounds = await code.boundingBox();
+  const chatBounds = await chat.boundingBox();
+  expect(codeBounds.y).toBe(previewBounds.y + previewBounds.height + 16);
+  expect(chatBounds.y).toBe(codeBounds.y);
+  expect(chatBounds.x).toBe(codeBounds.x + codeBounds.width + 16);
+  expect(chatBounds.width).toBe(codeBounds.width);
+  expect(chatBounds.height).toBe(codeBounds.height);
+
+  await page.getByRole("button", { name: "Collapse code", exact: true }).click();
+  await expect(code).toHaveCSS("height", "40px");
+  await page.getByRole("button", { name: "Collapse AI chat", exact: true }).click();
+  await expect(previewDivider).toBeHidden();
+  await expect(page.locator(".shader-viewer-sidebar")).toHaveCSS("height", "40px");
+  expect((await preview.boundingBox()).height).toBeGreaterThan(previewBounds.height);
+
+  await page.getByRole("button", { name: "Expand code", exact: true }).click();
+  await page.getByRole("button", { name: "Expand AI chat", exact: true }).click();
+  await page.setViewportSize({ width: 1000, height: 1000 });
+  await expect(chatDivider).toBeVisible();
+  const stackedCode = await code.boundingBox();
+  expect((await chat.boundingBox()).y).toBeGreaterThan(stackedCode.y + stackedCode.height);
 });
 
 test("properties resize within navigation limits and remember their width", async ({ page }) => {
@@ -100,35 +139,187 @@ test("standalone shader properties open at the shared inspector width", async ({
   await expect(page.getByRole("dialog", { name: "Properties", exact: true })).toHaveCSS("width", "260px");
 });
 
-test("stored and keyboard sizes keep the desktop preview inside the editor", async ({ page }) => {
-  await page.setViewportSize({ width: 1920, height: 900 });
-  await page.addInitScript(() => {
-    localStorage.setItem("figma-shader-studio:code-width", "10000");
+async function dragDivider(page, divider, dx, dy, checkDuringDrag) {
+  await divider.scrollIntoViewIfNeeded();
+  const bounds = await divider.boundingBox();
+  const x = bounds.x + bounds.width / 2;
+  const y = bounds.y + bounds.height / 2;
+  expect(await divider.evaluate((node, point) => {
+    const hit = document.elementFromPoint(point.x, point.y);
+    return hit === node ? true : { hit: hit?.className, point, divider: node.className };
+  }, { x, y })).toBe(true);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + dx, y + dy, { steps: 4 });
+  try {
+    await checkDuringDrag?.();
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+for (const [width, height] of [
+  [2560, 1440], [1920, 1080], [1601, 900], [1548, 1319], [1200, 800],
+  [1001, 800], [1001, 500], [1000, 800], [999, 650], [900, 540],
+  [741, 800], [740, 740], [600, 640], [390, 740], [320, 568],
+]) {
+  test(`editor dividers resize at ${width} × ${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.addInitScript(() => {
+      localStorage.setItem("figma-shader-studio:app-nav-width", "64");
+      localStorage.setItem("figma-shader-studio:preview-height", "180");
+    });
+    await page.goto("/shader/dither");
+
+    const nav = page.getByRole("navigation", { name: "Shader library" });
+    const preview = page.locator(".shader-viewer-visualizer");
+    const inspector = page.locator(".shader-properties-panel");
+    const code = page.locator(".shader-viewer-code");
+    const chat = page.locator(".shader-viewer-chat");
+    const navDivider = page.getByRole("separator", { name: "Resize shader navigation" });
+    const previewDivider = page.getByRole("separator", { name: "Resize code and preview panes" });
+    const propertiesDivider = page.getByRole("separator", { name: "Resize shader properties" });
+    const toolsDivider = page.getByRole("separator", { name: "Resize code and chat panes" });
+    const sideBySide = width > 1000;
+
+    await expect(chat).toBeVisible();
+    await expect(toolsDivider).toHaveAttribute("aria-orientation", sideBySide ? "vertical" : "horizontal");
+
+    await expect(nav).toHaveCSS("width", "64px");
+    await dragDivider(page, navDivider, 96, 0, () => expect(nav).toHaveCSS("width", "160px"));
+    await expect(nav.locator(".app-nav-headers")).toBeVisible();
+    await dragDivider(page, navDivider, -96, 0);
+    await expect(nav).toHaveCSS("width", "64px");
+
+    if (width > 740) {
+      await expect(inspector).toHaveCSS("width", "260px");
+      await dragDivider(page, propertiesDivider, -32, 0, () => expect(inspector).toHaveCSS("width", "292px"));
+      await expect(inspector).toHaveCSS("width", "292px");
+      await dragDivider(page, propertiesDivider, 32, 0);
+      await expect(inspector).toHaveCSS("width", "260px");
+    } else {
+      await expect(propertiesDivider).toBeHidden();
+      expect((await inspector.boundingBox()).x).toBe((await preview.boundingBox()).x);
+    }
+
+    await expect(previewDivider).toHaveAttribute("aria-orientation", "horizontal");
+    await expect(preview).toHaveCSS("height", "180px");
+    await dragDivider(page, previewDivider, 0, 24, () => expect(preview).toHaveCSS("height", "204px"));
+    await expect(preview).toHaveCSS("height", "204px");
+    await dragDivider(page, previewDivider, 0, -24);
+    await expect(preview).toHaveCSS("height", "180px");
+
+    const beforeCode = await code.boundingBox();
+    const beforeChat = await chat.boundingBox();
+    const dimension = sideBySide ? "width" : "height";
+    const delta = sideBySide ? 24 : 20;
+    await dragDivider(page, toolsDivider, sideBySide ? delta : 0, sideBySide ? 0 : delta, async () => {
+      await expect.poll(async () => Math.round((await code.boundingBox())[dimension] - beforeCode[dimension])).toBe(delta);
+    });
+    expect((await chat.boundingBox())[dimension]).toBeCloseTo(beforeChat[dimension] - delta, 0);
+    await dragDivider(page, toolsDivider, sideBySide ? -delta : 0, sideBySide ? 0 : -delta);
+    expect((await code.boundingBox())[dimension]).toBeCloseTo(beforeCode[dimension], 0);
+
+    const send = chat.getByRole("button", { name: "Send", exact: true });
+    await expect(send).toBeVisible();
+    const chatPanel = await chat.boundingBox();
+    const sendButton = await send.boundingBox();
+    expect(sendButton.x + sendButton.width).toBeLessThanOrEqual(chatPanel.x + chatPanel.width);
   });
+}
+
+test("tool divider switches axes and preserves separate sizes across the breakpoint", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto("/shader/dither");
-
-  const splitter = page.getByRole("separator", { name: "Resize code and preview panes" });
-  const preview = page.locator(".shader-preview.shader-viewer-visualizer");
-  const inspector = page.locator(".shader-properties-panel");
-  await expect(splitter).toHaveAttribute("aria-orientation", "vertical");
-  expect((await preview.boundingBox()).width).toBeGreaterThanOrEqual(220);
-  const panel = await inspector.boundingBox();
-  expect(panel.x + panel.width).toBeLessThanOrEqual(1920);
-
-  await splitter.press("ArrowLeft");
-  expect((await preview.boundingBox()).width).toBeGreaterThan(220);
-  await splitter.press("ArrowRight");
-  expect((await preview.boundingBox()).width).toBeGreaterThanOrEqual(220);
-
-  await page.setViewportSize({ width: 1440, height: 1000 });
-  await expect(splitter).toHaveAttribute("aria-orientation", "horizontal");
+  const divider = page.getByRole("separator", { name: "Resize code and chat panes" });
   const code = page.locator(".shader-viewer-code");
   const chat = page.locator(".shader-viewer-chat");
-  const stackedPreview = await preview.boundingBox();
-  const codePanel = await code.boundingBox();
-  const chatPanel = await chat.boundingBox();
-  expect(stackedPreview.y + stackedPreview.height).toBeLessThanOrEqual(codePanel.y);
-  expect(codePanel.y + codePanel.height).toBeLessThanOrEqual(chatPanel.y);
+  await expect(chat).toBeVisible();
+  const equalWidth = (await code.boundingBox()).width;
+  await divider.press("ArrowRight");
+  expect((await code.boundingBox()).width).toBeCloseTo(equalWidth + 16, 0);
+  const resizedWidth = (await code.boundingBox()).width;
+  await page.reload();
+  expect((await code.boundingBox()).width).toBeCloseTo(resizedWidth, 0);
+
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(divider).toHaveAttribute("aria-orientation", "horizontal");
+  const initialHeight = (await chat.boundingBox()).height;
+  await divider.press("ArrowUp");
+  expect((await chat.boundingBox()).height).toBe(initialHeight + 16);
+
+  await page.setViewportSize({ width: 1200, height: 900 });
+  await expect(divider).toHaveAttribute("aria-orientation", "vertical");
+  expect((await code.boundingBox()).width).toBeCloseTo(resizedWidth, 0);
+  await divider.dblclick();
+  expect((await code.boundingBox()).width).toBeCloseTo(equalWidth, 0);
+
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await expect(divider).toHaveAttribute("aria-orientation", "horizontal");
+  expect((await chat.boundingBox()).height).toBe(initialHeight + 16);
+  await divider.dblclick();
+  expect((await chat.boundingBox()).height).toBe(initialHeight);
+});
+
+test("wide saved rails and a narrow chat keep the controls inside the editor", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await page.addInitScript(() => {
+    localStorage.setItem("figma-shader-studio:app-nav-width", "400");
+    localStorage.setItem("figma-shader-studio:properties-width", "400");
+  });
+  await page.goto("/shader/dither");
+  const nav = page.getByRole("navigation", { name: "Shader library" });
+  const preview = page.locator(".shader-viewer-visualizer");
+  const inspector = page.locator(".shader-properties-panel");
+  const chat = page.locator(".shader-viewer-chat");
+  const divider = page.getByRole("separator", { name: "Resize code and chat panes" });
+  await expect(nav).toHaveCSS("width", "400px");
+  await expect(inspector).toHaveCSS("width", "400px");
+
+  await page.setViewportSize({ width: 1001, height: 800 });
+  await expect(preview).toHaveCSS("width", "400px");
+  await expect(divider).toHaveAttribute("aria-orientation", "vertical");
+  await divider.press("End");
+  expect((await chat.boundingBox()).width).toBeCloseTo(115.2, 0);
+  const buttons = chat.getByRole("button", { name: /^(Send|Model and effort:)/ });
+  await expect(buttons).toHaveCount(2);
+  const chatBounds = await chat.boundingBox();
+  for (const button of await buttons.all()) {
+    const bounds = await button.boundingBox();
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(chatBounds.x + chatBounds.width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(chatBounds.y + chatBounds.height);
+  }
+
+  await page.setViewportSize({ width: 1920, height: 900 });
+  await expect(nav).toHaveCSS("width", "400px");
+  await expect(inspector).toHaveCSS("width", "400px");
+});
+
+test("crossing the breakpoint mid-drag cancels the old axis and leaves the new axis draggable", async ({ page }) => {
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.addInitScript(() => {
+    localStorage.setItem("figma-shader-studio:preview-height", "180");
+    localStorage.setItem("figma-shader-studio:chat-height", "9000");
+  });
+  await page.goto("/shader/dither");
+  const divider = page.getByRole("separator", { name: "Resize code and chat panes" });
+  const code = page.locator(".shader-viewer-code");
+  const chat = page.locator(".shader-viewer-chat");
+  await expect(chat).toBeVisible();
+  const initialWidth = (await code.boundingBox()).width;
+  await dragDivider(page, divider, 48, 0, async () => {
+    await expect.poll(async () => (await code.boundingBox()).width).toBeGreaterThan(initialWidth);
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await expect(divider).toHaveAttribute("aria-orientation", "horizontal");
+  });
+  const initialHeight = (await chat.boundingBox()).height;
+  expect(initialHeight).toBeLessThan(9000);
+  await dragDivider(page, divider, 0, 24);
+  expect((await chat.boundingBox()).height).toBe(initialHeight - 24);
+
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await expect(divider).toHaveAttribute("aria-orientation", "vertical");
+  expect((await code.boundingBox()).width).toBeCloseTo(initialWidth, 0);
 });
 
 test("a compact editor remounts in stacked mode and its properties remain reachable", async ({ page }) => {

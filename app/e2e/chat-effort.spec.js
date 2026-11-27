@@ -193,7 +193,8 @@ test("effort follows the model, persists, and is sent in Plan and Agent requests
   expect(await openLabel.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await slider.press("Home");
   await expect(slider).toHaveAttribute("aria-valuetext", "Default");
-  await input.click();
+  // Click where typing starts, outside the popup anchored above the footer.
+  await input.click({ position: { x: 16, y: 12 } });
   await expect(popup).toBeHidden();
   await expect(effortLabel).toHaveText("Default");
   expect(await send("Reset to provider default")).not.toHaveProperty("reasoningEffort");

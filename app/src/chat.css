@@ -476,12 +476,23 @@
   }
 }
 
-#root
-  .shader-viewer
-  .shader-viewer-sidebar[data-code-collapsed="true"]
-  .shader-viewer-chat:not([data-collapsed="true"]) {
-  flex: 1 1 auto;
-  min-height: 0;
+@container shader-chat (max-width: 240px) {
+  #root .shader-viewer-chat fig-ai-prompt > fig-footer {
+    flex-wrap: wrap;
+    gap: var(--spacer-half);
+    padding-inline: var(--spacer-1);
+
+    > fig-stack {
+      --fig-stack-wrap: wrap;
+      --fig-stack-gap: var(--spacer-half);
+      max-width: 100%;
+      margin-inline-start: auto;
+    }
+
+    .chat-model-picker-trigger {
+      max-width: calc(100cqw - 2 * var(--spacer-1));
+    }
+  }
 }
 
 #root fig-attachment fig-image {
