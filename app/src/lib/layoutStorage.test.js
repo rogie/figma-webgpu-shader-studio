@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  canvasColorFillValue,
   canvasColorFromControlEvent,
+  COMPACT_APP_NAV_WIDTH,
   DEFAULT_DARK_CANVAS_COLOR,
   DEFAULT_CANVAS_COLOR,
   DEFAULT_APP_NAV_WIDTH,
@@ -15,7 +15,6 @@ import {
   readCodeWidth,
   readEditorFilters,
   readExperimentalAudio,
-  readAppNavCollapsed,
   readLibraryView,
   readLibrarySectionOpen,
   readPlayState,
@@ -59,6 +58,15 @@ function writableStorage(values = {}) {
 
 test("layout readers validate persisted numeric bounds", () => {
   assert.equal(readAppNavWidth(storage()), DEFAULT_APP_NAV_WIDTH);
+  assert.equal(readAppNavWidth(storage(), 390), COMPACT_APP_NAV_WIDTH);
+  assert.equal(
+    readAppNavWidth(storage({ "figma-shader-studio:app-nav-width": "159" })),
+    COMPACT_APP_NAV_WIDTH,
+  );
+  assert.equal(
+    readAppNavWidth(storage({ "figma-shader-studio:app-nav-width": "160" })),
+    160,
+  );
   assert.equal(
     readAppNavWidth(
       storage({ "figma-shader-studio:app-nav-width": "320" }),
@@ -151,13 +159,6 @@ test("sidebar, theme, and play readers tolerate malformed values", () => {
     readLibraryView(storage({ "figma-shader-studio:library-view": "cards" })),
     "list",
   );
-  assert.equal(readAppNavCollapsed(storage()), false);
-  assert.equal(
-    readAppNavCollapsed(
-      storage({ "figma-shader-studio:app-nav-collapsed": "true" }),
-    ),
-    true,
-  );
 });
 
 test("canvas color controls normalize color and alpha", () => {
@@ -177,11 +178,6 @@ test("canvas color controls normalize color and alpha", () => {
     canvasColorFromControlEvent({ target: { value: "#abc" } }),
     "#AABBCCFF",
   );
-  assert.deepEqual(JSON.parse(canvasColorFillValue("#AABBCC80")), {
-    type: "solid",
-    color: "#AABBCC",
-    alpha: 128 / 255,
-  });
 });
 
 test("editor filters default to your items and restore saved choices", () => {

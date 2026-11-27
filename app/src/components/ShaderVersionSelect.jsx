@@ -132,6 +132,7 @@ export default function ShaderVersionSelect({
   const selectRef = useRef(null);
   const popupRef = useRef(null);
   const hoveredVersionRef = useRef(null);
+  const triggerWasOpenRef = useRef(null);
   const [open, setOpen] = useState(false);
   const groups = useMemo(
     () => groupVersionsByDay(visibleVersionHistory(versions, open)),
@@ -209,14 +210,14 @@ export default function ShaderVersionSelect({
   useEffect(() => {
     const popup = popupRef.current;
     const trigger = getSelectTrigger();
+    trigger?.setAttribute("aria-expanded", String(open));
+    trigger?.setAttribute("aria-haspopup", "dialog");
     if (!popup) return;
     if (open) {
+      popup.anchor = selectRef.current?.closest("fig-header") || selectRef.current;
       popup.open = true;
-      trigger?.setAttribute("aria-expanded", "true");
-      trigger?.setAttribute("aria-haspopup", "dialog");
     } else {
       popup.open = false;
-      trigger?.setAttribute("aria-expanded", "false");
     }
   }, [getSelectTrigger, open]);
 
@@ -234,11 +235,21 @@ export default function ShaderVersionSelect({
       event.stopImmediatePropagation?.();
       if (select.open) select.open = false;
       if (disabled) return;
-      if (open) {
+      const wasOpen = event.type === "click"
+        ? triggerWasOpenRef.current ?? open
+        : open;
+      triggerWasOpenRef.current = null;
+      if (wasOpen) {
         closePopup();
         return;
       }
       setOpen(true);
+    };
+
+    // Native light-dismiss can close the popup between pointerdown and click.
+    // Toggle from the state at the start of the trigger interaction.
+    const rememberOpenState = () => {
+      triggerWasOpenRef.current = open;
     };
 
     const onKeydown = (event) => {
@@ -253,6 +264,7 @@ export default function ShaderVersionSelect({
     };
 
     const trigger = getSelectTrigger();
+    trigger?.addEventListener("pointerdown", rememberOpenState, true);
     trigger?.addEventListener("click", openHistory, true);
     trigger?.addEventListener("keydown", onKeydown, true);
 
@@ -263,6 +275,7 @@ export default function ShaderVersionSelect({
     observer.observe(select, { attributes: true, attributeFilter: ["open"] });
 
     return () => {
+      trigger?.removeEventListener("pointerdown", rememberOpenState, true);
       trigger?.removeEventListener("click", openHistory, true);
       trigger?.removeEventListener("keydown", onKeydown, true);
       observer.disconnect();
@@ -319,10 +332,10 @@ export default function ShaderVersionSelect({
           is="fig-popup"
           ref={popupRef}
           class="shader-version-popup"
-          position="bottom right"
+          position="left"
+          offset="var(--spacer-3) 0"
           popover="manual"
           closedby="any"
-          anchor="#shader-version-select"
           onClose={closePopup}
           onCancel={closePopup}
         >

@@ -37,10 +37,15 @@ fig-header[borderless]:has(+ fig-header) {
   padding-bottom: 0;
 }
 
-@property --library-slide {
-  syntax: "<length>";
-  inherits: false;
-  initial-value: 0px;
+dialog[is="fig-popup"].preview-settings-popup {
+  box-sizing: border-box;
+  inline-size: 240px;
+  max-inline-size: calc(100vw - var(--spacer-4));
+  pointer-events: auto;
+
+  > fig-content {
+    padding-block: var(--spacer-2);
+  }
 }
 
 #root {
@@ -203,11 +208,22 @@ fig-header[borderless]:has(+ fig-header) {
     align-self: stretch;
     height: 100%;
     min-width: 0;
-    --library-slide: 0px;
-    margin-right: var(--library-slide);
-    transform: translateX(var(--library-slide));
-    will-change: transform;
-    transition: --library-slide 200ms cubic-bezier(0.4, 0, 0.2, 1);
+
+    &[data-thumbnail-only="true"] {
+      .app-nav-headers,
+      .app-nav-account {
+        display: none;
+      }
+
+      .app-nav-account-module {
+        padding-inline: 0;
+
+        fig-button[fig-menu-trigger] {
+          flex: 0 0 100%;
+          width: 100%;
+        }
+      }
+    }
   }
 
   .app-nav {
@@ -861,13 +877,28 @@ fig-header[borderless]:has(+ fig-header) {
       }
 
       .tools {
+        --preview-tools-inset: var(--spacer-2);
         position: absolute;
-        bottom: var(--spacer-2);
-        left: 0;
-        right: 0;
-        width: max-content;
-        margin-inline: auto;
+        bottom: var(--preview-tools-inset);
+        inset-inline: var(--preview-tools-inset);
         z-index: 5;
+        pointer-events: none;
+        container: preview-tools / inline-size;
+      }
+
+      .preview-tools-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto minmax(max-content, 1fr);
+        align-items: end;
+        column-gap: var(--spacer-2);
+      }
+
+      .preview-tools-main {
+        grid-column: 2;
+        justify-self: center;
+        width: max-content;
+        max-width: 100%;
+        pointer-events: auto;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -881,12 +912,49 @@ fig-header[borderless]:has(+ fig-header) {
           display: flex;
           align-items: center;
           gap: var(--spacer-2);
+          min-width: 0;
         }
 
         .play-controls-time {
-          flex: 0 0 auto;
+          flex: 0 1 auto;
+          min-width: 0;
           width: 10rem;
           margin-block: calc(var(--spacer-2) * -1);
+
+          > fig-input-slider-wheel {
+            --fig-input-slider-tray-background: transparent;
+            --fig-input-slider-tray-background-hover: transparent;
+            --fig-input-slider-padding-inline: 0 min(4rem, 60%);
+            --fig-input-slider-focus-outline-width: 0px;
+            border-radius: var(--fig-input-slider-tray-border-radius);
+
+            &:focus-within {
+              outline: var(--figma-focus-outline);
+              outline-offset: var(--figma-focus-outline-offset);
+            }
+
+            > fig-input-number {
+              background-color: transparent;
+            }
+          }
+        }
+      }
+
+      .preview-tools-performance {
+        grid-column: 3;
+        justify-self: end;
+        width: max-content;
+        pointer-events: auto;
+      }
+
+      @container preview-tools (max-width: 440px) {
+        .preview-tools-layout {
+          grid-template-columns: minmax(0, 1fr);
+          row-gap: var(--spacer-2);
+        }
+
+        :is(.preview-tools-main, .preview-tools-performance) {
+          grid-column: 1;
         }
       }
 
@@ -1322,23 +1390,6 @@ dialog.delete-shader-dialog {
   }
 }
 
-@media (max-width: 740px) {
-  #root .editor-view {
-    position: relative;
-  }
-
-  #root .editor-view > .library-rail {
-    position: absolute;
-    inset: 0 auto 0 0;
-    z-index: 12;
-    background: var(--figma-color-bg);
-  }
-
-  #root .editor-view > .app-nav-resizer {
-    display: none;
-  }
-}
-
 /* Match the library and viewer gutters at the viewport edges. */
 #root > .app-shell-content > .editor-view {
   padding: 0;
@@ -1354,7 +1405,6 @@ dialog.delete-shader-dialog {
   > :is(.shader-viewer, .composer-viewer, .editor-route-state) {
     height: auto;
     margin: 0 1rem 1rem 0;
-    transition: margin-left 200ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   > .editor-route-state {
@@ -1364,31 +1414,5 @@ dialog.delete-shader-dialog {
     justify-content: center;
     min-width: 0;
     color: var(--figma-color-text-secondary);
-  }
-
-  &[data-library-collapsed="true"] > .library-rail {
-    --library-slide: calc(-1 * var(--app-nav-shift));
-    pointer-events: none;
-  }
-
-  &[data-library-collapsed="true"]
-    > :is(.shader-viewer, .composer-viewer, .editor-route-state) {
-    margin-left: 1rem;
-  }
-
-  &[data-library-motion="opening"] > .library-rail,
-  &[data-library-motion="opening"]
-    > :is(.shader-viewer, .composer-viewer, .editor-route-state) {
-    transition: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  #root .library-rail,
-  #root
-    > .app-shell-content
-    > .editor-view
-    > :is(.shader-viewer, .composer-viewer, .editor-route-state) {
-    transition: none;
   }
 }

@@ -127,6 +127,7 @@ function PlayControls({ running, onTogglePlay, onSeek, hostRef }) {
         >
           <fig-input-number
             variant="ghost"
+            tabular=""
             min="0"
             default="0"
             step="0.1"

@@ -25,7 +25,6 @@ import "./components/HomeNav.css";
 import ComposerView from "./components/ComposerView.jsx";
 import LibraryFilterMenu from "./components/LibraryFilterMenu.jsx";
 import PopoutIcon from "./components/PopoutIcon.jsx";
-import ToggleSidebarIcon from "./components/ToggleSidebarIcon.jsx";
 import ShaderView from "./components/ShaderView.jsx";
 import Preview from "./components/Preview.jsx";
 import PreviewToolbar from "./components/PreviewToolbar.jsx";
@@ -217,13 +216,12 @@ import { createRafCssWriter } from "./lib/panelResize.js";
 import {
   CANVAS_COLOR_STORAGE_KEY,
   CANVAS_CONTROLS_STORAGE_KEY,
+  COMPACT_APP_NAV_WIDTH,
   DEFAULT_APP_NAV_WIDTH,
   DEFAULT_CHAT_HEIGHT,
   defaultCodeWidth,
   EDITOR_FILTERS_STORAGE_KEY,
   LIBRARY_VIEW_STORAGE_KEY,
-  APP_NAV_COLLAPSED_STORAGE_KEY,
-  MAX_APP_NAV_WIDTH,
   MAX_PROPERTIES_WIDTH,
   MIN_APP_NAV_WIDTH,
   MIN_PROPERTIES_WIDTH,
@@ -240,7 +238,6 @@ import {
   readCanvasColorOverride as savedCanvasColorOverride,
   readEditorFilters as savedEditorFilters,
   readLibraryView as savedLibraryView,
-  readAppNavCollapsed as savedAppNavCollapsed,
   readPlayState as savedPlayState,
   readSidebarSections as savedSidebarSections,
   readTheme as savedTheme,
@@ -1550,13 +1547,6 @@ export default function App() {
   const [chatCollapsed, setChatCollapsed] = useState(
     () => savedSidebarSections().chatCollapsed
   );
-  const [libraryNavMotion, setLibraryNavMotion] = useState(() =>
-    savedAppNavCollapsed() ? "closed" : "open"
-  );
-  const appNavCollapsed =
-    libraryNavMotion === "closed" || libraryNavMotion === "closing";
-  const libraryNavMounted = libraryNavMotion !== "closed";
-  const appNavRef = useRef(null);
   const viewMode = routeEmbed && routeId
     ? "embed"
     : routeView && routeId
@@ -1568,6 +1558,7 @@ export default function App() {
           : "home";
   const {
     appNavWidth,
+    appNavMaxWidth,
     codeWidth,
     chatHeight,
     previewHeight,
@@ -1579,7 +1570,7 @@ export default function App() {
     savePreviewHeight,
     savePropertiesWidth,
   } = usePanelLayout(editorViewRef, viewMode === "editor");
-  const [appNavShift, setAppNavShift] = useState(appNavWidth);
+  const libraryThumbnailsOnly = appNavWidth === COMPACT_APP_NAV_WIDTH;
   const [activeNavItem, setActiveNavItem] = useState(() =>
     viewMode === "editor" ? "editor" : "home",
   );
@@ -2459,89 +2450,6 @@ export default function App() {
       JSON.stringify({ codeCollapsed, chatCollapsed })
     );
   }, [chatCollapsed, codeCollapsed, routeEmbed]);
-
-  useEffect(() => {
-    if (routeEmbed) return;
-    writeLayoutPreference(
-      APP_NAV_COLLAPSED_STORAGE_KEY,
-      appNavCollapsed ? "true" : "false",
-    );
-  }, [appNavCollapsed, routeEmbed]);
-
-  useEffect(() => {
-    if (libraryNavMotion !== "open") return;
-    const width = appNavRef.current?.getBoundingClientRect().width;
-    if (width) setAppNavShift(Math.round(width));
-  }, [appNavWidth, libraryNavMotion]);
-
-  const prefersReducedLibraryMotion = () =>
-    Boolean(
-      globalThis.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches
-    );
-
-  const hideLibraryNav = useCallback(() => {
-    const nav = appNavRef.current;
-    const width = nav?.getBoundingClientRect().width;
-    if (width) setAppNavShift(Math.round(width));
-    if (prefersReducedLibraryMotion()) {
-      setLibraryNavMotion("closed");
-      return;
-    }
-    setLibraryNavMotion("closing");
-  }, []);
-
-  const showLibraryNav = useCallback(() => {
-    if (prefersReducedLibraryMotion()) {
-      setLibraryNavMotion("open");
-      return;
-    }
-    setLibraryNavMotion("opening");
-  }, []);
-
-  useLayoutEffect(() => {
-    if (libraryNavMotion !== "opening") return undefined;
-    const nav = appNavRef.current;
-    const width = nav?.getBoundingClientRect().width;
-    if (width) setAppNavShift(Math.round(width));
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(() =>
-        setLibraryNavMotion("open")
-      );
-    });
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      window.cancelAnimationFrame(innerFrame);
-    };
-  }, [libraryNavMotion]);
-
-  useEffect(() => {
-    if (libraryNavMotion !== "closing") return undefined;
-    const nav = appNavRef.current;
-    if (!nav) {
-      setLibraryNavMotion("closed");
-      return undefined;
-    }
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      setLibraryNavMotion("closed");
-    };
-    const onEnd = (event) => {
-      if (event.target !== nav) return;
-      if (event.propertyName && event.propertyName !== "--library-slide") {
-        return;
-      }
-      finish();
-    };
-    nav.addEventListener("transitionend", onEnd);
-    const timeout = window.setTimeout(finish, 280);
-    return () => {
-      nav.removeEventListener("transitionend", onEnd);
-      window.clearTimeout(timeout);
-    };
-  }, [libraryNavMotion]);
 
   useEffect(() => {
     if (routeEmbed || user) return;
@@ -9948,45 +9856,57 @@ export default function App() {
 
     const handle = event.currentTarget;
     const nav = handle.previousElementSibling;
-    if (!nav) return;
+    const rail = handle.parentElement;
+    if (!nav || !rail) return;
 
+    const pointerId = event.pointerId;
     const startX = event.clientX;
     const startWidth = nav.getBoundingClientRect().width;
-    const maxWidth = Math.max(
-      MIN_APP_NAV_WIDTH,
-      Math.min(MAX_APP_NAV_WIDTH, window.innerWidth - 420)
-    );
-    let finalWidth = startWidth;
+    const startedCompact = rail.hasAttribute("data-thumbnail-only");
+    let width = startWidth;
     const cssWriter = createRafCssWriter(nav, "--app-nav-width");
-    handle.setPointerCapture(event.pointerId);
+    handle.setPointerCapture(pointerId);
 
     const onPointerMove = (moveEvent) => {
-      const next = Math.min(
-        maxWidth,
-        Math.max(
-          MIN_APP_NAV_WIDTH,
-          startWidth + moveEvent.clientX - startX
-        )
+      if (moveEvent.pointerId !== pointerId) return;
+      width = Math.min(
+        appNavMaxWidth,
+        Math.max(COMPACT_APP_NAV_WIDTH, startWidth + moveEvent.clientX - startX),
       );
-      finalWidth = next;
-      cssWriter.write(next);
-    };
-
-    const onPointerUp = (upEvent) => {
-      if (handle.hasPointerCapture(upEvent.pointerId)) {
-        handle.releasePointerCapture(upEvent.pointerId);
+      if (startedCompact) {
+        rail.toggleAttribute("data-revealing-labels", width > startWidth);
       }
-      handle.removeEventListener("pointermove", onPointerMove);
-      handle.removeEventListener("pointerup", onPointerUp);
-      handle.removeEventListener("pointercancel", onPointerUp);
-      cssWriter.flush();
-      saveAppNavWidth(finalWidth);
+      cssWriter.write(width);
     };
 
-    handle.addEventListener("pointermove", onPointerMove);
-    handle.addEventListener("pointerup", onPointerUp);
-    handle.addEventListener("pointercancel", onPointerUp);
-  }, [saveAppNavWidth]);
+    const listeners = new AbortController();
+    const options = { capture: true, signal: listeners.signal };
+    const finishResize = (commit) => {
+      listeners.abort();
+      if (handle.hasPointerCapture(pointerId)) {
+        handle.releasePointerCapture(pointerId);
+      }
+      const finalWidth = commit && width !== startWidth
+        ? saveAppNavWidth(width)
+        : startWidth;
+      cssWriter.write(finalWidth);
+      cssWriter.flush();
+      rail.removeAttribute("data-revealing-labels");
+    };
+    const onPointerEnd = (endEvent) => {
+      if (endEvent.pointerId === pointerId) {
+        finishResize(endEvent.type === "pointerup");
+      }
+    };
+
+    // Resizing can continue if the browser releases capture before pointerup.
+    window.addEventListener("pointermove", onPointerMove, options);
+    window.addEventListener("pointerup", onPointerEnd, options);
+    window.addEventListener("pointercancel", onPointerEnd, options);
+    window.addEventListener("blur", () => finishResize(false), {
+      signal: listeners.signal,
+    });
+  }, [appNavMaxWidth, saveAppNavWidth]);
 
   const resizeProperties = useCallback((event) => {
     if (event.button !== 0) return;
@@ -11331,19 +11251,6 @@ export default function App() {
   const shaderEditorHeader = (
         <>
           <fig-header class="shader-editor-header" borderless="">
-            {libraryNavMotion === "open" ? null : (
-            <fig-tooltip text="Show library">
-              <fig-button
-                type="button"
-                variant="ghost"
-                icon="true"
-                aria-label="Show library"
-                onClick={showLibraryNav}
-              >
-                <ToggleSidebarIcon />
-              </fig-button>
-            </fig-tooltip>
-            )}
             <div
               className={
                 renaming ? "shader-title is-renaming" : "shader-title"
@@ -11623,9 +11530,7 @@ export default function App() {
         viewMode === "view" ? PREVIEW_PIXEL_RATIO_NATIVE : undefined
       }
       showCanvasHandles={showCanvasHandles}
-      onToggleCanvasHandles={() =>
-        setShowCanvasHandles((visible) => !visible)
-      }
+      onCanvasHandlesChange={setShowCanvasHandles}
       canvasColor={canvasColor}
       onCanvasColorChange={setCanvasColor}
     />
@@ -11844,17 +11749,10 @@ export default function App() {
       <div
         className="editor-view"
         ref={editorViewRef}
-        style={{ "--app-nav-shift": `${appNavShift}px` }}
-        data-library-motion={libraryNavMotion}
-        data-library-collapsed={
-          libraryNavMotion === "open" ? "false" : "true"
-        }
       >
-        {libraryNavMounted ? (
         <div
-          ref={appNavRef}
           className="library-rail"
-          aria-hidden={libraryNavMotion === "open" ? undefined : "true"}
+          data-thumbnail-only={libraryThumbnailsOnly ? "true" : undefined}
         >
         <div
           className="library-modules"
@@ -11862,7 +11760,7 @@ export default function App() {
             "--app-nav-width": `${appNavWidth}px`,
           }}
         >
-        <nav className="app-nav">
+        <nav id="shader-library" className="app-nav" aria-label="Shader library">
           <div className="app-nav-headers">
             <fig-header class="app-nav-library-filters" borderless="">
               <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
@@ -11880,19 +11778,30 @@ export default function App() {
                     <fig-icon name="arrow-left" />
                   </fig-button>
                 </fig-tooltip>
-                <h3 className="app-nav-library-title">Editor</h3>
+                <h3 className="app-nav-library-title">Shader studio</h3>
               </hstack>
-              <fig-tooltip text="Hide library">
-                <fig-button
-                  type="button"
-                  variant="ghost"
-                  icon="true"
-                  aria-label="Hide library"
-                  onClick={hideLibraryNav}
-                >
-                  <ToggleSidebarIcon />
-                </fig-button>
-              </fig-tooltip>
+              <fig-menu ref={libraryCreateMenuRef} position="bottom right">
+                <fig-tooltip text="Add">
+                  <fig-button
+                    fig-menu-trigger=""
+                    type="button"
+                    variant="ghost"
+                    icon="true"
+                    aria-label="Add"
+                  >
+                    <fig-icon name="add" />
+                  </fig-button>
+                </fig-tooltip>
+                <fig-menu-item value="effect">Shader effect</fig-menu-item>
+                <fig-menu-item value="fill">Shader fill</fig-menu-item>
+                <fig-menu-item value="composition">Composition</fig-menu-item>
+                {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured ? (
+                  <>
+                    <fig-separator />
+                    <fig-menu-item value="from-figma">From Figma…</fig-menu-item>
+                  </>
+                ) : null}
+              </fig-menu>
             </fig-header>
             <fig-header class="app-nav-library-search">
               <fig-input-text
@@ -11904,41 +11813,17 @@ export default function App() {
                 onInput={(event) => setEditorQuery(event.target.value)}
                 dangerouslySetInnerHTML={opaqueContent}
               />
-              <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
-                <LibraryFilterMenu
-                  kind={editorKind}
-                  onKindChange={setEditorKind}
-                  author={editorAuthor}
-                  onAuthorChange={setEditorAuthor}
-                  origin={editorOrigin}
-                  onOriginChange={setEditorOrigin}
-                  authors={publishedAuthors}
-                  view={libraryView}
-                  onViewChange={setLibraryView}
-                />
-                <fig-menu ref={libraryCreateMenuRef} position="bottom right">
-                  <fig-tooltip text="Add">
-                    <fig-button
-                      fig-menu-trigger=""
-                      type="button"
-                      variant="ghost"
-                      icon="true"
-                      aria-label="Add"
-                    >
-                      <fig-icon name="add" />
-                    </fig-button>
-                  </fig-tooltip>
-                  <fig-menu-item value="effect">Shader effect</fig-menu-item>
-                  <fig-menu-item value="fill">Shader fill</fig-menu-item>
-                  <fig-menu-item value="composition">Composition</fig-menu-item>
-                  {FIGMA_LIBRARY_UI_ENABLED && figmaTokenConfigured ? (
-                    <>
-                      <fig-separator />
-                      <fig-menu-item value="from-figma">From Figma…</fig-menu-item>
-                    </>
-                  ) : null}
-                </fig-menu>
-              </hstack>
+              <LibraryFilterMenu
+                kind={editorKind}
+                onKindChange={setEditorKind}
+                author={editorAuthor}
+                onAuthorChange={setEditorAuthor}
+                origin={editorOrigin}
+                onOriginChange={setEditorOrigin}
+                authors={publishedAuthors}
+                view={libraryView}
+                onViewChange={setLibraryView}
+              />
             </fig-header>
           </div>
           <ShaderList
@@ -12029,28 +11914,37 @@ export default function App() {
           role="separator"
           aria-label="Resize shader navigation"
           aria-orientation="vertical"
-          aria-valuemin={MIN_APP_NAV_WIDTH}
-          aria-valuemax={MAX_APP_NAV_WIDTH}
+          aria-controls="shader-library"
+          aria-valuemin={COMPACT_APP_NAV_WIDTH}
+          aria-valuemax={appNavMaxWidth}
           aria-valuenow={appNavWidth}
+          aria-valuetext={libraryThumbnailsOnly ? "Thumbnails only" : `${appNavWidth}px`}
           tabIndex={0}
           onPointerDown={resizeAppNav}
           onDoubleClick={() => saveAppNavWidth(DEFAULT_APP_NAV_WIDTH)}
           onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+            let width;
+            switch (event.key) {
+              case "Home":
+                width = COMPACT_APP_NAV_WIDTH;
+                break;
+              case "End":
+                width = appNavMaxWidth;
+                break;
+              case "ArrowLeft":
+                width = appNavWidth - 16;
+                break;
+              case "ArrowRight":
+                width = libraryThumbnailsOnly ? MIN_APP_NAV_WIDTH : appNavWidth + 16;
+                break;
+              default:
+                return;
+            }
             event.preventDefault();
-            saveAppNavWidth(
-              Math.min(
-                MAX_APP_NAV_WIDTH,
-                Math.max(
-                  MIN_APP_NAV_WIDTH,
-                  appNavWidth + (event.key === "ArrowLeft" ? -16 : 16)
-                )
-              )
-            );
+            saveAppNavWidth(Math.min(appNavMaxWidth, width));
           }}
         />
         </div>
-        ) : null}
 
       {editorRouteErrorMessage ? (
         <main

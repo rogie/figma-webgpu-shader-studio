@@ -1,5 +1,6 @@
 export const DEFAULT_APP_NAV_WIDTH = 240;
-export const MIN_APP_NAV_WIDTH = 112;
+export const COMPACT_APP_NAV_WIDTH = 64;
+export const MIN_APP_NAV_WIDTH = 160;
 export const MAX_APP_NAV_WIDTH = 400;
 export const MIN_PROPERTIES_WIDTH = 280;
 export const MAX_PROPERTIES_WIDTH = MAX_APP_NAV_WIDTH;
@@ -36,8 +37,6 @@ export const PLAY_STORAGE_KEY = "figma-shader-studio:play";
 export const LIBRARY_VIEW_STORAGE_KEY = "figma-shader-studio:library-view";
 export const LIBRARY_SECTIONS_STORAGE_KEY =
   "figma-shader-studio:library-sections";
-export const APP_NAV_COLLAPSED_STORAGE_KEY =
-  "figma-shader-studio:app-nav-collapsed";
 export const EDITOR_FILTERS_STORAGE_KEY =
   "figma-shader-studio:editor-filters";
 export const EXPERIMENTAL_AUDIO_STORAGE_KEY =
@@ -74,13 +73,20 @@ export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
   return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
 }
 
-export function readAppNavWidth(storage = layoutPreferenceStorage()) {
+export function snapAppNavWidth(width) {
+  return width < MIN_APP_NAV_WIDTH ? COMPACT_APP_NAV_WIDTH : Math.round(width);
+}
+
+export function readAppNavWidth(
+  storage = layoutPreferenceStorage(),
+  viewportWidth = globalThis.innerWidth,
+) {
   const value = Number(readLayoutPreference(storage, APP_NAV_WIDTH_STORAGE_KEY));
   return Number.isFinite(value) &&
-    value >= MIN_APP_NAV_WIDTH &&
+    value >= COMPACT_APP_NAV_WIDTH &&
     value <= MAX_APP_NAV_WIDTH
-    ? value
-    : DEFAULT_APP_NAV_WIDTH;
+    ? snapAppNavWidth(value)
+    : viewportWidth <= 740 ? COMPACT_APP_NAV_WIDTH : DEFAULT_APP_NAV_WIDTH;
 }
 
 export function readCodeWidth(
@@ -202,15 +208,6 @@ export function canvasColorFromControlEvent(
   return `${color.slice(0, 7)}${alphaHex}`;
 }
 
-export function canvasColorFillValue(color) {
-  const normalized = normalizeCanvasColor(color);
-  return JSON.stringify({
-    type: "solid",
-    color: normalized.slice(0, 7),
-    alpha: Number.parseInt(normalized.slice(7, 9), 16) / 255,
-  });
-}
-
 export function readCanvasColorOverride(storage = layoutPreferenceStorage()) {
   const stored = normalizeCanvasColor(
     readLayoutPreference(storage, CANVAS_COLOR_STORAGE_KEY),
@@ -295,10 +292,6 @@ export function writeLibrarySectionOpen(
   } catch {
     // Library should continue when storage is unavailable.
   }
-}
-
-export function readAppNavCollapsed(storage = layoutPreferenceStorage()) {
-  return readLayoutPreference(storage, APP_NAV_COLLAPSED_STORAGE_KEY) === "true";
 }
 
 export function readExperimentalAudio(storage = layoutPreferenceStorage()) {

@@ -14,6 +14,10 @@ dialog[is="fig-popup"].shader-version-popup {
     overflow-y: auto;
     overscroll-behavior: contain;
     padding-top: 0;
+
+    > fig-separator {
+      padding-inline: var(--spacer-3);
+    }
   }
 
   .shader-version-menu-item {
@@ -71,7 +75,6 @@ dialog[is="fig-popup"].shader-version-popup {
     justify-content: flex-end;
     color: var(--figma-color-text-secondary);
     white-space: nowrap;
-    font-size: var(--body-small-fontSize);
     line-height: 1;
     text-align: right;
   }
@@ -107,7 +110,6 @@ dialog[is="fig-popup"].shader-version-popup {
     overflow: hidden;
     overflow-wrap: anywhere;
     color: var(--figma-color-text-secondary);
-    font-size: var(--body-small-fontSize);
   }
 
   .shader-version-empty {

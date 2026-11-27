@@ -122,6 +122,11 @@ export default function CodePane({
           extensions={extensions}
           onCreateEditor={(view) => {
             viewRef.current = view;
+            view.scrollDOM.classList.add(
+              "fig-overflow-fade",
+              "fig-overflow-fade-top",
+              "fig-overflow-fade-bottom",
+            );
           }}
           onChange={readOnly ? undefined : onSourceChange}
           editable={!readOnly}

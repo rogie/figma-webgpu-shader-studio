@@ -79,10 +79,18 @@
       height: max-content;
       align-self: start;
       align-items: stretch;
-      --fig-choice-border-radius: var(--radius-medium);
+      --fig-choice-border-radius: calc(var(--radius-medium) + var(--spacer-1));
       --fig-choice-selection-ring-width: 0;
       margin: 0 var(--spacer-2);
       width: calc(100% - var(--spacer-2) * 2);
+
+      > fig-card {
+        border-radius: inherit;
+
+        &:hover {
+          background-color: transparent !important;
+        }
+      }
 
       &[selected]:not([selected="false"]) {
         background-color: var(--figma-color-bg-selected);
@@ -106,14 +114,85 @@
     fig-choice {
       margin: 0;
       width: auto;
-      --fig-choice-border-radius: var(--radius-medium);
 
       fig-card fig-preview {
         --fig-preview-background: transparent;
       }
 
-      fig-card:hover {
-        background-color: transparent !important;
+    }
+  }
+
+  .library-rail[data-thumbnail-only="true"] & {
+    padding-block: var(--spacer-1);
+
+    .shader-list-header,
+    fig-card > :is(fig-footer, .shader-list-item-status, .shader-list-item-actions) {
+      display: none;
+    }
+
+    .shader-list-section {
+      padding-bottom: var(--spacer-1);
+    }
+
+    .shader-list-section + .shader-list-section {
+      padding-top: var(--spacer-1);
+    }
+
+    .shader-list-section > fig-chooser.shader-list-chooser {
+      /* Show thumbnails even when the full library's group is closed. */
+      display: grid !important;
+      grid-template-columns: minmax(0, 3rem);
+      justify-content: center;
+      box-sizing: border-box;
+      margin: 0;
+      padding-inline: var(--spacer-1);
+      gap: 1px;
+
+      > fig-choice {
+        width: 100%;
+        margin: 0;
+
+        > fig-card {
+          --fig-card-thumbnail-width: 100%;
+          justify-content: center;
+          padding: var(--spacer-1);
+        }
+      }
+    }
+  }
+
+  .library-rail[data-thumbnail-only="true"][data-revealing-labels] & {
+    .shader-list-section > fig-chooser.shader-list-chooser {
+      grid-template-columns: minmax(0, 1fr);
+      padding-inline: var(--spacer-2);
+
+      > fig-choice > fig-card {
+        --fig-card-thumbnail-width: 2.5rem;
+        flex-direction: row;
+        align-items: center;
+        justify-content: flex-start;
+        gap: var(--spacer-2);
+
+        > :is(fig-image, fig-preview) {
+          flex: 0 0 var(--fig-card-thumbnail-width);
+          width: var(--fig-card-thumbnail-width);
+          max-width: var(--fig-card-thumbnail-width);
+        }
+
+        > fig-footer:not([hidden]) {
+          display: flex;
+          flex: 1 1 0;
+          min-width: 0;
+        }
+
+        .fig-card-label {
+          display: block;
+          min-width: 0;
+          padding-inline: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
       }
     }
   }

@@ -87,7 +87,7 @@ function PreviewFps({
           ref={zoomControlRef}
           class="preview-zoom"
           variant="ghost"
-          position="top left"
+          position="top right"
           options={JSON.stringify(zoomOptions)}
           value={String(zoomPercent)}
           aria-label={`Zoom ${zoomPercent}%`}
