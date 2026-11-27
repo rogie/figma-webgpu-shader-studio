@@ -97,17 +97,21 @@ export async function listShaders({
 }
 
 export async function listPublicShaderGraphs({
-  limit = 500,
   client: suppliedClient = null,
 } = {}) {
   const client = suppliedClient || requireClient();
-  return unwrap(
-    await client
+  const pageSize = 500;
+  const graphs = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const page = unwrap(await client
       .from("shaders")
       .select(PUBLIC_REFERENCE_COLUMNS)
       .eq("is_public", true)
-      .limit(Math.max(1, Math.min(Number(limit) || 500, 500)))
-  );
+      .order("id")
+      .range(offset, offset + pageSize - 1));
+    graphs.push(...page);
+    if (page.length < pageSize) return graphs;
+  }
 }
 
 export async function getProfile(id) {
@@ -281,15 +285,18 @@ function shaderStateConflictError() {
 export async function updateShader(
   id,
   payload,
-  { expectedStateRevision = null, client: suppliedClient = null } = {},
+  { expectedStateRevision = null, expectedUpdatedAt = null, client: suppliedClient = null } = {},
 ) {
   const client = suppliedClient || requireClient();
   let query = client.from("shaders").update(payload).eq("id", id);
   if (expectedStateRevision != null) {
     query = query.eq("state_revision", expectedStateRevision);
   }
+  if (expectedUpdatedAt != null) {
+    query = query.eq("updated_at", expectedUpdatedAt);
+  }
   const data = unwrap(await query.select().maybeSingle());
-  if (!data && expectedStateRevision != null) {
+  if (!data && (expectedStateRevision != null || expectedUpdatedAt != null)) {
     throw shaderStateConflictError();
   }
   return data;
@@ -346,6 +353,53 @@ export async function saveShaderState(options) {
       buildSaveShaderStateRpcArgs(options)
     )
   );
+}
+
+export async function commitShaderDocument({
+  metadata,
+  create = false,
+  expectedUpdatedAt = null,
+  publishDependencies = [],
+  planBuild = null,
+  client: suppliedClient = null,
+  ...state
+}) {
+  const client = suppliedClient || requireClient();
+  const { data, error } = await client.rpc("commit_shader_document", {
+    p_document: buildSaveShaderStateRpcArgs(state),
+    p_metadata: metadata,
+    p_create: create,
+    p_expected_updated_at: expectedUpdatedAt,
+    p_publish_dependencies: publishDependencies,
+    p_plan_revision: planBuild?.revision ?? null,
+    p_plan_lease_id: planBuild?.leaseId ?? null,
+  });
+  if (error?.code === "23503" && error.message?.includes("published_shader_target_required")) {
+    throw new Error("A published shader requires one of these references to stay public. Check the linked shaders and try again.");
+  }
+  return unwrap({ data, error });
+}
+
+export async function getShaderPlanBuildStatus(shaderId, revision) {
+  return unwrap(await requireClient().rpc("shader_plan_build_status", {
+    p_shader_id: shaderId,
+    p_plan_revision: revision,
+  }));
+}
+
+export async function claimShaderPlanBuild(shaderId, revision) {
+  return unwrap(await requireClient().rpc("claim_shader_plan_build", {
+    p_shader_id: shaderId,
+    p_plan_revision: revision,
+  }));
+}
+
+export async function releaseShaderPlanBuild(shaderId, { revision, leaseId }) {
+  unwrap(await requireClient().rpc("release_shader_plan_build", {
+    p_shader_id: shaderId,
+    p_plan_revision: revision,
+    p_lease_id: leaseId,
+  }));
 }
 
 export async function getShadersByIds(

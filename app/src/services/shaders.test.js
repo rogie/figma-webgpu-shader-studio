@@ -12,6 +12,7 @@ const {
   SHADER_DOCUMENT_COLUMNS,
   SHADER_LIBRARY_COLUMNS,
   buildSaveShaderStateRpcArgs,
+  commitShaderDocument,
   contentAddressedAssetPath,
   getShader,
   getShaderMaybe,
@@ -291,6 +292,10 @@ function shaderReadClient({
         error: null,
       });
     },
+    async range(first, last) {
+      calls.push(["range", first, last]);
+      return { data: (shaders || []).slice(first, last + 1), error: null };
+    },
     in() {
       return Promise.resolve({
         data: shaders ?? (shader ? [shader] : []),
@@ -434,6 +439,16 @@ test("listPublicShaderGraphs loads only public composition refs", async () => {
   );
 });
 
+test("listPublicShaderGraphs includes references after the first page", async () => {
+  const shaders = Array.from({ length: 501 }, (_, id) => ({ id }));
+  const client = shaderReadClient({ shaders });
+  assert.deepEqual(await listPublicShaderGraphs({ client }), shaders);
+  assert.deepEqual(client.calls.filter(([operation]) => operation === "range"), [
+    ["range", 0, 499],
+    ["range", 500, 999],
+  ]);
+});
+
 test("getShader fetches the visual document instead of select *", async () => {
   const client = shaderReadClient({
     shader: { id: "shader-1", owner_id: "owner-1" },
@@ -476,4 +491,33 @@ test("metadata updates reject an intervening visual state revision", async () =>
     (error) =>
       error.code === "40001" && error.message === "shader_state_conflict",
   );
+});
+
+test("document commit sends the checkpoint and build receipt with the metadata", async () => {
+  const calls = [];
+  const client = {
+    async rpc(name, args) {
+      calls.push({ name, args });
+      return { data: { state_revision: 4 }, error: null };
+    },
+  };
+  const saved = await commitShaderDocument({
+    shaderId: "shader",
+    expectedStateRevision: 3,
+    expectedUpdatedAt: "2026-11-26T01:00:00Z",
+    source: "updated shader",
+    kind: "fill",
+    checkpointKind: "agent",
+    metadata: { name: "Updated" },
+    planBuild: { revision: "a".repeat(64), leaseId: "leased" },
+    client,
+  });
+  assert.equal(saved.state_revision, 4);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, "commit_shader_document");
+  assert.equal(calls[0].args.p_document.p_checkpoint_kind, "agent");
+  assert.equal(calls[0].args.p_plan_revision, "a".repeat(64));
+  assert.equal(calls[0].args.p_plan_lease_id, "leased");
+  assert.equal(calls[0].args.p_expected_updated_at, "2026-11-26T01:00:00Z");
+  assert.deepEqual(calls[0].args.p_metadata, { name: "Updated" });
 });

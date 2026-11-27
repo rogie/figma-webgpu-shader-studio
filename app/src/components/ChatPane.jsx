@@ -76,9 +76,11 @@ import {
   streamChat,
 } from "../services/chat.js";
 import {
+  claimShaderPlanBuild,
   downloadShaderPlan,
+  getShaderPlanBuildStatus,
   isShaderPlanBuilt,
-  markShaderPlanBuilt,
+  releaseShaderPlanBuild,
   uploadShaderPlan,
 } from "../services/shaders.js";
 import { measurePerf, perfNow } from "../runtime/perf.js";
@@ -505,6 +507,9 @@ const ChatPane = forwardRef(function ChatPane(
   const [zoomedAttachment, setZoomedAttachment] = useState(null);
   const [latestActivity, setLatestActivity] = useState("");
   const [activePlan, setActivePlan] = useState(null);
+  const planStateRef = useRef(activePlan);
+  planStateRef.current = activePlan;
+  const [committingPlan, setCommittingPlan] = useState(null);
   const abortRef = useRef(null);
   const listRef = useRef(null);
   const listFadeRef = useOverflowFade(listRef);
@@ -521,6 +526,9 @@ const ChatPane = forwardRef(function ChatPane(
 
   const threadId = messageKey(shaderKey);
   const planScope = JSON.stringify([threadId, planOwnerId, planShaderId]);
+  const planBuilding =
+    committingPlan?.scope === planScope ||
+    (activePlan?.scope === planScope && activePlan.cloudStatus === "building");
   const activeThreadIdRef = useRef(threadId);
   activeThreadIdRef.current = threadId;
   const messages = useMemo(
@@ -764,16 +772,19 @@ const ChatPane = forwardRef(function ChatPane(
         const revision = await planRevision(markdown);
         const builtLocally = isLocalPlanBuilt(threadId, revision) ||
           hasBuiltPlanInHistory(threadsRef.current[threadId] || [], markdown);
-        let builtInCloud = false;
+        let cloudStatus = "unknown";
         if (hasCloudPlan) {
           try {
-            builtInCloud = await isShaderPlanBuilt(planOwnerId, planShaderId, revision);
+            cloudStatus = await getShaderPlanBuildStatus(planShaderId, revision);
+            if (cloudStatus === "unknown" && await isShaderPlanBuilt(planOwnerId, planShaderId, revision)) {
+              cloudStatus = "built";
+            }
           } catch (error) {
             console.warn("Failed to read plan build status", error);
           }
         }
         if (!stillCurrent()) return;
-        const built = builtLocally || builtInCloud;
+        const built = hasCloudPlan ? cloudStatus === "built" : builtLocally;
         if (built) markLocalPlanBuilt(threadId, revision);
         setThreads((prev) => {
           const current = prev[threadId] || [];
@@ -781,15 +792,7 @@ const ChatPane = forwardRef(function ChatPane(
           const next = restoreChatPlan(current, { markdown, built, planId: crypto.randomUUID() });
           return next === current ? prev : { ...prev, [threadId]: next };
         });
-        setActivePlan({ scope: planScope, markdown });
-        if (builtLocally && hasCloudPlan && !builtInCloud) {
-          // Backfill applied markers from older chat history and retry local-only writes.
-          try {
-            await markShaderPlanBuilt(planOwnerId, planShaderId, revision);
-          } catch (error) {
-            console.warn("Failed to sync plan build status", error);
-          }
-        }
+        setActivePlan({ scope: planScope, markdown, cloudStatus });
       } catch (error) {
         console.warn("Failed to restore plan status", error);
       }
@@ -799,10 +802,16 @@ const ChatPane = forwardRef(function ChatPane(
       if (key?.startsWith(planBuildStorageKey(threadId))) refresh();
     };
     refresh();
+    const timer = planOwnerId && planShaderId
+      ? window.setInterval(() => {
+          if (planStateRef.current?.scope === planScope && planStateRef.current.cloudStatus === "building") refresh();
+        }, 5_000)
+      : null;
     if (planOwnerId && planShaderId) window.addEventListener("focus", refresh);
     window.addEventListener("storage", syncFromWindow);
     return () => {
       lookup += 1;
+      if (timer) window.clearInterval(timer);
       window.removeEventListener("focus", refresh);
       window.removeEventListener("storage", syncFromWindow);
     };
@@ -815,6 +824,8 @@ const ChatPane = forwardRef(function ChatPane(
 
   useEffect(
     () => () => {
+      abortRef.current?.abort();
+      activeRequestRef.current = null;
       saveChatThreads(threadsRef.current);
     },
     []
@@ -966,14 +977,50 @@ const ChatPane = forwardRef(function ChatPane(
         entry.planId === planId ? { ...entry, planApplied: true } : entry
       )
     );
-    if (!revision) return; // Older deferred edits are backfilled from chat history on reopen.
-    markLocalPlanBuilt(threadId, revision);
-    if (planOwnerId && planShaderId) {
-      markShaderPlanBuilt(planOwnerId, planShaderId, revision).catch((error) => {
-        console.warn("Failed to sync plan build status", error);
-        onNotice?.("Plan built. Its status was saved on this device, but cloud sync failed.", { error: true });
-      });
+    if (revision) markLocalPlanBuilt(threadId, revision);
+  };
+
+  const acquirePlan = async (planId, revision) => {
+    if (!revision || !planShaderId || !planOwnerId) return { proceed: true, receipt: null };
+    const claim = await claimShaderPlanBuild(planShaderId, revision);
+    if (claim?.status === "built") {
+      markPlanApplied(planId, revision);
+      return { proceed: false };
     }
+    if (claim?.status !== "claimed" || !claim.leaseId) {
+      setError("This plan is already being built in another window.");
+      return { proceed: false };
+    }
+    const receipt = { revision, leaseId: claim.leaseId };
+    return { proceed: true, receipt };
+  };
+
+  const releasePlan = async (receipt) => {
+    if (!receipt) return;
+    await releaseShaderPlanBuild(planShaderId, receipt).catch((releaseError) =>
+      console.warn("Could not release the plan build lease", releaseError)
+    );
+  };
+
+  const submitCheckpoint = (checkpoint, planId, revision, receipt) => {
+    if (!receipt) {
+      onAppliedCheckpoint?.(checkpoint);
+      markPlanApplied(planId, revision);
+      return false;
+    }
+    const commit = { scope: planScope, receipt };
+    const onSettled = () => setCommittingPlan((current) => current === commit ? null : current);
+    setCommittingPlan(commit);
+    const accepted = onAppliedCheckpoint?.({
+      ...checkpoint,
+      planBuild: { ...receipt, onSettled },
+      onCommitted: () => {
+        markPlanApplied(planId, revision);
+        onSettled();
+      },
+    });
+    if (!accepted) onSettled();
+    return Boolean(accepted);
   };
 
   const persistCompletedPlan = async (markdown) => {
@@ -983,7 +1030,7 @@ const ChatPane = forwardRef(function ChatPane(
     saveLocalPlan(threadId, markdown);
     const revision = await planRevision(markdown);
     if (chatResetRef.current === resetVersion && activeThreadIdRef.current === threadId) {
-      if (isLocalPlanBuilt(threadId, revision)) {
+      if (!planShaderId && isLocalPlanBuilt(threadId, revision)) {
         updateThread((current) => restoreChatPlan(current, { markdown, built: true }));
       }
       setActivePlan({ scope: planScope, markdown });
@@ -1006,8 +1053,6 @@ const ChatPane = forwardRef(function ChatPane(
 
   const stop = useCallback(() => {
     abortRef.current?.abort();
-    abortRef.current = null;
-    setStreaming(false);
   }, []);
 
   const undoLastApply = () => {
@@ -1018,14 +1063,31 @@ const ChatPane = forwardRef(function ChatPane(
     onNotice?.("Reverted last chat edit.");
   };
 
-  const applyPendingUpdate = () => {
+  const applyPendingUpdate = async () => {
     if (!pendingApply) return;
     const check = validateChatModuleSource(pendingApply.source, kind);
     if (!check.ok) {
       setError(check.reason);
       return;
     }
-    undoStackRef.current.push(sourceRef.current);
+    const planId = pendingApply.message.buildPlanId;
+    const planMessage = planId && messages.find((message) => message.planId === planId);
+    const revision = pendingApply.message.buildPlanRevision ||
+      (planMessage ? await planRevision(planMessage.content) : undefined);
+    const baseline = sourceRef.current;
+    let claim;
+    try {
+      claim = await acquirePlan(planId, revision);
+    } catch (claimError) {
+      setError(claimError.message || String(claimError));
+      return;
+    }
+    if (!claim.proceed) return;
+    if (activeThreadIdRef.current !== threadId || sourceRef.current !== baseline) {
+      await releasePlan(claim.receipt);
+      return;
+    }
+    undoStackRef.current.push(baseline);
     if (undoStackRef.current.length > MAX_UNDO) {
       undoStackRef.current.shift();
     }
@@ -1034,12 +1096,12 @@ const ChatPane = forwardRef(function ChatPane(
     const { prose, summary, description } = splitAssistantContent(
       pendingApply.message.content
     );
-    onAppliedCheckpoint?.({
+    const queued = submitCheckpoint({
       source: pendingApply.source,
       summary: summary || prose,
       description,
-    });
-    markPlanApplied(pendingApply.message.buildPlanId, pendingApply.message.buildPlanRevision);
+    }, planId, revision, claim.receipt);
+    if (!queued) await releasePlan(claim.receipt);
     updateThread((current) =>
       current.map((entry) =>
         entry === pendingApply.message ? { ...entry, applied: true } : entry
@@ -1051,8 +1113,10 @@ const ChatPane = forwardRef(function ChatPane(
   const clearCurrentChat = useCallback(() => {
     chatResetRef.current += 1;
     if (activeRequestRef.current?.threadId === threadId) {
-      activeRequestRef.current = null;
       stop();
+      activeRequestRef.current = null;
+      abortRef.current = null;
+      setStreaming(false);
     }
     clearCursorAgent(threadId);
     const next = { ...threadsRef.current };
@@ -1156,22 +1220,26 @@ const ChatPane = forwardRef(function ChatPane(
     const requestPlanRevision = options.planMarkdown
       ? await planRevision(options.planMarkdown)
       : undefined;
-    let planAlreadyBuilt = requestPlanRevision && isLocalPlanBuilt(threadId, requestPlanRevision);
-    if (requestPlanRevision && !planAlreadyBuilt && planOwnerId && planShaderId) {
-      planAlreadyBuilt = await isShaderPlanBuilt(planOwnerId, planShaderId, requestPlanRevision)
-        .catch((statusError) => {
-          console.warn("Failed to check plan build status", statusError);
-          return false;
-        });
-    }
+    const planAlreadyBuilt = requestPlanRevision && !planShaderId && isLocalPlanBuilt(threadId, requestPlanRevision);
     if (
       chatResetRef.current !== resetVersion ||
       activeThreadIdRef.current !== threadId ||
       abortRef.current
     ) return;
-    if (planAlreadyBuilt || (requestPlanRevision && isLocalPlanBuilt(threadId, requestPlanRevision))) {
-      markLocalPlanBuilt(threadId, requestPlanRevision);
-      markPlanApplied(requestPlanId);
+    if (planAlreadyBuilt) {
+      markPlanApplied(requestPlanId, requestPlanRevision);
+      return;
+    }
+    let planClaim;
+    try {
+      planClaim = await acquirePlan(requestPlanId, requestPlanRevision);
+    } catch (claimError) {
+      setError(claimError.message || String(claimError));
+      return;
+    }
+    if (!planClaim.proceed) return;
+    if (chatResetRef.current !== resetVersion || activeThreadIdRef.current !== threadId || abortRef.current) {
+      await releasePlan(planClaim.receipt);
       return;
     }
 
@@ -1298,9 +1366,12 @@ const ChatPane = forwardRef(function ChatPane(
       });
     };
 
+    let checkpointQueued = false;
     const checkpointAppliedResponse = (text, appliedSource) => {
       const checkpoint = buildAppliedModuleCheckpoint(text, appliedSource);
-      if (checkpoint) onAppliedCheckpoint?.(checkpoint);
+      if (checkpoint) {
+        checkpointQueued = submitCheckpoint(checkpoint, requestPlanId, requestPlanRevision, planClaim.receipt);
+      }
     };
 
     const tryApplyModule = (moduleSource) => {
@@ -1333,7 +1404,6 @@ const ChatPane = forwardRef(function ChatPane(
         source: moduleSource,
       });
       markAssistantApplied();
-      markPlanApplied(requestPlanId, requestPlanRevision);
       return moduleSource;
     };
 
@@ -1608,6 +1678,7 @@ const ChatPane = forwardRef(function ChatPane(
       }
       finishAssistant(assembled, { planInterrupted: isPlanMode(requestMode) });
     } finally {
+      if (!checkpointQueued) void releasePlan(planClaim.receipt);
       if (activeRequestRef.current?.controller === controller) {
         abortRef.current = null;
         activeRequestRef.current = null;
@@ -1617,7 +1688,7 @@ const ChatPane = forwardRef(function ChatPane(
   };
 
   const buildPendingPlan = () => {
-    if (!pendingPlan || streaming || !hasKey) return;
+    if (!pendingPlan || streaming || !hasKey || planBuilding) return;
     const planId = pendingPlan.planId || crypto.randomUUID();
     if (!pendingPlan.planId) {
       updateThread((current) =>
@@ -1888,7 +1959,8 @@ const ChatPane = forwardRef(function ChatPane(
               )}
               {pendingPlan && !pendingApply && (
                 <PlanReadyAction
-                  buildDisabled={!hasKey}
+                  buildDisabled={!hasKey || planBuilding}
+                  building={planBuilding}
                   onBuild={buildPendingPlan}
                   onDismiss={dismissPendingPlan}
                 />

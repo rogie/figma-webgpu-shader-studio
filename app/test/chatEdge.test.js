@@ -65,7 +65,7 @@ function request(provider, model, extra = {}) {
   });
 }
 
-function fixtureProvider(t, { truncateOpenAI = false } = {}) {
+function fixtureProvider(t, { truncateOpenAI = false, interrupted = false } = {}) {
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
     const href = String(url);
@@ -79,26 +79,32 @@ function fixtureProvider(t, { truncateOpenAI = false } = {}) {
 
     if (href.startsWith("https://api.cursor.com/")) {
       if (href.endsWith("/stream")) {
-        return new Response('event: assistant\ndata: {"text":"Revised"}\n\nevent: done\ndata: {}\n\n');
+        return new Response('event: assistant\ndata: {"text":"Revised"}\n\n' +
+          (interrupted ? "" : 'event: done\ndata: {}\n\n'));
+      }
+      if (href.endsWith("/runs/run-fixture")) {
+        return Response.json({ status: "RUNNING" });
       }
       if (href.endsWith("/agents") || href.endsWith(`/agents/${agentId}/runs`)) {
         return Response.json({ id: agentId, latestRunId: "run-fixture" });
       }
     }
 
+    const completed = (output, terminal) => new Response(output + (interrupted ? "" : terminal));
     if (href.startsWith("https://api.openai.com/") && truncateOpenAI) {
-      return new Response(calls.length === 1
-        ? 'data: {"choices":[{"delta":{"content":"Part one"}}]}\n\ndata: {"choices":[{"finish_reason":"length"}]}\n\n'
-        : 'data: {"choices":[{"delta":{"content":" then part two."}}]}\n\n');
+      return calls.length === 1
+        ? new Response('data: {"choices":[{"delta":{"content":"Part one"}}]}\n\ndata: {"choices":[{"finish_reason":"length"}]}\n\ndata: [DONE]\n\n')
+        : completed('data: {"choices":[{"delta":{"content":" then part two."}}]}\n\n',
+            'data: {"choices":[{"finish_reason":"stop"}]}');
     }
     if (href.startsWith("https://api.openai.com/") || href.startsWith("https://api.x.ai/")) {
-      return new Response('data: {"choices":[{"delta":{"content":"Revised"}}]}\n\n');
+      return completed('data: {"choices":[{"delta":{"content":"Revised"}}]}\n\n', "data: [DONE]");
     }
     if (href.startsWith("https://api.anthropic.com/")) {
-      return new Response('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Revised"}}\n\n');
+      return completed('data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Revised"}}\n\n', 'data: {"type":"message_stop"}');
     }
     if (href.startsWith("https://generativelanguage.googleapis.com/")) {
-      return new Response('data: {"candidates":[{"content":{"parts":[{"text":"Revised"}]}}]}\n\n');
+      return completed('data: {"candidates":[{"content":{"parts":[{"text":"Revised"}]}}]}\n\n', 'data: {"candidates":[{"finishReason":"STOP"}]}');
     }
     throw new Error(`Unexpected fixture URL: ${href}`);
   });
@@ -257,4 +263,33 @@ test("the OpenAI request forwards the exact selected model", async (t) => {
     ["https://api.openai.com/v1/chat/completions", "gpt-6.2-sol"],
     ["https://api.openai.com/v1/chat/completions", "gpt-6.2-astra"],
   ]);
+});
+
+test("EOF without provider completion leaves the response interrupted", async (t) => {
+  for (const [provider, model] of [
+    ["openai", "gpt-6.2-sol"],
+    ["grok", "grok-4.6"],
+    ["anthropic", "claude-sonnet-5"],
+    ["gemini", "gemini-3.6-flash"],
+    ["cursor", "composer-2.5"],
+  ]) {
+    await t.test(provider, async (t) => {
+      fixtureProvider(t, { interrupted: true });
+      const response = await handleChat(request(provider, model, { mode: "plan" }));
+      const stream = await response.text();
+      assert.match(stream, /"type":"delta","text":"Revised"/);
+      assert.match(stream, /ended before completing|did not confirm that this run completed/);
+      assert.doesNotMatch(stream, /"type":"done"/);
+    });
+  }
+});
+
+test("a continuation needs its own terminal event", async (t) => {
+  const calls = fixtureProvider(t, { truncateOpenAI: true, interrupted: true });
+  const response = await handleChat(request("openai", "gpt-6.2-sol"));
+  const stream = await response.text();
+  assert.equal(calls.length, 2);
+  assert.match(stream, /then part two/);
+  assert.match(stream, /ended before completing/);
+  assert.doesNotMatch(stream, /"type":"done"/);
 });

@@ -24,7 +24,21 @@ import {
   readTheme,
   resolveTheme,
   writeLibrarySectionOpen,
+  writeLayoutPreference,
 } from "./layoutStorage.js";
+
+test("editor preferences tolerate unavailable browser storage", () => {
+  const unavailable = {
+    getItem() { throw new Error("storage denied"); },
+    setItem() { throw new Error("storage denied"); },
+    removeItem() { throw new Error("storage denied"); },
+  };
+  assert.equal(readTheme(unavailable), "system");
+  assert.equal(readPlayState(unavailable), true);
+  assert.equal(readAppNavWidth(unavailable), DEFAULT_APP_NAV_WIDTH);
+  assert.doesNotThrow(() => writeLayoutPreference("theme", "dark", unavailable));
+  assert.doesNotThrow(() => writeLayoutPreference("preview-height", null, unavailable));
+});
 
 function storage(values = {}) {
   return { getItem: (key) => values[key] ?? null };

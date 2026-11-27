@@ -6,7 +6,7 @@ function brightnessSlider(page) {
     .locator("fig-slider");
 }
 
-async function openAnonymousEditor(page) {
+async function openAnonymousEditor(page, prepareStorage) {
   await page.addInitScript(() => {
     localStorage.clear();
     Object.defineProperty(Navigator.prototype, "gpu", {
@@ -14,6 +14,7 @@ async function openAnonymousEditor(page) {
       value: undefined,
     });
   });
+  if (prepareStorage) await page.addInitScript(prepareStorage);
   await page.goto("/dither");
   await expect(brightnessSlider(page)).toHaveCount(1);
 }
@@ -33,8 +34,8 @@ async function setBrightness(page, value) {
 
 async function appendSourceMarker(page, marker) {
   const editor = page.locator(".cm-content").first();
-  await editor.click();
-  await page.keyboard.press("Control+End");
+  await editor.click({ position: { x: 10, y: 10 } });
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowDown" : "Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.insertText(`// ${marker}`);
   await expect(editor).toContainText(marker);
@@ -63,9 +64,7 @@ test("Reset to default preserves the current source and document identity", asyn
 test("anonymous duplication carries editor state, plan, and chat continuity", async ({
   page,
 }) => {
-  await openAnonymousEditor(page);
-  await page.waitForTimeout(500);
-  await page.evaluate(() => {
+  await openAnonymousEditor(page, () => {
     localStorage.setItem(
       "shader-studio.chatPlans.v1",
       JSON.stringify({ "preset:dither": "# Keep this plan\n\n- Preserve it" }),

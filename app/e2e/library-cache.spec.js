@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { writeLibrarySessionCache } from "../src/lib/librarySessionCache.js";
 
 test("library rail restores from session cache before revalidation", async ({
   page,
@@ -22,6 +23,15 @@ test("library rail restores from session cache before revalidation", async ({
   };
   const thumbnail =
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E";
+  const cache = {};
+  writeLibrarySessionCache({
+    scope: "anonymous",
+    shaders: [row],
+    thumbnails: { [row.id]: thumbnail },
+    thumbnailExpiries: { [row.id]: Date.now() + 30 * 60_000 },
+    now: Date.now() - 6 * 60_000,
+    storage: { setItem: (key, value) => { cache[key] = value; } },
+  });
   let releaseListing;
   const listingGate = new Promise((resolve) => {
     releaseListing = resolve;
@@ -29,35 +39,22 @@ test("library rail restores from session cache before revalidation", async ({
   let listingRequests = 0;
 
   await page.addInitScript(
-    ({ shader, thumbnailUrl }) => {
+    (cacheEntries) => {
       localStorage.clear();
       sessionStorage.clear();
       localStorage.setItem(
         "figma-shader-studio:editor-filters",
         JSON.stringify({ kind: "all", origin: "all", author: "all" }),
       );
-      sessionStorage.setItem(
-        "figma-shader-studio:library-session:v1:anonymous",
-        JSON.stringify({
-          version: 1,
-          scope: "anonymous",
-          savedAt: Date.now(),
-          shaders: [shader],
-          thumbnails: {
-            [shader.id]: {
-              path: shader.thumbnail_path,
-              url: thumbnailUrl,
-              expiresAt: Date.now() + 30 * 60_000,
-            },
-          },
-        }),
-      );
+      for (const [key, value] of Object.entries(cacheEntries)) {
+        localStorage.setItem(key, value);
+      }
       Object.defineProperty(Navigator.prototype, "gpu", {
         configurable: true,
         value: undefined,
       });
     },
-    { shader: row, thumbnailUrl: thumbnail },
+    cache,
   );
 
   await page.route("**/rest/v1/shaders*", async (route) => {

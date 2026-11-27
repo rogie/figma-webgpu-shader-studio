@@ -1,8 +1,11 @@
 #root .shader-viewer {
-  --shader-properties-track-width: calc(var(--shader-properties-width) - 1rem);
+  --shader-properties-track-width: var(--shader-properties-width);
+  --available-code-width: calc(
+    100% - 220px - 2 * var(--spacer-3) - var(--shader-properties-track-width)
+  );
   display: grid;
   grid-template-columns:
-    var(--code-width)
+    min(var(--code-width), max(0px, var(--available-code-width)))
     var(--spacer-3)
     minmax(220px, 1fr)
     var(--spacer-3)
@@ -31,7 +34,7 @@
     margin-bottom: var(--spacer-3);
   }
 
-  > .pane-resizer:not(.pane-resizer-row) {
+  > .shader-code-resizer {
     grid-column: 2;
     grid-row: 2;
   }
@@ -49,8 +52,24 @@
 
   > .shader-properties-panel {
     grid-column: 5;
-    grid-row: 1 / -1;
-    margin-left: 0;
+    grid-row: 2 / -1;
+    width: 100%;
+    height: auto;
+    max-height: 100%;
+    align-self: start;
+    margin: 0;
+    border: 0;
+    border-radius: var(--viewer-radius);
+    background: var(--figma-color-bg);
+
+    > fig-content.shader-properties-panel-content {
+      flex: 0 1 auto;
+    }
+  }
+
+  > .shader-properties-resizer {
+    grid-column: 4;
+    grid-row: 2 / -1;
   }
 
   .shader-viewer-code {
@@ -168,6 +187,14 @@
     }
   }
 
+  .shader-viewer-sidebar > .shader-viewer-code:not([data-collapsed="true"]) {
+    min-height: 140px;
+  }
+
+  .shader-viewer-sidebar > .shader-viewer-chat:not([data-collapsed="true"]) {
+    flex-shrink: 1;
+  }
+
   .pane-resizer {
     width: 100%;
     height: 100%;
@@ -184,8 +211,9 @@
   }
 }
 
-@container editor (max-width: 1180px) {
+@container editor (max-width: 1600px) {
   #root .shader-viewer {
+    --shader-sidebar-min-height: calc(140px + 220px + var(--spacer-3));
     grid-template-columns:
       minmax(0, 1fr)
       minmax(0, 1fr)
@@ -193,9 +221,21 @@
       var(--shader-properties-track-width);
     grid-template-rows:
       var(--spacer-3)
-      minmax(180px, auto)
+      minmax(160px, auto)
       var(--spacer-3)
-      minmax(200px, 1fr);
+      minmax(var(--shader-sidebar-min-height), 1fr);
+
+    &:has(> .shader-viewer-sidebar[data-code-collapsed="true"]) {
+      --shader-sidebar-min-height: calc(40px + 220px + var(--spacer-3));
+    }
+
+    &:has(> .shader-viewer-sidebar[data-chat-collapsed="true"]) {
+      --shader-sidebar-min-height: calc(140px + 40px + var(--spacer-3));
+    }
+
+    &:has(> .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]) {
+      --shader-sidebar-min-height: calc(40px + 40px + var(--spacer-3));
+    }
   }
 
   #root
@@ -206,11 +246,12 @@
     width: 100%;
     min-width: 0;
     height: var(--preview-height, auto);
-    min-height: 180px;
+    max-height: max(160px, calc(100dvh - 3 * var(--spacer-3) - var(--shader-sidebar-min-height)));
+    min-height: 160px;
     aspect-ratio: 16 / 9;
   }
 
-  #root .shader-viewer > .pane-resizer:not(.pane-resizer-row) {
+  #root .shader-viewer > .shader-code-resizer {
     grid-column: 1 / 3;
     grid-row: 3;
     width: 100%;
@@ -232,14 +273,68 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
-    min-height: 0;
+    min-height: var(--shader-sidebar-min-height);
   }
 
   #root .shader-viewer > .shader-properties-panel {
     grid-column: 4;
-    grid-row: 1 / -1;
-    height: 100%;
+    grid-row: 2 / -1;
+    height: auto;
     margin-left: 0;
     margin-right: 0;
+  }
+
+  #root .shader-viewer > .shader-properties-resizer {
+    grid-column: 3;
+    grid-row: 2 / -1;
+  }
+}
+
+@container editor (min-width: 741px) and (max-width: 1600px) {
+  #root .shader-viewer:has(
+    > .shader-viewer-sidebar[data-code-collapsed="true"][data-chat-collapsed="true"]
+  ) {
+    grid-template-rows: var(--spacer-3) minmax(160px, 1fr) var(--spacer-3) max-content;
+
+    > .shader-viewer-visualizer {
+      height: 100%;
+      max-height: none;
+      aspect-ratio: auto;
+    }
+
+    > .shader-code-resizer {
+      visibility: hidden;
+    }
+  }
+}
+
+@container editor (max-width: 740px) {
+  #root .shader-viewer {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--spacer-3) auto var(--spacer-3) auto auto;
+    align-content: start;
+    overflow-y: auto;
+    padding-inline: var(--spacer-2);
+  }
+
+  #root .shader-viewer > :is(
+    .shader-preview.shader-viewer-visualizer,
+    .shader-viewer-visualizer,
+    .shader-code-resizer,
+    .shader-viewer-sidebar,
+    .shader-properties-panel
+  ) {
+    grid-column: 1;
+  }
+
+  #root .shader-viewer > .shader-properties-panel {
+    grid-row: 5;
+    width: 100%;
+    height: auto;
+    margin: var(--spacer-3) 0 0;
+  }
+
+  #root .shader-viewer > .shader-properties-resizer {
+    display: none;
   }
 }

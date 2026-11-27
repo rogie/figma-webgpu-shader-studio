@@ -18,6 +18,12 @@ export default function ShaderView({
   onResizeCode,
   onResetCodeSize,
   onKeyResizeCode,
+  propertiesWidth,
+  minPropertiesWidth,
+  maxPropertiesWidth,
+  onResizeProperties,
+  onResetPropertiesSize,
+  onKeyResizeProperties,
 }) {
   return (
     <main ref={viewerRef} className="shader-viewer" style={style}>
@@ -31,7 +37,7 @@ export default function ShaderView({
       </div>
 
       <div
-        className="pane-resizer"
+        className="pane-resizer shader-code-resizer"
         role="separator"
         aria-label="Resize code and preview panes"
         aria-orientation={stacked ? "horizontal" : "vertical"}
@@ -50,6 +56,19 @@ export default function ShaderView({
         {preview}
       </section>
 
+      <div
+        className="pane-resizer shader-properties-resizer"
+        role="separator"
+        aria-label="Resize shader properties"
+        aria-orientation="vertical"
+        aria-valuemin={minPropertiesWidth}
+        aria-valuemax={maxPropertiesWidth}
+        aria-valuenow={propertiesWidth}
+        tabIndex={0}
+        onPointerDown={onResizeProperties}
+        onDoubleClick={onResetPropertiesSize}
+        onKeyDown={onKeyResizeProperties}
+      />
       {properties}
     </main>
   );

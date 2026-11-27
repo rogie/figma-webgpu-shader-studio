@@ -53,7 +53,7 @@ test("maps Cursor stream events onto Shader Studio chat events", () => {
   );
   assert.deepEqual(
     mapCursorStreamEvent("status", { status: "ERROR" }),
-    { type: "done" }
+    { type: "error", message: "Cursor run ended with status ERROR." }
   );
   assert.deepEqual(mapCursorStreamEvent("done", {}), { type: "done" });
   assert.deepEqual(mapCursorStreamEvent("result", {}), { type: "done" });

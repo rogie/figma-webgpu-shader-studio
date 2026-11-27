@@ -20,16 +20,10 @@ export function AuthProvider({ children }) {
     if (!supabase) return;
 
     let active = true;
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!active) return;
-      if (error) console.error(error);
-      setSession(data.session ?? null);
-      setLoading(false);
-    });
-
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
       // Token refresh on tab focus must not replace the user object identity —
       // several effects (library thumbnails, drafts) key off `user` and would
       // refetch / remount as if the session were new.

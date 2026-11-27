@@ -1,6 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { loadEnv } from "vite";
 
+test.use({ launchOptions: { args: ["--enable-unsafe-webgpu", "--enable-unsafe-swiftshader", "--use-angle=swiftshader"] } });
+
+
 const original = "# Original plan\n\nKeep the tones subtle.";
 const revised = "# Revised plan\n\nIncrease the contrast.";
 const interrupted = "# Interrupted plan\n\nPartial draft.";
@@ -98,7 +101,11 @@ test("an owned fill remembers its built plan in a separate browser context", asy
   const shaderId = "c6a0055e-ca28-4659-a4af-4bdefca67d31";
   const origin = new URL(baseURL).origin;
   const project = new URL(loadEnv("development", process.cwd()).VITE_SUPABASE_URL).hostname.split(".")[0];
-  const markers = new Set();
+  let planStatus = "unknown";
+  let committedSource = null;
+  let checkpointStarted = false;
+  let finishCheckpoint;
+  const checkpointGate = new Promise((resolve) => { finishCheckpoint = resolve; });
   const shader = {
     id: shaderId,
     owner_id: owner,
@@ -108,6 +115,7 @@ test("an owned fill remembers its built plan in a separate browser context", asy
     parameter_values: {},
     state_revision: 1,
     versioned_state_revision: 1,
+    updated_at: "2026-11-26T00:00:00Z",
     is_public: false,
   };
   const user = { id: owner, email: "plan-test@example.com", user_metadata: {} };
@@ -140,17 +148,35 @@ test("an owned fill remembers its built plan in a separate browser context", asy
       if (url.pathname === "/rest/v1/shaders") {
         return json(request.headers().accept?.includes("vnd.pgrst.object") ? shader : [shader]);
       }
+      if (url.pathname.endsWith("/rpc/shader_plan_build_status")) return json(planStatus);
+      if (url.pathname.endsWith("/rpc/claim_shader_plan_build")) {
+        if (planStatus === "building" || planStatus === "built") return json({ status: planStatus });
+        planStatus = "building";
+        return json({ status: "claimed", leaseId: "b19d07a8-6314-417c-846e-16a0612d7e55" });
+      }
+      if (url.pathname.endsWith("/rpc/release_shader_plan_build")) {
+        if (planStatus === "building") planStatus = "ready";
+        return json(null);
+      }
+      if (url.pathname.endsWith("/rpc/commit_shader_document")) {
+        const payload = request.postDataJSON();
+        const source = payload.p_document.p_source;
+        if (payload.p_plan_lease_id) {
+          expect(payload.p_document.p_checkpoint_kind).toBe("agent");
+          expect(payload.p_plan_revision).toMatch(/^[a-f0-9]{64}$/);
+          checkpointStarted = true;
+          await checkpointGate;
+          committedSource = source;
+          planStatus = "built";
+        }
+        return json({ ...shader, source, state_revision: 2, versioned_state_revision: 2 });
+      }
       if (url.pathname.startsWith("/rest/v1/")) return json([]);
       if (url.pathname.endsWith("/shader-plans") && url.pathname.includes("/list/")) {
-        const { search } = request.postDataJSON();
-        return json(markers.has(search) ? [{ name: search }] : []);
+        return json([]);
       }
       if (url.pathname.includes("/shader-plans/") && url.pathname.endsWith("/plan.md")) {
         return route.fulfill({ headers, contentType: "text/markdown", body: original });
-      }
-      if (url.pathname.includes(`/shader-plans/${owner}/${shaderId}/plan-builds/`)) {
-        markers.add(url.pathname.split("/").at(-1));
-        return json({ Key: url.pathname });
       }
       if (url.pathname === "/functions/v1/chat") {
         const payload = request.postDataJSON();
@@ -172,16 +198,24 @@ test("an owned fill remembers its built plan in a separate browser context", asy
   const build = page.getByRole("button", { name: "Build plan", exact: true });
   await expect(build).toBeVisible();
   await build.click();
-  await expect.poll(() => markers.size).toBe(1);
+  await expect.poll(() => checkpointStarted).toBe(true);
+  expect(planStatus).toBe("building");
+  await expect(page.getByText("Applied plan.md", { exact: true })).toHaveCount(0);
 
   const separate = await browser.newContext({ baseURL });
   try {
     await mockSupabaseFor(separate);
     const reopened = await separate.newPage();
     await reopened.goto(`/shader/${shaderId}`);
+    await expect(reopened.getByRole("button", { name: "Build plan", exact: true })).toBeDisabled();
+    finishCheckpoint();
+    await expect.poll(() => planStatus).toBe("built");
+    expect(committedSource).toContain("Built from the cloud plan");
+    await reopened.reload();
     await expect(reopened.getByText("Applied plan.md", { exact: true })).toBeVisible();
     await expect(reopened.getByRole("button", { name: "Build plan", exact: true })).toHaveCount(0);
   } finally {
+    finishCheckpoint();
     await separate.close();
   }
 });

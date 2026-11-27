@@ -1,6 +1,8 @@
 export const DEFAULT_APP_NAV_WIDTH = 240;
 export const MIN_APP_NAV_WIDTH = 112;
 export const MAX_APP_NAV_WIDTH = 400;
+export const MIN_PROPERTIES_WIDTH = 280;
+export const MAX_PROPERTIES_WIDTH = MAX_APP_NAV_WIDTH;
 export const DEFAULT_CODE_WIDTH = 480;
 export const MIN_CODE_WIDTH = 320;
 export const MIN_PREVIEW_WIDTH = 220;
@@ -9,12 +11,13 @@ export const MIN_STACKED_SIDEBAR = 280;
 export const DEFAULT_CHAT_HEIGHT = 260;
 export const MIN_CHAT_HEIGHT = 220;
 export const MIN_CODE_EDITOR_HEIGHT = 140;
-export const STACKED_BREAKPOINT = 1180;
+export const STACKED_BREAKPOINT = 1600;
 export const STACKED_MEDIA_QUERY = `(max-width: ${STACKED_BREAKPOINT}px)`;
 
 export const APP_NAV_WIDTH_STORAGE_KEY =
   "figma-shader-studio:app-nav-width";
 export const CODE_WIDTH_STORAGE_KEY = "figma-shader-studio:code-width";
+export const PROPERTIES_WIDTH_STORAGE_KEY = "figma-shader-studio:properties-width";
 export const CHAT_HEIGHT_STORAGE_KEY = "figma-shader-studio:chat-height";
 export const PREVIEW_HEIGHT_STORAGE_KEY =
   "figma-shader-studio:preview-height";
@@ -42,12 +45,37 @@ export const EXPERIMENTAL_AUDIO_STORAGE_KEY =
 
 const experimentalAudioListeners = new Set();
 
+function layoutPreferenceStorage() {
+  try {
+    return globalThis.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readLayoutPreference(storage, key) {
+  try {
+    return storage?.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function writeLayoutPreference(key, value, storage = layoutPreferenceStorage()) {
+  try {
+    if (value == null) storage?.removeItem(key);
+    else storage?.setItem(key, String(value));
+  } catch {
+    // Preferences still apply for the current editor session.
+  }
+}
+
 export function defaultCodeWidth(viewportWidth = globalThis.innerWidth) {
   return viewportWidth <= 1180 ? 380 : DEFAULT_CODE_WIDTH;
 }
 
-export function readAppNavWidth(storage = globalThis.localStorage) {
-  const value = Number(storage?.getItem(APP_NAV_WIDTH_STORAGE_KEY));
+export function readAppNavWidth(storage = layoutPreferenceStorage()) {
+  const value = Number(readLayoutPreference(storage, APP_NAV_WIDTH_STORAGE_KEY));
   return Number.isFinite(value) &&
     value >= MIN_APP_NAV_WIDTH &&
     value <= MAX_APP_NAV_WIDTH
@@ -56,31 +84,38 @@ export function readAppNavWidth(storage = globalThis.localStorage) {
 }
 
 export function readCodeWidth(
-  storage = globalThis.localStorage,
+  storage = layoutPreferenceStorage(),
   viewportWidth = globalThis.innerWidth,
 ) {
-  const value = Number(storage?.getItem(CODE_WIDTH_STORAGE_KEY));
+  const value = Number(readLayoutPreference(storage, CODE_WIDTH_STORAGE_KEY));
   return Number.isFinite(value) && value >= MIN_CODE_WIDTH
     ? value
     : defaultCodeWidth(viewportWidth);
 }
 
-export function readChatHeight(storage = globalThis.localStorage) {
-  const value = Number(storage?.getItem(CHAT_HEIGHT_STORAGE_KEY));
+export function readPropertiesWidth(storage = layoutPreferenceStorage()) {
+  const value = Number(readLayoutPreference(storage, PROPERTIES_WIDTH_STORAGE_KEY));
+  return Number.isFinite(value) && value >= MIN_PROPERTIES_WIDTH && value <= MAX_PROPERTIES_WIDTH
+    ? value
+    : MIN_PROPERTIES_WIDTH;
+}
+
+export function readChatHeight(storage = layoutPreferenceStorage()) {
+  const value = Number(readLayoutPreference(storage, CHAT_HEIGHT_STORAGE_KEY));
   return Number.isFinite(value) && value >= MIN_CHAT_HEIGHT
     ? value
     : DEFAULT_CHAT_HEIGHT;
 }
 
-export function readPreviewHeight(storage = globalThis.localStorage) {
-  const value = Number(storage?.getItem(PREVIEW_HEIGHT_STORAGE_KEY));
+export function readPreviewHeight(storage = layoutPreferenceStorage()) {
+  const value = Number(readLayoutPreference(storage, PREVIEW_HEIGHT_STORAGE_KEY));
   return Number.isFinite(value) && value >= MIN_PREVIEW_HEIGHT ? value : null;
 }
 
-export function readSidebarSections(storage = globalThis.localStorage) {
+export function readSidebarSections(storage = layoutPreferenceStorage()) {
   try {
     const parsed = JSON.parse(
-      storage?.getItem(SIDEBAR_SECTIONS_STORAGE_KEY) || "{}",
+      readLayoutPreference(storage, SIDEBAR_SECTIONS_STORAGE_KEY) || "{}",
     );
     return {
       codeCollapsed: Boolean(parsed.codeCollapsed),
@@ -97,8 +132,8 @@ export function isStackedLayout(
   return Boolean(matchMedia?.(STACKED_MEDIA_QUERY).matches);
 }
 
-export function readTheme(storage = globalThis.localStorage) {
-  const stored = storage?.getItem(THEME_STORAGE_KEY);
+export function readTheme(storage = layoutPreferenceStorage()) {
+  const stored = readLayoutPreference(storage, THEME_STORAGE_KEY);
   if (stored === "system" || stored === "light" || stored === "dark") {
     return stored;
   }
@@ -176,14 +211,14 @@ export function canvasColorFillValue(color) {
   });
 }
 
-export function readCanvasColorOverride(storage = globalThis.localStorage) {
+export function readCanvasColorOverride(storage = layoutPreferenceStorage()) {
   const stored = normalizeCanvasColor(
-    storage?.getItem(CANVAS_COLOR_STORAGE_KEY),
+    readLayoutPreference(storage, CANVAS_COLOR_STORAGE_KEY),
     null,
   );
   if (stored === "#FFFFFFB8" || stored === "#0000008F") return null;
   if (stored) return stored;
-  const legacyTheme = storage?.getItem(LEGACY_CANVAS_THEME_STORAGE_KEY);
+  const legacyTheme = readLayoutPreference(storage, LEGACY_CANVAS_THEME_STORAGE_KEY);
   if (legacyTheme === "dark" || legacyTheme === "light") {
     return defaultCanvasColorForTheme(legacyTheme);
   }
@@ -191,7 +226,7 @@ export function readCanvasColorOverride(storage = globalThis.localStorage) {
 }
 
 export function readCanvasColor(
-  storage = globalThis.localStorage,
+  storage = layoutPreferenceStorage(),
   theme = resolveTheme(readTheme(storage)),
 ) {
   return (
@@ -200,27 +235,27 @@ export function readCanvasColor(
   );
 }
 
-export function readCanvasControlsVisible(storage = globalThis.localStorage) {
-  return storage?.getItem(CANVAS_CONTROLS_STORAGE_KEY) !== "false";
+export function readCanvasControlsVisible(storage = layoutPreferenceStorage()) {
+  return readLayoutPreference(storage, CANVAS_CONTROLS_STORAGE_KEY) !== "false";
 }
 
-export function readPlayState(storage = globalThis.localStorage) {
-  const stored = storage?.getItem(PLAY_STORAGE_KEY);
+export function readPlayState(storage = layoutPreferenceStorage()) {
+  const stored = readLayoutPreference(storage, PLAY_STORAGE_KEY);
   if (stored === "true") return true;
   if (stored === "false") return false;
   return true;
 }
 
-export function readLibraryView(storage = globalThis.localStorage) {
-  return storage?.getItem(LIBRARY_VIEW_STORAGE_KEY) === "grid"
+export function readLibraryView(storage = layoutPreferenceStorage()) {
+  return readLayoutPreference(storage, LIBRARY_VIEW_STORAGE_KEY) === "grid"
     ? "grid"
     : "list";
 }
 
-function readLibrarySectionState(storage = globalThis.localStorage) {
+function readLibrarySectionState(storage = layoutPreferenceStorage()) {
   try {
     const parsed = JSON.parse(
-      storage?.getItem(LIBRARY_SECTIONS_STORAGE_KEY) || "{}",
+      readLayoutPreference(storage, LIBRARY_SECTIONS_STORAGE_KEY) || "{}",
     );
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return {};
@@ -233,7 +268,7 @@ function readLibrarySectionState(storage = globalThis.localStorage) {
 
 export function readLibrarySectionOpen(
   sectionId,
-  storage = globalThis.localStorage,
+  storage = layoutPreferenceStorage(),
 ) {
   if (!sectionId) return true;
   return readLibrarySectionState(storage)[sectionId] !== false;
@@ -242,7 +277,7 @@ export function readLibrarySectionOpen(
 export function writeLibrarySectionOpen(
   sectionId,
   open,
-  storage = globalThis.localStorage,
+  storage = layoutPreferenceStorage(),
 ) {
   if (!sectionId) return;
   try {
@@ -262,13 +297,13 @@ export function writeLibrarySectionOpen(
   }
 }
 
-export function readAppNavCollapsed(storage = globalThis.localStorage) {
-  return storage?.getItem(APP_NAV_COLLAPSED_STORAGE_KEY) === "true";
+export function readAppNavCollapsed(storage = layoutPreferenceStorage()) {
+  return readLayoutPreference(storage, APP_NAV_COLLAPSED_STORAGE_KEY) === "true";
 }
 
-export function readExperimentalAudio(storage = globalThis.localStorage) {
+export function readExperimentalAudio(storage = layoutPreferenceStorage()) {
   try {
-    return storage?.getItem(EXPERIMENTAL_AUDIO_STORAGE_KEY) === "true";
+    return readLayoutPreference(storage, EXPERIMENTAL_AUDIO_STORAGE_KEY) === "true";
   } catch {
     return false;
   }
@@ -276,7 +311,7 @@ export function readExperimentalAudio(storage = globalThis.localStorage) {
 
 export function writeExperimentalAudio(
   enabled,
-  storage = globalThis.localStorage,
+  storage = layoutPreferenceStorage(),
 ) {
   const next = Boolean(enabled);
   try {
@@ -293,10 +328,10 @@ export function subscribeExperimentalAudio(listener) {
   return () => experimentalAudioListeners.delete(listener);
 }
 
-export function readEditorFilters(storage = globalThis.localStorage) {
+export function readEditorFilters(storage = layoutPreferenceStorage()) {
   try {
     const parsed = JSON.parse(
-      storage?.getItem(EDITOR_FILTERS_STORAGE_KEY) || "{}",
+      readLayoutPreference(storage, EDITOR_FILTERS_STORAGE_KEY) || "{}",
     );
     return {
       kind: ["all", "effect", "fill", "composition"].includes(parsed.kind)

@@ -224,7 +224,9 @@ import {
   LIBRARY_VIEW_STORAGE_KEY,
   APP_NAV_COLLAPSED_STORAGE_KEY,
   MAX_APP_NAV_WIDTH,
+  MAX_PROPERTIES_WIDTH,
   MIN_APP_NAV_WIDTH,
+  MIN_PROPERTIES_WIDTH,
   MIN_CHAT_HEIGHT,
   MIN_CODE_EDITOR_HEIGHT,
   MIN_CODE_WIDTH,
@@ -247,6 +249,7 @@ import {
   subscribeExperimentalAudio,
   SIDEBAR_SECTIONS_STORAGE_KEY,
   THEME_STORAGE_KEY,
+  writeLayoutPreference,
 } from "./lib/layoutStorage.js";
 import {
   collectCompositionFeatures,
@@ -319,14 +322,12 @@ import {
   cloudIdForDraft,
   figmaShaderLink,
   isDraftId,
-  shaderMetadataUnchanged,
 } from "./lib/shaderIdentity.js";
 import { activateBeforeHydration } from "./lib/sessionRequests.js";
 import {
   expectedStateRevision,
   rememberStateRevision,
 } from "./lib/stateRevisionBaseline.js";
-import { createOrResumeCloudDraft } from "./lib/cloudDraftPromotion.js";
 import {
   shaderSaveQueue,
   withExclusiveShaderSave,
@@ -347,6 +348,7 @@ import { useShaderRuntime } from "./hooks/useShaderRuntime.js";
 import { useShaderSession } from "./hooks/useShaderSession.js";
 import {
   ASSET_BUCKET,
+  commitShaderDocument,
   createShader,
   deleteShader,
   downloadAsset,
@@ -355,8 +357,10 @@ import {
   getAssetUrls,
   getThumbnailUrls,
   getProfile,
+  getPublicThumbnailUrl,
   getShader,
   getShaderMaybe,
+  getShaderPlanBuildStatus,
   getShadersByIds,
   getShaderVersion,
   getAppRoute,
@@ -380,8 +384,8 @@ import {
   removeAssets,
   removeThumbnailAssets,
   removeShaderPlan,
+  releaseShaderPlanBuild,
   restoreShaderVersion,
-  saveShaderState,
   updateShader,
   uploadAsset,
   uploadThumbnailAsset,
@@ -526,11 +530,13 @@ async function readPlanForCopy({
   }
   if (!isPlanDocument(markdown)) return null;
   const revision = await planRevision(markdown);
-  let built = isLocalPlanBuilt(threadKey, revision) ||
-    hasBuiltPlanInHistory(loadChatThreads()[threadKey] || [], markdown);
-  if (!built && ownerId && shaderId) {
-    built = await isShaderPlanBuilt(ownerId, shaderId, revision).catch(() => false);
-  }
+  const built = ownerId && shaderId
+    ? await getShaderPlanBuildStatus(shaderId, revision)
+      .then((status) => status === "built" ||
+        (status === "unknown" && isShaderPlanBuilt(ownerId, shaderId, revision)))
+      .catch(() => false)
+    : isLocalPlanBuilt(threadKey, revision) ||
+      hasBuiltPlanInHistory(loadChatThreads()[threadKey] || [], markdown);
   return { markdown, revision, built };
 }
 
@@ -1466,17 +1472,6 @@ export default function App() {
     onError: onPersistenceError,
   });
   const editorViewRef = useRef(null);
-  const {
-    appNavWidth,
-    codeWidth,
-    chatHeight,
-    previewHeight,
-    stacked,
-    saveAppNavWidth,
-    saveCodeWidth,
-    saveChatHeight,
-    savePreviewHeight,
-  } = usePanelLayout(editorViewRef);
   const [theme, setTheme] = useState(savedTheme);
   const [systemTheme, setSystemTheme] = useState(() =>
     resolveTheme("system")
@@ -1562,7 +1557,6 @@ export default function App() {
     libraryNavMotion === "closed" || libraryNavMotion === "closing";
   const libraryNavMounted = libraryNavMotion !== "closed";
   const appNavRef = useRef(null);
-  const [appNavShift, setAppNavShift] = useState(appNavWidth);
   const viewMode = routeEmbed && routeId
     ? "embed"
     : routeView && routeId
@@ -1572,6 +1566,20 @@ export default function App() {
         : routeId
           ? "editor"
           : "home";
+  const {
+    appNavWidth,
+    codeWidth,
+    chatHeight,
+    previewHeight,
+    propertiesWidth,
+    stacked,
+    saveAppNavWidth,
+    saveCodeWidth,
+    saveChatHeight,
+    savePreviewHeight,
+    savePropertiesWidth,
+  } = usePanelLayout(editorViewRef, viewMode === "editor");
+  const [appNavShift, setAppNavShift] = useState(appNavWidth);
   const [activeNavItem, setActiveNavItem] = useState(() =>
     viewMode === "editor" ? "editor" : "home",
   );
@@ -1787,6 +1795,7 @@ export default function App() {
   const draftMediaPersistenceRef = useRef(null);
   const draftMediaPersistenceErrorRef = useRef(null);
   const committedStateRevisionsRef = useRef(new Map());
+  const committedDocumentsRef = useRef(new Map());
   const pendingValuesRef = useRef(null);
   const compileTimer = useRef(0);
   const lastCompiledPresetRef = useRef(presetId);
@@ -2308,7 +2317,6 @@ export default function App() {
     }
     document.documentElement.style.colorScheme =
       nextTheme === "system" ? "light dark" : nextTheme;
-    localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
     setTheme(nextTheme);
   }, []);
 
@@ -2316,21 +2324,17 @@ export default function App() {
     if (routeEmbed) return;
     document.documentElement.style.colorScheme =
       theme === "system" ? "light dark" : theme;
-    localStorage.setItem(THEME_STORAGE_KEY, theme);
+    writeLayoutPreference(THEME_STORAGE_KEY, theme);
   }, [routeEmbed, theme]);
 
   useEffect(() => {
     if (routeEmbed) return;
-    if (canvasColorOverride) {
-      localStorage.setItem(CANVAS_COLOR_STORAGE_KEY, canvasColorOverride);
-    } else {
-      localStorage.removeItem(CANVAS_COLOR_STORAGE_KEY);
-    }
+    writeLayoutPreference(CANVAS_COLOR_STORAGE_KEY, canvasColorOverride);
   }, [canvasColorOverride, routeEmbed]);
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(
+    writeLayoutPreference(
       CANVAS_CONTROLS_STORAGE_KEY,
       String(showCanvasHandles),
     );
@@ -2338,7 +2342,7 @@ export default function App() {
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(LIBRARY_VIEW_STORAGE_KEY, libraryView);
+    writeLayoutPreference(LIBRARY_VIEW_STORAGE_KEY, libraryView);
   }, [libraryView, routeEmbed]);
 
   useEffect(() => {
@@ -2351,7 +2355,7 @@ export default function App() {
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(
+    writeLayoutPreference(
       EDITOR_FILTERS_STORAGE_KEY,
       JSON.stringify({
         kind: editorKind,
@@ -2450,7 +2454,7 @@ export default function App() {
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(
+    writeLayoutPreference(
       SIDEBAR_SECTIONS_STORAGE_KEY,
       JSON.stringify({ codeCollapsed, chatCollapsed })
     );
@@ -2458,7 +2462,7 @@ export default function App() {
 
   useEffect(() => {
     if (routeEmbed) return;
-    localStorage.setItem(
+    writeLayoutPreference(
       APP_NAV_COLLAPSED_STORAGE_KEY,
       appNavCollapsed ? "true" : "false",
     );
@@ -5936,36 +5940,18 @@ export default function App() {
             : { ...existing, ...(await getShader(existing.id)) };
           saved = await shaderSaveQueue.enqueue(existing.id, async () => {
             const result = await withExclusiveShaderSave(existing.id, async () => {
-              const stateSaved = await saveShaderState({
+              const stateSaved = await commitShaderDocument({
                 shaderId: existing.id,
-                expectedStateRevision: expectedStateRevision(
-                  committedStateRevisionsRef.current,
-                  current,
-                ),
+                expectedStateRevision: current.state_revision,
+                expectedUpdatedAt: current.updated_at,
                 ...buildShaderStateSavePayload(documentSnapshot),
+                metadata: { name, description, ...link },
                 checkpointKind: "manual",
                 summary: `Imported ${name} from Figma`,
               });
-              rememberStateRevision(
-                committedStateRevisionsRef.current,
-                stateSaved,
-              );
-              setCloudShaders((rows) =>
-                rows.map((row) =>
-                  row.id === stateSaved.id
-                    ? { ...row, ...stateSaved }
-                    : row,
-                ),
-              );
-              return updateShader(
-                existing.id,
-                {
-                  name,
-                  description,
-                  ...link,
-                },
-                { expectedStateRevision: stateSaved.state_revision },
-              );
+              committedDocumentsRef.current.set(stateSaved.id, stateSaved);
+              rememberStateRevision(committedStateRevisionsRef.current, stateSaved);
+              return stateSaved;
             });
             return result.value;
           });
@@ -6199,8 +6185,15 @@ export default function App() {
   const libraryRefreshRef = useRef(null);
   const thumbnailRecoveryAttemptsRef = useRef(new Map());
   const libraryScope = libraryCacheScope(userId);
+  const libraryRequestRef = useRef(0);
+  const libraryScopeRef = useRef(libraryScope);
+  libraryScopeRef.current = libraryScope;
 
   const refreshLibrary = useCallback(async () => {
+    const requestId = ++libraryRequestRef.current;
+    const isCurrent = () =>
+      requestId === libraryRequestRef.current &&
+      libraryScopeRef.current === libraryScope;
     if (!authConfigured) {
       cloudThumbnailPathsRef.current = {};
       cloudThumbnailBucketsRef.current = {};
@@ -6215,6 +6208,7 @@ export default function App() {
       // Row-level security returns public shaders to everyone and adds the
       // current user's private drafts when signed in.
       const shaders = await listShaders();
+      if (!isCurrent()) return;
       const now = Date.now();
       const rowsToRefresh = [];
       for (const shader of shaders) {
@@ -6232,6 +6226,7 @@ export default function App() {
       }
       const { full: urlsById, small: smallUrlsById } =
         await getThumbnailUrls(rowsToRefresh);
+      if (!isCurrent()) return;
       if (
         !libraryRefreshIsCurrent(
           refreshEpoch,
@@ -6312,6 +6307,7 @@ export default function App() {
         thumbnailExpiries: nextExpiryById,
       });
     } catch (libraryError) {
+      if (!isCurrent()) return;
       const message = formatSupabaseError(
         libraryError,
         "Could not load shaders from the server."
@@ -6367,6 +6363,7 @@ export default function App() {
       skipNextLibraryCacheWriteRef.current = true;
       setCloudShadersState(cached?.shaders || []);
       setCloudThumbnails(cached?.thumbnails || {});
+      cloudThumbnailsRef.current = cached?.thumbnails || {};
       setCloudSmallThumbnails(
         cached?.smallThumbnails || cached?.thumbnails || {},
       );
@@ -6382,6 +6379,7 @@ export default function App() {
       cloudThumbnailExpiriesRef.current = cached?.thumbnailExpiries || {};
     }
     if (!cacheIsFresh) refreshLibrary();
+    return () => { libraryRequestRef.current += 1; };
   }, [authLoading, libraryScope, refreshLibrary, routeEmbed]);
 
   useEffect(() => {
@@ -6448,7 +6446,6 @@ export default function App() {
     };
 
     const migrate = async () => {
-      const remaining = [];
       const migrated = [];
       let activeMigration = null;
       let lastError = null;
@@ -6458,6 +6455,9 @@ export default function App() {
         const editorActive = draft.id === draftSessionRef.current.presetId;
         const active =
           editorActive || draft.id === activeRouteId;
+        const persistedDraftBeforeMigration = JSON.stringify(
+          savedDrafts().find((item) => item.id === draft.id)
+        );
         try {
           const hydratedDraft = await hydrateLocalDraftMedia(draft);
           const session = editorActive
@@ -6650,54 +6650,44 @@ export default function App() {
             is_public: false,
             ...figmaShaderLink(editorActive ? session : draft),
           };
-          const existing = await getShaderMaybe(cloudId);
-          let saved;
-          if (existing) {
-            saved = await shaderSaveQueue.enqueue(existing.id, async () => {
-              const result = await withExclusiveShaderSave(existing.id, async () => {
-                const stateSaved = await saveShaderState({
-                  shaderId: existing.id,
-                  expectedStateRevision: existing.state_revision,
-                  ...buildShaderStateSavePayload(documentSnapshot),
-                  checkpointDependencySnapshots: dependencySnapshots,
-                  checkpointKind: "manual",
-                  summary: "Migrated local draft",
-                });
-                return updateShader(
-                  existing.id,
-                  {
-                    name: payload.name,
-                    description: payload.description,
-                    ...figmaShaderLink(editorActive ? session : draft),
-                  },
-                  { expectedStateRevision: stateSaved.state_revision },
-                );
+          const saved = await shaderSaveQueue.enqueue(cloudId, async () => {
+            const result = await withExclusiveShaderSave(cloudId, async () => {
+              const existing = await getShaderMaybe(cloudId);
+              if (existing) {
+                if (
+                  editorPersistenceFingerprint(buildShaderDocumentSnapshot(existing), existing) !==
+                  editorPersistenceFingerprint(documentSnapshot, payload)
+                ) {
+                  throw new Error(`${payload.name} already has a different cloud copy. The local draft is still available.`);
+                }
+                return existing;
+              }
+              const metadata = {
+                name: payload.name,
+                description: payload.description,
+                is_public: false,
+                ...figmaShaderLink(editorActive ? session : draft),
+              };
+              const thumbnailData = thumbnailDataUrlsRef.current[draft.id] || draft.thumbnail;
+              if (thumbnailData?.startsWith("data:image/")) {
+                const response = await fetch(thumbnailData);
+                Object.assign(metadata, await uploadThumbnailVariants({
+                  ownerId: user.id,
+                  shaderId: cloudId,
+                  blob: await response.blob(),
+                  public: false,
+                }));
+              }
+              return commitShaderDocument({
+                shaderId: cloudId,
+                create: true,
+                ...buildShaderStateSavePayload(documentSnapshot),
+                metadata,
               });
-              return result.value;
             });
-          } else {
-            saved = await createShader(payload);
-          }
-          const assetChanges = {};
-          const thumbnailData =
-            thumbnailDataUrlsRef.current[draft.id] || draft.thumbnail;
-          if (thumbnailData?.startsWith("data:image/")) {
-            const thumbnailBlob = await fetch(thumbnailData).then((response) =>
-              response.blob()
-            );
-            Object.assign(assetChanges, await uploadThumbnailVariants({
-              ownerId: user.id,
-              shaderId: saved.id,
-              blob: thumbnailBlob,
-              public: false,
-            }));
-          }
-
-          if (Object.keys(assetChanges).length) {
-            saved = await updateShader(saved.id, assetChanges, {
-              expectedStateRevision: saved.state_revision,
-            });
-          }
+            return result.value;
+          });
+          committedDocumentsRef.current.set(saved.id, saved);
           if (cancelled) continue;
           const sourceThreadKey = `preset:${draft.id}`;
           const targetThreadKey = `cloud:${saved.id}`;
@@ -6709,6 +6699,22 @@ export default function App() {
             saved.id,
           );
           if (cancelled) continue;
+          const latestDraft = savedDrafts().find((item) => item.id === draft.id);
+          const latestSession = draftSessionRef.current;
+          if (
+            JSON.stringify(latestDraft) !== persistedDraftBeforeMigration ||
+            (editorActive && latestSession.presetId === draft.id &&
+              (latestSession.source !== session.source ||
+                latestSession.shaderName !== session.shaderName ||
+                latestSession.shaderDescription !== session.shaderDescription ||
+                latestSession.composition !== session.composition ||
+                latestSession.values !== session.values ||
+                latestSession.pendingMedia !== session.pendingMedia)) ||
+            (editorActive && latestSession.presetId !== draft.id)
+          ) {
+            migrated.push(saved);
+            continue;
+          }
           migrateChatThreadKey(sourceThreadKey, targetThreadKey);
           migrateCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
           removeLocalPlan(sourceThreadKey);
@@ -6735,7 +6741,6 @@ export default function App() {
             return next;
           });
         } catch (migrationError) {
-          remaining.push(draft);
           lastError = migrationError;
         }
       }
@@ -6765,7 +6770,7 @@ export default function App() {
           kind: activeMigration.kind,
           composition: activeMigration.composition,
           values: activeMigration.parameter_values || {},
-          public: false,
+          public: Boolean(activeMigration.is_public),
           media: null,
           dirty: false,
           cloudShader: activeMigration,
@@ -6784,7 +6789,7 @@ export default function App() {
         migrationRetryAttemptRef.current = 0;
       }
       await refreshLibrary();
-      if (lastError && !cancelled) scheduleRetry();
+      if (lastError && !cancelled && isTransientCloudWriteError(lastError)) scheduleRetry();
     };
 
     migrate()
@@ -7408,7 +7413,7 @@ export default function App() {
     const host = hostRef.current;
     if (!host) return;
     playPreferenceRef.current = true;
-    localStorage.setItem(PLAY_STORAGE_KEY, "true");
+    writeLayoutPreference(PLAY_STORAGE_KEY, "true");
     host.setActive(true);
     host.play();
     setRunning(true);
@@ -7418,7 +7423,7 @@ export default function App() {
     const host = hostRef.current;
     if (!host) return;
     playPreferenceRef.current = false;
-    localStorage.setItem(PLAY_STORAGE_KEY, "false");
+    writeLayoutPreference(PLAY_STORAGE_KEY, "false");
     host.pause();
     setRunning(false);
   }, []);
@@ -7824,13 +7829,8 @@ export default function App() {
       const makePublic = options.makePublic === true;
       const makePrivate = options.makePrivate === true;
       const background = options.background === true;
-      if (
-        !background &&
-        currentShader?.id &&
-        conflictBlockedShaderRef.current === currentShader.id
-      ) {
-        conflictBlockedShaderRef.current = null;
-      }
+      const acknowledgedConflict =
+        !background && currentShader?.id === conflictBlockedShaderRef.current;
       const checkpointKind =
         options.checkpointKind ||
         (!background ? (makePublic ? "publish" : "manual") : null);
@@ -7855,13 +7855,10 @@ export default function App() {
           : detectKind(requestedSource);
       const isComposition = requestedKind === COMPOSITION_KIND;
       const capturedGraph = isComposition
-        ? promoteCompositionRefs(
-            compositionWithLayerValues(
-              compositionRef.current,
-              selectedLayerIdRef.current,
-              requestedValues
-            ),
-            cloudShaders
+        ? compositionWithLayerValues(
+            compositionRef.current,
+            selectedLayerIdRef.current,
+            requestedValues,
           )
         : null;
       const capturedEffectFills =
@@ -7887,6 +7884,7 @@ export default function App() {
         { name: saveName, description: saveDescription }
       );
       const capturedPendingMedia = pendingMedia;
+      const capturedInputs = documentInputsRef.current;
       const shaderId =
         isOwner && currentShader?.id ? currentShader.id : null;
       const targetShaderId =
@@ -7897,19 +7895,24 @@ export default function App() {
       const draftLink = isDraftId(saveTargetId)
         ? drafts.find((item) => item.id === saveTargetId)
         : null;
+      const draftAtSave = isDraftId(saveTargetId)
+        ? JSON.stringify(savedDrafts().find((item) => item.id === saveTargetId))
+        : null;
       const runSave = async () => {
+      if (
+        shaderId &&
+        conflictBlockedShaderRef.current === shaderId &&
+        !acknowledgedConflict
+      ) {
+        throw new Error("Review this shader's conflicting changes before saving again.");
+      }
       if (!background) setSaving(true);
       setError(null);
       try {
-        const graph = capturedGraph || {};
-        if (
-          isComposition &&
-          referencedShaderKeys(graph).join() !==
-            referencedShaderKeys(compositionRef.current).join()
-        ) {
-          compositionRef.current = graph;
-          setComposition(graph);
-        }
+        const graph = capturedGraph
+          ? promoteCompositionRefs(capturedGraph, cloudShadersRef.current)
+          : {};
+        let publishDependencies = [];
         const publicationGraph = isComposition
           ? graph
           : requestedKind === "effect"
@@ -7969,21 +7972,7 @@ export default function App() {
                 `These referenced fills or effects are unavailable for publishing: ${names.join(", ")}.`
               );
             }
-            const publishedDependencies = await Promise.all(
-              [...publishable.keys()].map((id) =>
-                updateShader(id, { is_public: true })
-              )
-            );
-            if (publishedDependencies.length) {
-              setCloudShaders((current) =>
-                current.map((item) => {
-                  const published = publishedDependencies.find(
-                    (dependency) => dependency.id === item.id
-                  );
-                  return published ? { ...item, ...published } : item;
-                })
-              );
-            }
+            publishDependencies = [...publishable.keys()];
           }
         }
         const liveFills = isComposition
@@ -8083,7 +8072,7 @@ export default function App() {
         const liveInputs = liveSessionInputs(
           requestedKind,
           graph,
-          documentInputsRef.current,
+          capturedInputs,
         );
         const durableInputs = await uploadDocumentInputAudio({
           inputs: liveInputs,
@@ -8158,100 +8147,30 @@ export default function App() {
           return currentShader;
         }
 
-        let saved;
-        let checkpointSummary = options.checkpointSummary || null;
-        if (isOwner && currentShader) {
-          if (checkpointKind && !checkpointSummary) {
-            const metadata = shaderVersions.length
-              ? shaderVersions
-              : await listShaderVersions(currentShader.id, { limit: 1 });
-            const latestVersion = metadata[0]
-              ? await getShaderVersion(currentShader.id, metadata[0].id)
-              : null;
-            checkpointSummary = summarizeManualVersion(latestVersion, payload);
-          }
-          saved = await saveShaderState({
-            shaderId: currentShader.id,
-            expectedStateRevision: expectedStateRevision(
-              committedStateRevisionsRef.current,
-              currentShader,
-            ),
-            ...buildShaderStateSavePayload(durableDocument),
-            dependencySnapshots,
-            checkpointDependencySnapshots: dependencySnapshots,
-            checkpointKind,
-            summary: checkpointSummary,
-          });
-          rememberStateRevision(
-            committedStateRevisionsRef.current,
-            saved,
-          );
-          const metadataPayload = {
-            name: payload.name,
-            description: payload.description,
-            ...figmaShaderLink(currentShader || draftLink),
-          };
-          if (!background) metadataPayload.is_public = publicFlag;
-          if (!shaderMetadataUnchanged(currentShader, metadataPayload)) {
-            saved = await updateShader(currentShader.id, metadataPayload, {
-              expectedStateRevision: saved.state_revision,
-            });
-          }
-        } else {
-          if (isDraftId(saveTargetId)) {
-            const promoted = await createOrResumeCloudDraft({
-              shaderId: targetShaderId,
-              createPayload: payload,
-              statePayload: {
-                ...buildShaderStateSavePayload(durableDocument),
-                dependencySnapshots,
-                checkpointDependencySnapshots: dependencySnapshots,
-                checkpointKind,
-                summary: checkpointSummary || "Saved local draft",
-              },
-              metadataPayload: {
-                name: payload.name,
-                description: payload.description,
-                is_public: publicFlag,
-                ...figmaShaderLink(currentShader || draftLink),
-              },
-              getExisting: getShaderMaybe,
-              create: createShader,
-              saveState: saveShaderState,
-              updateMetadata: updateShader,
-              onStateCommitted: (committed) =>
-                rememberStateRevision(
-                  committedStateRevisionsRef.current,
-                  committed,
-                ),
-            });
-            saved = promoted.shader;
-          } else {
-            saved = await createShader(payload);
-            rememberStateRevision(
-              committedStateRevisionsRef.current,
-              saved,
-            );
+        const localDraft = isDraftId(saveTargetId);
+        const existing = currentShader || (localDraft ? await getShaderMaybe(targetShaderId) : null);
+        const priorCommit = committedDocumentsRef.current.get(targetShaderId);
+        const baseline = priorCommit && (localDraft || !existing?.updated_at || priorCommit.updated_at >= existing.updated_at)
+          ? priorCommit
+          : existing;
+        if (localDraft && existing && !priorCommit) {
+          const existingDocument = buildShaderDocumentSnapshot(existing);
+          if (editorPersistenceFingerprint(existingDocument, existing) !== contentFingerprint) {
+            throw new Error("This draft already has a cloud copy. Open the cloud copy or duplicate the local draft to keep editing.");
           }
         }
-        const planLocalKey = currentShader?.id
-          ? `cloud:${currentShader.id}`
-          : `preset:${saveTargetId}`;
-        const targetThreadKey = `cloud:${saved.id}`;
-        if (isDraftId(saveTargetId)) {
-          await copyPlanToCloud(
-            targetThreadKey,
-            await readPlanForCopy({ threadKey: planLocalKey }),
-            user.id,
-            saved.id,
-          );
-        } else {
-          await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
+        let checkpointSummary = options.checkpointSummary || null;
+        if (existing && checkpointKind && !checkpointSummary) {
+          const versions = currentShader && shaderVersions.length
+            ? shaderVersions
+            : await listShaderVersions(targetShaderId, { limit: 1 });
+          const last = versions[0] ? await getShaderVersion(targetShaderId, versions[0].id) : null;
+          checkpointSummary = summarizeManualVersion(last, payload);
         }
         const assetChanges = {};
         const previousPublicThumbnailPaths =
-          saved.thumbnail_bucket === THUMBNAIL_BUCKET
-            ? [saved.thumbnail_path, saved.thumbnail_small_path].filter(Boolean)
+          existing?.thumbnail_bucket === THUMBNAIL_BUCKET
+            ? [existing.thumbnail_path, existing.thumbnail_small_path].filter(Boolean)
             : [];
 
         // Thumbnails are expensive (canvas capture + Storage RLS). Only refresh
@@ -8259,17 +8178,19 @@ export default function App() {
         if (!background) {
           let thumbnailBlob = null;
           try {
-            thumbnailBlob = await hostRef.current?.captureThumbnailBlob({
-              width: THUMBNAIL_SIZE,
-              height: THUMBNAIL_SIZE,
-              shouldResume: () => playPreferenceRef.current,
-            });
+            if (saveTargetId === draftSessionRef.current.presetId) {
+              thumbnailBlob = await hostRef.current?.captureThumbnailBlob({
+                width: THUMBNAIL_SIZE,
+                height: THUMBNAIL_SIZE,
+                shouldResume: () => playPreferenceRef.current,
+              });
+            }
           } catch {
             thumbnailBlob = null;
           }
           if (!thumbnailBlob) {
             const cached =
-              thumbnails[presetId] || thumbnailDataUrlsRef.current[presetId];
+              thumbnails[saveTargetId] || thumbnailDataUrlsRef.current[saveTargetId];
             if (
               typeof cached === "string" &&
               (cached.startsWith("blob:") ||
@@ -8291,14 +8212,22 @@ export default function App() {
           }
           if (
             !thumbnailBlob &&
-            saved.is_public &&
-            saved.thumbnail_path &&
-            saved.thumbnail_bucket !== THUMBNAIL_BUCKET
+            publicFlag &&
+            existing?.thumbnail_path &&
+            existing?.thumbnail_bucket !== THUMBNAIL_BUCKET
           ) {
             try {
-              thumbnailBlob = await downloadAsset(saved.thumbnail_path);
+              thumbnailBlob = await downloadAsset(existing.thumbnail_path);
             } catch {
               // Leave the existing private thumbnail in place until a later save.
+            }
+          }
+          if (!thumbnailBlob && makePrivate && previousPublicThumbnailPaths.length) {
+            try {
+              const response = await fetch(getPublicThumbnailUrl(previousPublicThumbnailPaths[0]));
+              if (response.ok) thumbnailBlob = await response.blob();
+            } catch {
+              // The public URL will be detached from the private document below.
             }
           }
           if (thumbnailBlob) {
@@ -8306,33 +8235,93 @@ export default function App() {
               assetChanges,
               await uploadThumbnailVariants({
                 ownerId: user.id,
-                shaderId: saved.id,
+                shaderId: targetShaderId,
                 blob: thumbnailBlob,
-                public:
-                  saved.is_public ||
-                  saved.thumbnail_bucket === THUMBNAIL_BUCKET,
+                public: publicFlag,
               }),
             );
+          } else if (makePrivate && previousPublicThumbnailPaths.length) {
+            Object.assign(assetChanges, {
+              thumbnail_bucket: ASSET_BUCKET,
+              thumbnail_path: null,
+              thumbnail_small_path: null,
+            });
           }
         }
 
-        if (Object.keys(assetChanges).length) {
-          saved = await updateShader(saved.id, assetChanges, {
-            expectedStateRevision: saved.state_revision,
-          });
-          const currentThumbnailPaths = new Set([
-            saved.thumbnail_path,
-            saved.thumbnail_small_path,
-          ]);
-          const staleThumbnailPaths = previousPublicThumbnailPaths.filter(
-            (path) => !currentThumbnailPaths.has(path),
-          );
-          if (staleThumbnailPaths.length) {
-            removeThumbnailAssets(staleThumbnailPaths).catch(() => {});
+
+        const metadata = { name: payload.name, description: payload.description, ...assetChanges };
+        if (!background || !existing) metadata.is_public = publicFlag;
+        if (!existing) Object.assign(metadata, figmaShaderLink(draftLink));
+        const saved = await commitShaderDocument({
+          shaderId: targetShaderId,
+          expectedStateRevision: baseline?.state_revision ?? null,
+          expectedUpdatedAt: baseline?.updated_at ?? null,
+          create: !existing,
+          ...buildShaderStateSavePayload(durableDocument),
+          dependencySnapshots,
+          checkpointDependencySnapshots: dependencySnapshots,
+          checkpointKind,
+          summary: checkpointSummary,
+          metadata,
+          publishDependencies,
+          planBuild: options.planBuild,
+        });
+        committedDocumentsRef.current.set(saved.id, saved);
+        rememberStateRevision(committedStateRevisionsRef.current, saved);
+        options.onCommitted?.();
+        if (publishDependencies.length) {
+          setCloudShaders((rows) => rows.map((row) =>
+            publishDependencies.includes(row.id) ? { ...row, is_public: true } : row
+          ));
+        }
+        const currentThumbnailPaths = new Set(saved.thumbnail_bucket === THUMBNAIL_BUCKET
+          ? [saved.thumbnail_path, saved.thumbnail_small_path]
+          : []);
+        const staleThumbnailPaths = previousPublicThumbnailPaths.filter((path) => !currentThumbnailPaths.has(path));
+        if (staleThumbnailPaths.length) removeThumbnailAssets(staleThumbnailPaths).catch(() => {});
+
+        const planLocalKey = currentShader?.id
+          ? `cloud:${currentShader.id}`
+          : `preset:${saveTargetId}`;
+        const targetThreadKey = `cloud:${saved.id}`;
+        try {
+          if (localDraft) {
+            await copyPlanToCloud(
+              targetThreadKey,
+              await readPlanForCopy({ threadKey: planLocalKey }),
+              user.id,
+              saved.id,
+            );
+          } else {
+            await migrateLocalPlanToCloud(planLocalKey, user.id, saved.id);
+          }
+        } catch (syncError) {
+          console.warn("Shader saved, but its plan copy could not be prepared.", syncError);
+          showNotice("Shader saved. Its plan still needs to sync.", { error: true });
+          if (localDraft) {
+            setCloudShaders((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+            return saved;
           }
         }
-
-        if (isDraftId(saveTargetId)) {
+        const activeDraftUnchanged = () => {
+          const latest = draftSessionRef.current;
+          return latest.presetId === saveTargetId &&
+            JSON.stringify(savedDrafts().find((item) => item.id === saveTargetId)) === draftAtSave &&
+            editorPersistenceFingerprint(captureDocumentSnapshot(), {
+              name: latest.shaderName.trim() || "Untitled Shader",
+              description: latest.shaderDescription,
+            }) === capturedEditorFingerprint &&
+            latest.pendingMedia === capturedPendingMedia;
+        };
+        if (localDraft && !activeDraftUnchanged()) {
+          setCloudShaders((current) => [saved, ...current.filter((item) => item.id !== saved.id)]);
+          if (draftSessionRef.current.presetId === saveTargetId) {
+            showNotice("Cloud copy saved. Newer edits are still in your local draft.");
+          }
+          return saved;
+        }
+        if (localDraft) {
           migrateChatThreadKey(planLocalKey, targetThreadKey);
           migrateCursorAgentThreadKey(planLocalKey, targetThreadKey);
           removeLocalPlan(planLocalKey);
@@ -8475,10 +8464,8 @@ export default function App() {
           }
           try {
             const latest = await getShader(currentShader.id);
-            rememberStateRevision(
-              committedStateRevisionsRef.current,
-              latest,
-            );
+            rememberStateRevision(committedStateRevisionsRef.current, latest);
+            committedDocumentsRef.current.set(latest.id, latest);
             setCloudShaders((current) => [
               latest,
               ...current.filter((item) => item.id !== latest.id),
@@ -8505,9 +8492,9 @@ export default function App() {
       }
       };
 
-      if (shaderId) {
-        return shaderSaveQueue.enqueue(shaderId, async () => {
-          const result = await withExclusiveShaderSave(shaderId, runSave, {
+      if (shaderId || isDraftId(saveTargetId)) {
+        return shaderSaveQueue.enqueue(targetShaderId, async () => {
+          const result = await withExclusiveShaderSave(targetShaderId, runSave, {
             ifAvailable:
               background &&
               !checkpointKind &&
@@ -8550,7 +8537,7 @@ export default function App() {
     saveShader({ background: true, waitForLock: true, notice: null });
 
   const checkpointAgentVersion = useCallback(
-    ({ source: appliedSource, summary, description }) => {
+    ({ source: appliedSource, summary, description, planBuild, onCommitted }) => {
       if (!appliedSource) return;
       const nextDescription =
         typeof description === "string" && description.trim()
@@ -8573,12 +8560,15 @@ export default function App() {
         }
       }
       if (!isOwner || !currentShader?.id) return;
+      if (planBuild) setError(null);
       const checkpoint = {
         presetId,
         shaderId: currentShader.id,
         source: appliedSource,
         summary: summarizeAgentVersion(summary),
         description: nextDescription,
+        planBuild,
+        onCommitted,
       };
       if (
         lastSuccessfulCompileRef.current.presetId === presetId &&
@@ -8591,6 +8581,7 @@ export default function App() {
       } else {
         pendingAgentCheckpointRef.current = checkpoint;
       }
+      return true;
     },
     [currentShader?.id, isOwner, presetId]
   );
@@ -8608,6 +8599,11 @@ export default function App() {
     ) {
       window.clearTimeout(agentCheckpointRetryTimerRef.current);
       agentCheckpointRetryTimerRef.current = 0;
+      if (pendingAgentCheckpoint.planBuild && !agentCheckpointSavingRef.current) {
+        releaseShaderPlanBuild(pendingAgentCheckpoint.shaderId, pendingAgentCheckpoint.planBuild)
+          .catch(console.warn);
+        pendingAgentCheckpoint.planBuild.onSettled?.();
+      }
       setPendingAgentCheckpoint(null);
       return;
     }
@@ -8645,6 +8641,8 @@ export default function App() {
       descriptionOverride: checkpoint.description,
       sourceOverride: checkpoint.source,
       valuesOverride: checkpoint.values,
+      planBuild: checkpoint.planBuild,
+      onCommitted: checkpoint.onCommitted,
       notice: null,
     })
       .then(() => {
@@ -8656,7 +8654,14 @@ export default function App() {
       })
       .catch((checkpointError) => {
         // saveShader preserves the local source and surfaces the error.
-        if (!isTransientCloudWriteError(checkpointError)) return;
+        if (!isTransientCloudWriteError(checkpointError)) {
+          if (checkpoint.planBuild) {
+            releaseShaderPlanBuild(checkpoint.shaderId, checkpoint.planBuild).catch(console.warn);
+            checkpoint.planBuild.onSettled?.();
+            setPendingAgentCheckpoint((current) => current === checkpoint ? null : current);
+          }
+          return;
+        }
         const retryDelay = Math.max(
           1000,
           cloudWriteBackoffUntilRef.current - Date.now()
@@ -8680,13 +8685,20 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (
-      pendingAgentCheckpointRef.current &&
-      pendingAgentCheckpointRef.current.presetId !== presetId
-    ) {
-      pendingAgentCheckpointRef.current = null;
+    const checkpoint = pendingAgentCheckpointRef.current;
+    if (!checkpoint) return;
+    const obsolete = checkpoint.presetId !== presetId || checkpoint.source !== source;
+    const unavailable = Boolean(checkpoint.planBuild && (fatal || error));
+    if (!obsolete && !unavailable) return;
+    pendingAgentCheckpointRef.current = null;
+    if (checkpoint.planBuild) {
+      releaseShaderPlanBuild(checkpoint.shaderId, checkpoint.planBuild).catch(console.warn);
+      checkpoint.planBuild.onSettled?.();
+      if (!obsolete && unavailable) {
+        showNotice("The edit is in the code panel. It needs a working preview before the plan can be saved as built.", { error: true });
+      }
     }
-  }, [presetId]);
+  }, [error, fatal, presetId, showNotice, source]);
 
   useEffect(() => {
     clearVersionPreviewMedia();
@@ -9251,7 +9263,7 @@ export default function App() {
     }
     if (!isOwner || saving) return;
     try {
-      const rows = await listPublicShaderGraphs({ limit: 500 });
+      const rows = await listPublicShaderGraphs();
       const parents = publicItemsReferencing(currentShader?.id, rows);
       if (parents.length) {
         throw new Error(
@@ -9719,7 +9731,7 @@ export default function App() {
     async (shader) => {
       if (!user || !shader || shader.owner_id !== user.id) return false;
       try {
-        const rows = await listPublicShaderGraphs({ limit: 500 });
+        const rows = await listPublicShaderGraphs();
         const parents = publicItemsReferencing(shader.id, rows);
         if (parents.length) {
           throw new Error(
@@ -9976,6 +9988,39 @@ export default function App() {
     handle.addEventListener("pointercancel", onPointerUp);
   }, [saveAppNavWidth]);
 
+  const resizeProperties = useCallback((event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    const viewer = viewerRef.current;
+    const panel = handle.nextElementSibling;
+    if (!viewer || !panel) return;
+    const startX = event.clientX;
+    const startWidth = panel.getBoundingClientRect().width;
+    let finalWidth = startWidth;
+    const cssWriter = createRafCssWriter(viewer, "--shader-properties-width");
+    handle.setPointerCapture(event.pointerId);
+    const onPointerMove = (moveEvent) => {
+      finalWidth = Math.min(MAX_PROPERTIES_WIDTH, Math.max(
+        MIN_PROPERTIES_WIDTH, startWidth + startX - moveEvent.clientX,
+      ));
+      cssWriter.write(finalWidth);
+    };
+    const onPointerUp = (upEvent) => {
+      if (handle.hasPointerCapture(upEvent.pointerId)) {
+        handle.releasePointerCapture(upEvent.pointerId);
+      }
+      handle.removeEventListener("pointermove", onPointerMove);
+      handle.removeEventListener("pointerup", onPointerUp);
+      handle.removeEventListener("pointercancel", onPointerUp);
+      cssWriter.flush();
+      savePropertiesWidth(finalWidth);
+    };
+    handle.addEventListener("pointermove", onPointerMove);
+    handle.addEventListener("pointerup", onPointerUp);
+    handle.addEventListener("pointercancel", onPointerUp);
+  }, [savePropertiesWidth]);
+
   const resizeCodePane = useCallback(
     (event) => {
       if (event.button !== 0) return;
@@ -9995,7 +10040,7 @@ export default function App() {
         const available =
           viewer.getBoundingClientRect().bottom - previewBounds.top -
           handle.getBoundingClientRect().height -
-          MIN_STACKED_SIDEBAR;
+          (Number.parseFloat(getComputedStyle(sidebarRef.current).minHeight) || MIN_STACKED_SIDEBAR);
         const maxHeight = Math.max(MIN_PREVIEW_HEIGHT, available);
         let finalHeight = startHeight;
         const cssWriter = createRafCssWriter(viewer, "--preview-height");
@@ -10993,11 +11038,10 @@ export default function App() {
   const persistCurrentFigmaLink = useCallback(
     async (link) => {
       const normalizedLink = figmaShaderLink(link);
-      draftSessionRef.current = {
-        ...draftSessionRef.current,
-        ...normalizedLink,
-      };
       if (isDraftId(presetId)) {
+        if (draftSessionRef.current.presetId === presetId) {
+          draftSessionRef.current = { ...draftSessionRef.current, ...normalizedLink };
+        }
         setDrafts((current) => {
           const next = current.map((draft) =>
             draft.id === presetId ? { ...draft, ...normalizedLink } : draft
@@ -11008,10 +11052,24 @@ export default function App() {
         return normalizedLink;
       }
       if (currentShader?.id && isOwner) {
-        const saved = await updateShader(currentShader.id, normalizedLink, {
-          expectedStateRevision: currentShader.state_revision,
+        const id = currentShader.id;
+        const saved = await shaderSaveQueue.enqueue(id, async () => {
+          const result = await withExclusiveShaderSave(id, async () => {
+            const latest = committedDocumentsRef.current.get(id);
+            const baseline = latest && latest.updated_at >= currentShader.updated_at ? latest : currentShader;
+            const updated = await updateShader(id, normalizedLink, {
+              expectedStateRevision: baseline.state_revision,
+              expectedUpdatedAt: baseline.updated_at,
+            });
+            committedDocumentsRef.current.set(id, updated);
+            return updated;
+          });
+          return result.value;
         });
-        setCurrentShader(saved);
+        if (draftSessionRef.current.presetId === presetId) {
+          draftSessionRef.current = { ...draftSessionRef.current, ...normalizedLink };
+          setCurrentShader(saved);
+        }
         setCloudShaders((current) =>
           current.map((shader) =>
             shader.id === saved.id ? { ...shader, ...saved } : shader
@@ -11272,7 +11330,7 @@ export default function App() {
   );
   const shaderEditorHeader = (
         <>
-          <fig-header class="shader-editor-header" borderless={isComposerView ? "" : undefined}>
+          <fig-header class="shader-editor-header" borderless="">
             {libraryNavMotion === "open" ? null : (
             <fig-tooltip text="Show library">
               <fig-button
@@ -11798,12 +11856,13 @@ export default function App() {
           className="library-rail"
           aria-hidden={libraryNavMotion === "open" ? undefined : "true"}
         >
-        <nav
-          className="app-nav"
+        <div
+          className="library-modules"
           style={{
             "--app-nav-width": `${appNavWidth}px`,
           }}
         >
+        <nav className="app-nav">
           <div className="app-nav-headers">
             <fig-header class="app-nav-library-filters" borderless="">
               <hstack style={{ "--hstack-gap": "var(--spacer-1)" }}>
@@ -11943,7 +12002,8 @@ export default function App() {
             figmaPushBlocked={figmaPushBlocked}
             onAction={onShaderAction}
           />
-          <fig-footer>
+        </nav>
+          <fig-footer class="app-nav-account-module" borderless="">
             <AccountMenu
               layout="bar"
               position="top right"
@@ -11962,7 +12022,7 @@ export default function App() {
               onNotice={showNotice}
             />
           </fig-footer>
-        </nav>
+        </div>
 
         <div
           className="app-nav-resizer"
@@ -12015,6 +12075,7 @@ export default function App() {
           visualizerRef={visualizerRef}
           style={{
             "--code-width": `${codeWidth}px`,
+            "--shader-properties-width": `${propertiesWidth}px`,
             "--chat-height": `${chatHeight}px`,
             ...(previewHeight != null
               ? { "--preview-height": `${previewHeight}px` }
@@ -12023,6 +12084,19 @@ export default function App() {
           codeCollapsed={effectiveCodeCollapsed}
           chatCollapsed={protectedPreview ? false : chatCollapsed}
           stacked={stacked}
+          propertiesWidth={propertiesWidth}
+          minPropertiesWidth={MIN_PROPERTIES_WIDTH}
+          maxPropertiesWidth={MAX_PROPERTIES_WIDTH}
+          onResizeProperties={resizeProperties}
+          onResetPropertiesSize={() => savePropertiesWidth(MIN_PROPERTIES_WIDTH)}
+          onKeyResizeProperties={(event) => {
+            if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            const next = event.key === "Home" ? MIN_PROPERTIES_WIDTH
+              : event.key === "End" ? MAX_PROPERTIES_WIDTH
+              : propertiesWidth + (event.key === "ArrowLeft" ? 16 : -16);
+            savePropertiesWidth(Math.min(MAX_PROPERTIES_WIDTH, Math.max(MIN_PROPERTIES_WIDTH, next)));
+          }}
           codeWidth={codeWidth}
           previewHeight={previewHeight}
           minCodeWidth={MIN_CODE_WIDTH}
@@ -12172,12 +12246,12 @@ export default function App() {
               const visualizer = visualizerRef.current;
               if (!viewer || !visualizer) return;
               const previewBounds = visualizer.getBoundingClientRect();
-              const current = previewHeight ?? previewBounds.height;
+            const current = previewBounds.height;
               const maxHeight = Math.max(
                 MIN_PREVIEW_HEIGHT,
                 viewer.getBoundingClientRect().bottom - previewBounds.top -
                   handle.getBoundingClientRect().height -
-                  MIN_STACKED_SIDEBAR
+                  (Number.parseFloat(getComputedStyle(sidebarRef.current).minHeight) || MIN_STACKED_SIDEBAR)
               );
               savePreviewHeight(
                 Math.min(
@@ -12192,11 +12266,14 @@ export default function App() {
             }
             if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
             event.preventDefault();
+            const current = sidebarRef.current?.getBoundingClientRect().width;
+            const preview = visualizerRef.current?.getBoundingClientRect().width;
+            if (current == null || preview == null) return;
             saveCodeWidth(
-              Math.max(
-                MIN_CODE_WIDTH,
-                codeWidth + (event.key === "ArrowLeft" ? -16 : 16)
-              )
+              Math.min(
+                current + Math.max(0, preview - MIN_PREVIEW_WIDTH),
+                Math.max(MIN_CODE_WIDTH, current + (event.key === "ArrowLeft" ? -16 : 16)),
+              ),
             );
           }}
         />

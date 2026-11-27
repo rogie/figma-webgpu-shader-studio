@@ -46,8 +46,16 @@ export function getProviderKey(provider) {
 
 /** @param {"openai"|"anthropic"|"gemini"|"grok"|"cursor"} provider @param {string} key */
 export function setProviderKey(provider, key) {
+  setProviderKeys({ [provider]: key });
+}
+
+export function setProviderKeys(keys) {
   const next = readStore();
-  next[provider] = (key || "").trim();
+  for (const provider of Object.keys(EMPTY)) {
+    if (Object.hasOwn(keys, provider)) {
+      next[provider] = (keys[provider] || "").trim();
+    }
+  }
   writeStore(next);
 }
 

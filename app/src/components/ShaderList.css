@@ -6,10 +6,17 @@
   width: 100%;
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: var(--spacer-2);
+  padding-bottom: 0;
 
-  fig-group.shader-list-section {
-    padding: 0;
+  /* Sticky headers must stay opaque at the scroll container's top edge. */
+  &.overflow-fade[data-overflow-top] {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+
+  &.overflow-fade[data-overflow-top][data-overflow-bottom] {
+    mask-image: linear-gradient(to top, transparent, black var(--spacer-5));
+    -webkit-mask-image: linear-gradient(to top, transparent, black var(--spacer-5));
   }
 
   .shader-list-empty {
@@ -31,10 +38,10 @@
 
   fig-header.shader-list-header {
     position: sticky;
-    top: 0;
+    top: -1px;
     z-index: 2;
+    background: var(--figma-color-bg);
 
-    h3,
     .shader-list-header-count {
       color: var(--figma-color-text-tertiary);
     }
@@ -51,6 +58,10 @@
     &:focus-within .shader-list-header-add {
       visibility: visible;
     }
+  }
+
+  fig-group.shader-list-section + fig-group.shader-list-section > .shader-list-header {
+    box-shadow: inset 0 1px 0 var(--figma-color-border);
   }
 
   fig-chooser.shader-list-chooser {
@@ -83,6 +94,7 @@
   }
 
   &[data-layout="grid"] fig-chooser.shader-list-chooser {
+    box-sizing: border-box;
     --fig-chooser-inline-margin: var(--spacer-2-5);
     align-content: start;
     gap: var(--spacer-1);

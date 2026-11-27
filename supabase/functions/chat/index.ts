@@ -60,6 +60,7 @@ type ExtractedStreamEvent = {
   error?: string | null;
   status?: ChatStatusPhase | null;
   truncated?: boolean;
+  completed?: boolean;
 };
 
 const OPENAI_MAX_COMPLETION_TOKENS = 128_000;
@@ -127,6 +128,8 @@ function sseStreamFromUpstream(
   let lastStatus: ChatStatusPhase | null = null;
   let accumulatedText = "";
   let streamTruncated = false;
+  let streamCompleted = false;
+  let streamFailed = false;
   let continuationCount = 0;
   let continuationBase = "";
   let continuationBuffer = "";
@@ -155,10 +158,15 @@ function sseStreamFromUpstream(
     data: string,
     controller: ReadableStreamDefaultController<Uint8Array>,
   ) => {
-    if (!data || data === "[DONE]") return;
+    if (!data || streamFailed) return;
+    if (data === "[DONE]") {
+      streamCompleted = true;
+      return;
+    }
     try {
       const json = JSON.parse(data) as Record<string, unknown>;
       if (json.type === "error") {
+        streamFailed = true;
         const err = json.error as { message?: string } | undefined;
         controller.enqueue(
           encoder.encode(
@@ -176,6 +184,7 @@ function sseStreamFromUpstream(
         typeof providerError === "object" &&
         providerError.message
       ) {
+        streamFailed = true;
         controller.enqueue(
           encoder.encode(
             sseEncode({
@@ -198,6 +207,9 @@ function sseStreamFromUpstream(
           ? extracted.truncated
           : false;
       if (truncated) streamTruncated = true;
+      if (typeof extracted === "object" && extracted?.completed) {
+        streamCompleted = true;
+      }
       if (
         status &&
         (status === "thinking" || status === "responding") &&
@@ -209,6 +221,7 @@ function sseStreamFromUpstream(
         );
       }
       if (error) {
+        streamFailed = true;
         controller.enqueue(
           encoder.encode(sseEncode({ type: "error", message: error })),
         );
@@ -258,9 +271,14 @@ function sseStreamFromUpstream(
           try {
             while (!cancelled) {
               const { done, value } = await reader.read();
+              if (cancelled) return;
               if (done) {
                 emitLines(decoder.decode(), controller, true);
                 flushContinuationBuffer(controller);
+                if (streamFailed) {
+                  controller.close();
+                  return;
+                }
                 if (streamTruncated) {
                   if (
                     !continueUpstream ||
@@ -284,6 +302,7 @@ function sseStreamFromUpstream(
                   continuationBuffer = "";
                   continuationStitched = false;
                   streamTruncated = false;
+                  streamCompleted = false;
                   buffer = "";
                   lastStatus = null;
                   controller.enqueue(
@@ -293,6 +312,10 @@ function sseStreamFromUpstream(
                   );
                   lastStatus = "thinking";
                   const nextUpstream = await continueUpstream(accumulatedText);
+                  if (cancelled) {
+                    await nextUpstream.body?.cancel();
+                    return;
+                  }
                   if (!nextUpstream.ok || !nextUpstream.body) {
                     const detail = await nextUpstream.text();
                     throw new Error(
@@ -303,7 +326,10 @@ function sseStreamFromUpstream(
                   reader = nextUpstream.body.getReader();
                   continue;
                 }
-                controller.enqueue(encoder.encode(sseEncode({ type: "done" })));
+                const outcome = streamCompleted
+                  ? { type: "done" }
+                  : { type: "error", message: "The provider stream ended before completing its response." };
+                controller.enqueue(encoder.encode(sseEncode(outcome)));
                 controller.close();
                 return;
               }
@@ -499,6 +525,12 @@ async function streamOpenAICompatible(
       return { truncated: true };
     }
     const delta = choice?.delta?.content;
+    if (choice?.finish_reason === "stop") {
+      return { text: delta, completed: true };
+    }
+    if (choice?.finish_reason) {
+      return { error: `The provider stopped without a complete reply (${choice.finish_reason}).` };
+    }
     if (typeof delta === "string" && delta) {
       return { text: delta, status: "responding" };
     }
@@ -657,6 +689,9 @@ async function streamAnthropic(
   }
 
   return sseStreamFromUpstream(upstream, (json) => {
+    if (json.type === "message_stop") {
+      return { completed: true };
+    }
     if (json.type === "message_start") {
       return { status: "thinking" };
     }
@@ -690,6 +725,12 @@ async function streamAnthropic(
         "max_tokens"
     ) {
       return { truncated: true };
+    }
+    if (json.type === "message_delta") {
+      const reason = (json.delta as { stop_reason?: string } | undefined)?.stop_reason;
+      if (reason && reason !== "end_turn" && reason !== "stop_sequence") {
+        return { error: `Anthropic stopped without a complete reply (${reason}).` };
+      }
     }
     return null;
   }, fetchCompletion);
@@ -760,16 +801,12 @@ async function streamGemini(
     const candidate = candidates?.[0];
     const parts = candidate?.content?.parts;
     const truncated = candidate?.finishReason === "MAX_TOKENS";
+    const completed = candidate?.finishReason === "STOP";
+    if (candidate?.finishReason && !truncated && !completed) {
+      return { error: candidate.finishMessage || `Gemini stopped without a complete reply (${candidate.finishReason}).` };
+    }
     if (!Array.isArray(parts)) {
-      if (truncated) return { truncated: true };
-      if (candidate?.finishReason) {
-        return {
-          error:
-            candidate.finishMessage ||
-            `Gemini returned no text (${candidate.finishReason}).`,
-        };
-      }
-      return null;
+      return { truncated, completed };
     }
     const text = parts
       .filter((part) => !part?.thought)
@@ -780,6 +817,7 @@ async function streamGemini(
         text,
         status: "responding",
         truncated,
+        completed,
       };
     }
     if (
@@ -788,17 +826,9 @@ async function streamGemini(
           part?.thought && typeof part?.text === "string" && part.text.length > 0,
       )
     ) {
-      return { status: "thinking", truncated };
+      return { status: "thinking", truncated, completed };
     }
-    if (truncated) return { truncated: true };
-    if (candidate?.finishReason) {
-      return {
-        error:
-          candidate.finishMessage ||
-          `Gemini returned reasoning but no visible text (${candidate.finishReason}).`,
-      };
-    }
-    return null;
+    return { truncated, completed };
   }, fetchCompletion);
 }
 

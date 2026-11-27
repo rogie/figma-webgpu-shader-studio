@@ -340,7 +340,10 @@ export function mapCursorStreamEvent(
   }
   if (name === "status") {
     const status = typeof payload?.status === "string" ? payload.status : "";
-    if (isCursorRunTerminal(status)) return { type: "done" };
+    if (status === "FINISHED") return { type: "done" };
+    if (isCursorRunTerminal(status)) {
+      return { type: "error", message: `Cursor run ended with status ${status}.` };
+    }
     return { type: "status", phase: "thinking" };
   }
   if (name === "result") {
@@ -650,16 +653,17 @@ async function fetchRunResult(
   agentId: string,
   runId: string,
   signal?: AbortSignal,
-): Promise<string> {
+): Promise<{ status: string; text: string } | null> {
   const response = await fetch(
     `${CURSOR_API}/agents/${agentId}/runs/${runId}`,
     { headers: { Authorization: `Bearer ${apiKey}` }, signal },
   );
-  if (!response.ok) return "";
+  if (!response.ok) return null;
   try {
-    return runResultText(await response.json());
+    const payload = await response.json();
+    return { status: readRunStatus(payload), text: runResultText(payload) };
   } catch {
-    return "";
+    return null;
   }
 }
 
@@ -780,7 +784,10 @@ export function streamCursorChat(options: {
                   runId,
                   options.signal,
                 );
-                if (fallback) emit({ type: "delta", text: fallback });
+                if (fallback?.status !== "FINISHED") {
+                  throw new Error("Cursor did not confirm that this run completed.");
+                }
+                if (fallback.text) emit({ type: "delta", text: fallback.text });
                 emit({ type: "done", agentId, runId });
                 controller.close();
                 return;
@@ -845,15 +852,19 @@ export function streamCursorChat(options: {
             }
 
             if (!sawError) {
-              let unread = unreadResultDelta(accumulated, pendingResult);
-              if (!accumulated.trim() && !unread) {
-                unread = await fetchRunResult(
+              if (!terminal || (!accumulated.trim() && !pendingResult)) {
+                const result = await fetchRunResult(
                   options.apiKey,
                   agentId,
                   runId,
                   options.signal,
                 );
+                if (!terminal && result?.status !== "FINISHED") {
+                  throw new Error("Cursor did not confirm that this run completed.");
+                }
+                pendingResult = result?.text || "";
               }
+              const unread = unreadResultDelta(accumulated, pendingResult);
               if (unread) emit({ type: "delta", text: unread });
               emit({ type: "done", agentId, runId });
             }

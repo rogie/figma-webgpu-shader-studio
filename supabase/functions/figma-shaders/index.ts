@@ -539,7 +539,9 @@ async function exchangeOAuthToken(
           ? payload.error
           : `Figma OAuth token request failed (${response.status})`;
     throw Object.assign(new Error(message), {
-      code: "figma_oauth_token_error",
+      code: payload.error === "invalid_grant" && params.grant_type === "refresh_token"
+        ? "figma_oauth_invalid_grant"
+        : "figma_oauth_token_error",
       status: response.status,
     });
   }

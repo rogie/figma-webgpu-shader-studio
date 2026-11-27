@@ -4,7 +4,7 @@ import { useAuth } from "../contexts/AuthContext.jsx";
 import UserAvatar from "./UserAvatar.jsx";
 import {
   getProviderKeys,
-  setProviderKey,
+  setProviderKeys,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
 import { clearCursorAgent } from "../lib/cursorAgent.js";
@@ -115,11 +115,13 @@ export default function AccountMenu({
     /** @type {"idle" | "testing" | "ok" | "error"} */ ("idle")
   );
   const [figmaTestMessage, setFigmaTestMessage] = useState("");
+  const figmaActionRef = useRef(0);
   const [displayName, setDisplayName] = useState(() =>
     accountDisplayName(user)
   );
   const [handle, setHandle] = useState("");
   const [handleChecking, setHandleChecking] = useState(false);
+  const handleCheckRef = useRef(0);
   const [handleAvailable, setHandleAvailable] = useState(null);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -164,6 +166,8 @@ export default function AccountMenu({
   }, []);
 
   useEffect(() => {
+    handleCheckRef.current += 1;
+    setHandleChecking(false);
     if (!user) {
       setDisplayName("");
       setHandle("");
@@ -172,6 +176,8 @@ export default function AccountMenu({
     }
     let cancelled = false;
     setDisplayName(accountDisplayName(user));
+    setHandle("");
+    setHandleAvailable(null);
     getProfile(user.id)
       .then((profile) => {
         if (!cancelled && profile?.display_name) {
@@ -293,12 +299,14 @@ export default function AccountMenu({
         setHandle(profile.handle);
         onProfileChange?.(profile.display_name, profile);
       }
-      setProviderKey("openai", openaiKey);
-      setProviderKey("anthropic", anthropicKey);
-      setProviderKey("gemini", geminiKey);
-      setProviderKey("grok", grokKey);
       const previousCursorKey = getProviderKeys().cursor;
-      setProviderKey("cursor", cursorKey);
+      setProviderKeys({
+        openai: openaiKey,
+        anthropic: anthropicKey,
+        gemini: geminiKey,
+        grok: grokKey,
+        cursor: cursorKey,
+      });
       if ((cursorKey || "").trim() !== previousCursorKey) {
         clearCursorAgent();
       }
@@ -314,6 +322,7 @@ export default function AccountMenu({
   };
 
   const checkHandleAvailability = async () => {
+    const checkId = ++handleCheckRef.current;
     const validationError = profileHandleError(handle);
     if (validationError) {
       setHandleAvailable(false);
@@ -324,44 +333,52 @@ export default function AccountMenu({
     setSettingsError("");
     try {
       const available = await isProfileHandleAvailable(handle, user?.id);
+      if (checkId !== handleCheckRef.current) return;
       setHandleAvailable(available);
       if (!available) setSettingsError("That handle is already taken.");
     } catch (availabilityError) {
+      if (checkId !== handleCheckRef.current) return;
       setHandleAvailable(null);
       onNotice?.(
         availabilityError.message || String(availabilityError),
         { error: true },
       );
     } finally {
-      setHandleChecking(false);
+      if (checkId === handleCheckRef.current) setHandleChecking(false);
     }
   };
 
   const connectFigma = async () => {
+    const actionId = ++figmaActionRef.current;
     setFigmaTestState("testing");
     setFigmaTestMessage("");
     try {
       await beginFigmaOAuth();
     } catch (oauthError) {
+      if (actionId !== figmaActionRef.current) return;
       setFigmaTestState("error");
       setFigmaTestMessage(oauthError.message || String(oauthError));
     }
   };
 
   const testFigma = async () => {
+    const actionId = ++figmaActionRef.current;
     setFigmaTestState("testing");
     setFigmaTestMessage("");
     try {
       await testFigmaConnection();
+      if (actionId !== figmaActionRef.current) return;
       setFigmaTestState("ok");
       setFigmaTestMessage("Figma MCP connection verified.");
     } catch (testError) {
+      if (actionId !== figmaActionRef.current) return;
       setFigmaTestState("error");
       setFigmaTestMessage(testError.message || String(testError));
     }
   };
 
   const removeFigmaConnection = () => {
+    figmaActionRef.current += 1;
     disconnectFigma();
     setFigmaConnected(false);
     setFigmaTestState("idle");
@@ -636,6 +653,8 @@ export default function AccountMenu({
                   full=""
                   required=""
                   onInput={(event) => {
+                    handleCheckRef.current += 1;
+                    setHandleChecking(false);
                     setHandle(normalizeProfileHandle(event.target.value));
                     setHandleAvailable(null);
                     setSettingsError("");

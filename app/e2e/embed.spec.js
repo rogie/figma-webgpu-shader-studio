@@ -176,3 +176,16 @@ test("generated iframe code grants WebGPU and camera permissions", async ({
   const source = await response.text();
   expect(source).toContain('allow="webgpu; camera"');
 });
+
+test("an embed releases its host if runtime setup fails", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "gpu", {
+      configurable: true,
+      value: {},
+    });
+  });
+  await page.goto("/e2e/fixtures/embed.html?mode=composition&failSetup");
+  await expect(page.locator("#loading")).toBeHidden();
+  await expect(page.locator("#error")).toContainText("could not be rendered");
+  expect(await page.evaluate(() => window.__embedDestroyed)).toBe(true);
+});

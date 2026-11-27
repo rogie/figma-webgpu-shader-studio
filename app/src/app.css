@@ -20,11 +20,12 @@ body,
 }
 
 :root {
+  --bg-app: light-dark(#f5f5f5, #202020);
   --global-app-nav-width: 3rem;
   --panel-drag-handle-width: var(--spacer-4);
   --shader-properties-width: 280px;
   --code-width: 480px;
-  --viewer-radius: 0.5rem;
+  --viewer-radius: var(--radius-large);
 }
 
 fig-header[borderless] + fig-header {
@@ -45,13 +46,13 @@ fig-header[borderless]:has(+ fig-header) {
 #root {
   position: relative;
   display: flex;
-  background-color: var(--figma-color-bg);
+  background-color: var(--bg-app);
   color: var(--figma-color-text);
 
   .global-app-nav {
     position: absolute;
     z-index: 20;
-    inset: 0 auto 0 0;
+    inset: 1rem auto 1rem 1rem;
     width: var(--global-app-nav-width);
     box-sizing: border-box;
     display: flex;
@@ -60,7 +61,8 @@ fig-header[borderless]:has(+ fig-header) {
     gap: var(--spacer-2-5);
     padding: var(--spacer-2);
     background: var(--figma-color-bg);
-    border-right: 1px solid var(--figma-color-border);
+    border: 0;
+    border-radius: var(--viewer-radius);
 
     > fig-separator,
     > .global-app-nav-actions > fig-separator {
@@ -91,12 +93,13 @@ fig-header[borderless]:has(+ fig-header) {
   }
 
   .app-shell-content {
+    background-color: var(--bg-app);
     flex: 1 1 auto;
-    width: calc(100% - var(--global-app-nav-width));
+    width: calc(100% - var(--global-app-nav-width) - 2rem);
     height: 100%;
     min-width: 0;
     min-height: 0;
-    margin-left: var(--global-app-nav-width);
+    margin-left: calc(var(--global-app-nav-width) + 2rem);
     display: flex;
     overflow: hidden;
   }
@@ -156,6 +159,38 @@ fig-header[borderless]:has(+ fig-header) {
     min-height: 0;
     container-type: inline-size;
     container-name: editor;
+
+    .app-nav {
+      flex: 0 1 auto;
+      width: 100%;
+      height: auto;
+      border: 0;
+      border-radius: var(--viewer-radius);
+      background: var(--figma-color-bg);
+    }
+
+    .library-modules {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      width: var(--app-nav-width);
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .app-nav .shader-list {
+      flex: 0 1 auto;
+    }
+
+    .app-nav-account-module {
+      flex: 0 0 auto;
+      justify-content: space-between;
+      align-items: center;
+      padding-block: var(--spacer-1);
+      border: 0;
+      border-radius: var(--viewer-radius);
+      background: var(--figma-color-bg);
+    }
 
     &[hidden] {
       display: none;
@@ -247,27 +282,21 @@ fig-header[borderless]:has(+ fig-header) {
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
 
-    > fig-footer {
-      justify-content: space-between;
-      align-items: center;
-      padding-block: var(--spacer-1);
-    }
+  .app-nav-account {
+    display: flex;
+    flex: 1 1 auto;
+    align-items: center;
+    gap: var(--spacer-2);
+    min-width: 0;
 
-    .app-nav-account {
-      display: flex;
-      flex: 1 1 auto;
-      align-items: center;
-      gap: var(--spacer-2);
+    .account-profile-button {
       min-width: 0;
+      padding-left: var(--spacer-1);
 
-      .account-profile-button {
-        min-width: 0;
-        padding-left: var(--spacer-1);
-
-        fig-avatar {
-          margin-right: var(--spacer-2);
-        }
+      fig-avatar {
+        margin-right: var(--spacer-2);
       }
     }
   }
@@ -395,6 +424,7 @@ fig-header[borderless]:has(+ fig-header) {
         }
 
         &[readonly]:not([readonly="false"]) {
+          width: fit-content;
           background-color: transparent;
           box-shadow: none !important;
           outline: none !important;
@@ -402,6 +432,8 @@ fig-header[borderless]:has(+ fig-header) {
           transition: background-color 120ms ease;
 
           > input {
+            field-sizing: content;
+            max-width: 100%;
             text-overflow: ellipsis;
           }
         }
@@ -880,7 +912,9 @@ fig-header[borderless]:has(+ fig-header) {
   .shader-viewer .shader-viewer-chat {
     margin: 0;
     padding: 0;
+    border: 0;
     border-radius: var(--viewer-radius);
+    background: var(--figma-color-bg);
     overflow: hidden;
     position: relative;
     display: flex;
@@ -890,16 +924,6 @@ fig-header[borderless]:has(+ fig-header) {
     &[data-collapsed="true"] {
       flex: 0 0 40px;
       min-height: 40px;
-    }
-
-    &::after {
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      border-radius: var(--viewer-radius);
-      box-shadow: inset 0 0 0 1px var(--figma-color-border);
-      z-index: 4;
     }
 
     > fig-header {
@@ -1298,11 +1322,34 @@ dialog.delete-shader-dialog {
   }
 }
 
-/* Viewer inset only. The library nav sits flush to the global nav and viewport. */
+@media (max-width: 740px) {
+  #root .editor-view {
+    position: relative;
+  }
+
+  #root .editor-view > .library-rail {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 12;
+    background: var(--figma-color-bg);
+  }
+
+  #root .editor-view > .app-nav-resizer {
+    display: none;
+  }
+}
+
+/* Match the library and viewer gutters at the viewport edges. */
 #root > .app-shell-content > .editor-view {
   padding: 0;
   box-sizing: border-box;
   overflow: hidden;
+
+  > .library-rail {
+    box-sizing: border-box;
+    padding: 1rem 0 1rem 1rem;
+    background: transparent;
+  }
 
   > :is(.shader-viewer, .composer-viewer, .editor-route-state) {
     height: auto;

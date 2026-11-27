@@ -21,7 +21,7 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const OAUTH_CALLBACK_PATH = "figma/oauth/callback";
 const OAUTH_PENDING_KEY = "shader-studio.figmaOAuthPending";
-let refreshPromise = null;
+let pendingRefresh = null;
 let callbackPromise = null;
 
 /** @typedef {"effect" | "fill"} FigmaShaderKind */
@@ -162,40 +162,57 @@ async function callFigmaShadersRaw(body, options = {}) {
   return payload || {};
 }
 
-async function refreshFigmaAccessToken(signal) {
-  const session = getFigmaOAuthSession();
+function isCurrentFigmaSession(session) {
+  const current = getFigmaOAuthSession();
+  return current?.accessToken === session.accessToken &&
+    current?.refreshToken === session.refreshToken;
+}
+
+async function refreshFigmaAccessToken(session = getFigmaOAuthSession()) {
   if (!session?.refreshToken) {
-    clearFigmaAccessToken();
+    if (session && isCurrentFigmaSession(session)) clearFigmaAccessToken();
     throw new FigmaShadersError("Reconnect Figma to continue.", {
       code: "figma_reconnect_required",
     });
   }
-  if (!refreshPromise) {
-    refreshPromise = callFigmaShadersRaw(
-      { op: "oauth-refresh", refreshToken: session.refreshToken },
-      { signal }
-    )
-      .then((payload) => {
-        setFigmaOAuthSession({
-          accessToken: payload.accessToken,
-          refreshToken: payload.refreshToken,
-          expiresIn: payload.expiresIn,
-          userId: payload.userId,
+  if (
+    pendingRefresh?.accessToken === session.accessToken &&
+    pendingRefresh.refreshToken === session.refreshToken
+  ) return pendingRefresh.promise;
+
+  const request = { accessToken: session.accessToken, refreshToken: session.refreshToken };
+  pendingRefresh = request;
+  request.promise = callFigmaShadersRaw({
+    op: "oauth-refresh",
+    refreshToken: session.refreshToken,
+  })
+    .then((payload) => {
+      if (!isCurrentFigmaSession(session)) {
+        throw new FigmaShadersError("The Figma connection changed. Try again.", {
+          code: "figma_connection_changed",
         });
-        return getFigmaAccessToken();
-      })
-      .catch((error) => {
-        clearFigmaAccessToken();
-        throw error;
-      })
-      .finally(() => {
-        refreshPromise = null;
+      }
+      setFigmaOAuthSession({
+        accessToken: payload.accessToken,
+        refreshToken: payload.refreshToken,
+        expiresIn: payload.expiresIn,
+        userId: payload.userId,
       });
-  }
-  return refreshPromise;
+      return getFigmaAccessToken();
+    })
+    .catch((error) => {
+      if (error.code === "figma_oauth_invalid_grant" && isCurrentFigmaSession(session)) {
+        clearFigmaAccessToken();
+      }
+      throw error;
+    })
+    .finally(() => {
+      if (pendingRefresh === request) pendingRefresh = null;
+    });
+  return request.promise;
 }
 
-async function requireToken(explicitToken, signal) {
+async function requireToken(explicitToken) {
   if (typeof explicitToken === "string" && explicitToken.trim()) {
     return explicitToken.trim();
   }
@@ -207,24 +224,29 @@ async function requireToken(explicitToken, signal) {
     );
   }
   if (session.expiresAt && session.expiresAt <= Date.now() + 60_000) {
-    return refreshFigmaAccessToken(signal);
+    return refreshFigmaAccessToken(session);
   }
   return session.accessToken;
 }
 
 async function callFigmaShaders(body, options = {}) {
-  const token = await requireToken(options.token, options.signal);
+  options.signal?.throwIfAborted();
+  const token = await requireToken(options.token);
+  const session = getFigmaOAuthSession();
   try {
     return await callFigmaShadersRaw(body, { ...options, token });
   } catch (error) {
     if (
       options.token ||
       error?.status !== 401 ||
-      !getFigmaOAuthSession()?.refreshToken
+      session?.accessToken !== token ||
+      !session?.refreshToken ||
+      !isCurrentFigmaSession(session) ||
+      options.signal?.aborted
     ) {
       throw error;
     }
-    const refreshedToken = await refreshFigmaAccessToken(options.signal);
+    const refreshedToken = await refreshFigmaAccessToken(session);
     return callFigmaShadersRaw(body, { ...options, token: refreshedToken });
   }
 }

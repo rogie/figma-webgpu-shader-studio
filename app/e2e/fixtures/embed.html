@@ -10,7 +10,8 @@
       import defaultImageUrl from "/src/assets/default-input.png?url";
       import defaultVideoUrl from "/src/assets/default-input.mp4?url";
 
-      const mode = new URLSearchParams(location.search).get("mode");
+      const options = new URLSearchParams(location.search);
+      const mode = options.get("mode");
       const shaderSource =
         'export function setup() {} export function render() { return "live-dependency-marker"; }';
       const pinnedShaderSource =
@@ -89,6 +90,7 @@
           this.stageCssSize = { width: 1, height: 1 };
         }
         async init() {}
+        setAudioBus() {}
         setStageCssSize(width, height) {
           this.stageCssSize = { width, height };
         }
@@ -96,6 +98,7 @@
           window.__embedActive = active;
         }
         async setComposition(layers) {
+          if (options.has("failSetup")) return false;
           window.__embedRenderSources = layers.map((layer) =>
             String(layer.render || "")
           );
@@ -109,7 +112,9 @@
         start() {
           window.__embedStarted = true;
         }
-        destroy() {}
+        destroy() {
+          window.__embedDestroyed = true;
+        }
       }
 
       const row =

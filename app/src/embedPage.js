@@ -198,16 +198,25 @@ function createVideo(url, stream = null) {
 async function waitForVideo(video) {
   if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
     await new Promise((resolve, reject) => {
-      video.addEventListener("loadeddata", resolve, { once: true });
-      video.addEventListener(
-        "error",
-        () => reject(new Error("Could not load video fill.")),
-        { once: true }
+      const finish = (error) => {
+        clearTimeout(timeout);
+        video.removeEventListener("loadeddata", ready);
+        video.removeEventListener("error", failed);
+        if (error) reject(error);
+        else resolve();
+      };
+      const ready = () => finish();
+      const failed = () => finish(new Error("Could not load video fill."));
+      const timeout = setTimeout(
+        () => finish(new Error("Timed out loading video fill.")),
+        15_000,
       );
-      video.load?.();
+      video.addEventListener("loadeddata", ready);
+      video.addEventListener("error", failed);
+      if (video.error) failed();
     });
   }
-  await video.play().catch(() => {});
+  void video.play().catch(() => {});
 }
 
 function loadShaderLayer(id, role, source, values, declaredFeatures) {
@@ -333,8 +342,8 @@ async function loadPaintLayer(fill, canvas, host, resources) {
 
   if (paint.type === "video") {
     const video = createVideo(paint.video?.url || "");
-    await waitForVideo(video);
     resources.push(video);
+    await waitForVideo(video);
     return {
       id: fill.id,
       role: "fill",
@@ -357,9 +366,9 @@ async function loadPaintLayer(fill, canvas, host, resources) {
       : null;
     if (stream) {
       const video = createVideo("", stream);
+      resources.push(video, stream);
       await waitForVideo(video);
       const settings = paintImageSource(paint);
-      resources.push(video, stream);
       return {
         id: fill.id,
         role: "fill",
@@ -566,7 +575,12 @@ async function startEmbed(
   const resources = [];
   const Host = services.ShaderHost || ShaderHost;
   const host = new Host(canvas, { onError: showError });
-  await host.init();
+  try {
+    await host.init();
+  } catch (error) {
+    host.destroy();
+    throw error;
+  }
   const audioBus = new AudioInputBus();
   host.setAudioBus(audioBus);
   const viewportSize = () => {
@@ -586,7 +600,9 @@ async function startEmbed(
     const size = viewportSize();
     host.setStageCssSize(size.width, size.height);
   };
+  let cleanedUp = false;
   const syncActivity = () => {
+    if (cleanedUp) return;
     const active =
       (!respectDocumentVisibility || document.visibilityState !== "hidden") &&
       intersecting &&
@@ -610,7 +626,6 @@ async function startEmbed(
   if (resizeObserver) resizeObserver.observe(viewportElement);
   else window.addEventListener("resize", resize);
   document.addEventListener("visibilitychange", syncActivity);
-  let cleanedUp = false;
   const cleanup = () => {
     if (cleanedUp) return;
     cleanedUp = true;
@@ -681,48 +696,53 @@ async function startEmbed(
     });
   };
 
-  if (row.kind === "fill") {
-    const loaded = loadModule(row.source);
-    const features = mergeShaderFeatures(inferFeatures(row.source), row.features);
-    host.setParams(mergeLayerValues(loaded.props, row.parameter_values || {}));
-    const ok = await host.setModule(
-      { setup: loaded.setup, render: loaded.render },
-      {
-        isFill: true,
-        isAnimated: features.isAnimated || features.supportsAudio,
-        usesMouse: features.usesMouse,
-        supportsRenderScale: supportsRenderScale(row.source),
-        supportsAudio: Boolean(features.supportsAudio),
+  try {
+    if (row.kind === "fill") {
+      const loaded = loadModule(row.source);
+      const features = mergeShaderFeatures(inferFeatures(row.source), row.features);
+      host.setParams(mergeLayerValues(loaded.props, row.parameter_values || {}));
+      const ok = await host.setModule(
+        { setup: loaded.setup, render: loaded.render },
+        {
+          isFill: true,
+          isAnimated: features.isAnimated || features.supportsAudio,
+          usesMouse: features.usesMouse,
+          supportsRenderScale: supportsRenderScale(row.source),
+          supportsAudio: Boolean(features.supportsAudio),
+        }
+      );
+      if (!ok) throw new Error("The shader could not be rendered.");
+      if (features.isAnimated || features.usesMouse || features.supportsAudio) {
+        host.start();
       }
-    );
-    if (!ok) throw new Error("The shader could not be rendered.");
-    if (features.isAnimated || features.usesMouse || features.supportsAudio) {
-      host.start();
+      bindAudioGesture(Boolean(features.supportsAudio), row.composition);
+      return controller;
     }
-    bindAudioGesture(Boolean(features.supportsAudio), row.composition);
-    return controller;
-  }
 
-  const compositionResult = await setComposition(
-    host,
-    canvas,
-    graph,
-    resolved,
-    isComposition
-      ? null
-      : {
-          id: `cloud:${row.id}`,
-          source: row.source,
-          values: row.parameter_values || {},
-          features: row.features,
-        },
-    resources
-  );
-  bindAudioGesture(
-    Boolean(compositionResult?.supportsAudio || row.features?.supportsAudio),
-    graph,
-  );
-  return controller;
+    const compositionResult = await setComposition(
+      host,
+      canvas,
+      graph,
+      resolved,
+      isComposition
+        ? null
+        : {
+            id: `cloud:${row.id}`,
+            source: row.source,
+            values: row.parameter_values || {},
+            features: row.features,
+          },
+      resources
+    );
+    bindAudioGesture(
+      Boolean(compositionResult?.supportsAudio || row.features?.supportsAudio),
+      graph,
+    );
+    return controller;
+  } catch (error) {
+    cleanup();
+    throw error;
+  }
 }
 
 export function mountEmbedPreview(route, canvas, onError = () => {}) {

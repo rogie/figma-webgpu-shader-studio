@@ -4,18 +4,22 @@ import {
   CHAT_HEIGHT_STORAGE_KEY,
   CODE_WIDTH_STORAGE_KEY,
   PREVIEW_HEIGHT_STORAGE_KEY,
+  PROPERTIES_WIDTH_STORAGE_KEY,
   readAppNavWidth,
   readChatHeight,
   readCodeWidth,
   readPreviewHeight,
+  readPropertiesWidth,
   STACKED_BREAKPOINT,
+  writeLayoutPreference,
 } from "../lib/layoutStorage.js";
 
-export function usePanelLayout(editorViewRef) {
+export function usePanelLayout(editorViewRef, editorMounted) {
   const [appNavWidth, setAppNavWidth] = useState(readAppNavWidth);
   const [codeWidth, setCodeWidth] = useState(readCodeWidth);
   const [chatHeight, setChatHeight] = useState(readChatHeight);
   const [previewHeight, setPreviewHeight] = useState(readPreviewHeight);
+  const [propertiesWidth, setPropertiesWidth] = useState(readPropertiesWidth);
   const [stacked, setStacked] = useState(false);
 
   useEffect(() => {
@@ -30,35 +34,41 @@ export function usePanelLayout(editorViewRef) {
     const observer = new ResizeObserver(sync);
     observer.observe(root);
     return () => observer.disconnect();
-  }, [editorViewRef]);
+  }, [editorMounted, editorViewRef]);
 
   const saveAppNavWidth = useCallback((width) => {
     const rounded = Math.round(width);
     setAppNavWidth(rounded);
-    localStorage.setItem(APP_NAV_WIDTH_STORAGE_KEY, String(rounded));
+    writeLayoutPreference(APP_NAV_WIDTH_STORAGE_KEY, String(rounded));
+  }, []);
+
+  const savePropertiesWidth = useCallback((width) => {
+    const rounded = Math.round(width);
+    setPropertiesWidth(rounded);
+    writeLayoutPreference(PROPERTIES_WIDTH_STORAGE_KEY, String(rounded));
   }, []);
 
   const saveCodeWidth = useCallback((width) => {
     const rounded = Math.round(width);
     setCodeWidth(rounded);
-    localStorage.setItem(CODE_WIDTH_STORAGE_KEY, String(rounded));
+    writeLayoutPreference(CODE_WIDTH_STORAGE_KEY, String(rounded));
   }, []);
 
   const saveChatHeight = useCallback((height) => {
     const rounded = Math.round(height);
     setChatHeight(rounded);
-    localStorage.setItem(CHAT_HEIGHT_STORAGE_KEY, String(rounded));
+    writeLayoutPreference(CHAT_HEIGHT_STORAGE_KEY, String(rounded));
   }, []);
 
   const savePreviewHeight = useCallback((height) => {
     if (height == null) {
       setPreviewHeight(null);
-      localStorage.removeItem(PREVIEW_HEIGHT_STORAGE_KEY);
+      writeLayoutPreference(PREVIEW_HEIGHT_STORAGE_KEY, null);
       return;
     }
     const rounded = Math.round(height);
     setPreviewHeight(rounded);
-    localStorage.setItem(PREVIEW_HEIGHT_STORAGE_KEY, String(rounded));
+    writeLayoutPreference(PREVIEW_HEIGHT_STORAGE_KEY, String(rounded));
   }, []);
 
   return {
@@ -66,10 +76,12 @@ export function usePanelLayout(editorViewRef) {
     codeWidth,
     chatHeight,
     previewHeight,
+    propertiesWidth,
     stacked,
     saveAppNavWidth,
     saveCodeWidth,
     saveChatHeight,
     savePreviewHeight,
+    savePropertiesWidth,
   };
 }

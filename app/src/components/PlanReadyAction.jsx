@@ -1,11 +1,12 @@
 export default function PlanReadyAction({
   buildDisabled = false,
+  building = false,
   onBuild,
   onDismiss,
 }) {
   return (
     <hstack className="chat-context-action">
-      <span>Plan is ready to build</span>
+      <span aria-live="polite">{building ? "Building plan…" : "Plan is ready to build"}</span>
       <hstack>
         <fig-button
           type="button"

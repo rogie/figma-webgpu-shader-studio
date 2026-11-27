@@ -7,7 +7,9 @@ description: Author, update, and validate Figma shader effects and shader fills.
 
 ## Instructions
 
-When this skill is used, immediately read `/Users/rking/Figma shaders/skills/v3.md.tmpl` and follow it as the source of truth for coding Figma shader effects and shader fills.
+When this skill is used, immediately read `/Users/rking/Figma shaders/skills/v4.md.tmpl` and follow it as the source of truth for coding Figma shader effects and shader fills.
+
+For pointer input, read [Pointer input for Figma shaders](../figma-pointer.md).
 
 Treat the template as shader-authoring guidance for the current agent. If the template refers to the `shader-coder` subagent or "caller", map that to the current request context.
 
@@ -23,4 +25,4 @@ Do not deploy, create, update, attach, or invalidate shaders unless the user exp
 
 ## Figma MCP publishing
 
-Use Figma's current `figma-shaders` skill for the connected MCP workflow. Create the fill or effect scaffold in the chosen plan, read its source contract, and update it with the complete `main.ts`. For a linked shader, keep its existing kind and update it directly. Pass `usesMouse` for any pointer read, including `frame.mousePosition.down`, and `isAnimated` for clock reads. Send those flags in update metadata, with a commit message and the supported version notes. If Figma rejects a capability, report the rejection and preserve the source.
+Use Figma's current `figma-shaders` skill for the connected MCP workflow. Create the fill or effect scaffold in the chosen plan, read its source contract, and update it with the complete `main.ts`. For a linked shader, keep its existing kind and update it directly. Pass `usesMouse` for documented pointer reads and `isAnimated` for clock reads. Send those flags in update metadata, with a commit message and the supported version notes. If Figma rejects a capability, report the rejection and preserve the source.
