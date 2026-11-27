@@ -94,7 +94,7 @@
 }
 
 #root .shader-view-page .view-properties-dialog {
-  width: 240px;
+  width: var(--shader-properties-width);
   max-width: calc(100vw - var(--spacer-6));
   pointer-events: auto;
 }

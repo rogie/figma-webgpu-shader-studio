@@ -19,6 +19,7 @@ import {
   readLibrarySectionOpen,
   readPlayState,
   readPreviewHeight,
+  readPropertiesWidth,
   readSidebarSections,
   readTheme,
   resolveTheme,
@@ -81,6 +82,11 @@ test("layout readers validate persisted numeric bounds", () => {
   );
   assert.equal(readCodeWidth(storage(), 1000), 380);
   assert.equal(readCodeWidth(storage(), 1400), 480);
+  assert.equal(readPropertiesWidth(storage()), 260);
+  assert.equal(
+    readPropertiesWidth(storage({ "figma-shader-studio:properties-width": "320" })),
+    320,
+  );
   assert.equal(readChatHeight(storage()), DEFAULT_CHAT_HEIGHT);
   assert.equal(readPreviewHeight(storage()), null);
 });

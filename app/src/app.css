@@ -23,7 +23,7 @@ body,
   --bg-app: light-dark(#f5f5f5, #202020);
   --global-app-nav-width: 3rem;
   --panel-drag-handle-width: var(--spacer-4);
-  --shader-properties-width: 280px;
+  --shader-properties-width: 260px;
   --code-width: 480px;
   --viewer-radius: var(--radius-large);
 }

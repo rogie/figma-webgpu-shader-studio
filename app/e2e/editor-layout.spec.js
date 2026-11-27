@@ -28,13 +28,13 @@ test("properties resize within navigation limits and remember their width", asyn
   const panel = page.locator(".shader-properties-panel");
   const navigation = page.getByRole("separator", { name: "Resize shader navigation", exact: true });
   const maxWidth = Number(await navigation.getAttribute("aria-valuemax"));
-  await expect(handle).toHaveAttribute("aria-valuemin", "280");
+  await expect(handle).toHaveAttribute("aria-valuemin", "260");
   await expect(handle).toHaveAttribute("aria-valuemax", String(maxWidth));
 
   for (const viewportWidth of [1440, 1920]) {
     await page.setViewportSize({ width: viewportWidth, height: 1000 });
     await handle.press("Home");
-    await expect(panel).toHaveCSS("width", "280px");
+    await expect(panel).toHaveCSS("width", "260px");
     const bounds = await handle.boundingBox();
     await page.mouse.move(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
     await page.mouse.down();
@@ -47,7 +47,7 @@ test("properties resize within navigation limits and remember their width", asyn
   await page.reload();
   await expect(panel).toHaveCSS("width", `${maxWidth - 16}px`);
   await handle.dblclick();
-  await expect(panel).toHaveCSS("width", "280px");
+  await expect(panel).toHaveCSS("width", "260px");
   await page.setViewportSize({ width: 390, height: 740 });
   await expect(handle).toBeHidden();
 });
@@ -69,6 +69,7 @@ test("composition preview and inspector share the shader editor layout", async (
   await expect(title).toHaveValue("Composition layout");
   await expect(inspector.getByRole("heading", { name: "Effects" })).toBeVisible();
   await expect(inspector.getByRole("button", { name: "Export", exact: true })).toBeVisible();
+  await expect(inspector).toHaveCSS("width", "260px");
   await expect(viewer.getByRole("separator", { name: "Resize code and preview panes" })).toHaveCount(0);
 
   for (const width of [1440, 1920]) {
@@ -84,13 +85,19 @@ test("composition preview and inspector share the shader editor layout", async (
   }
 
   await resizer.press("ArrowLeft");
-  await expect(inspector).toHaveCSS("width", "296px");
+  await expect(inspector).toHaveCSS("width", "276px");
   await page.setViewportSize({ width: 390, height: 740 });
   await expect(resizer).toBeHidden();
   const previewBounds = await preview.boundingBox();
   const inspectorBounds = await inspector.boundingBox();
   expect(inspectorBounds.y).toBeGreaterThanOrEqual(previewBounds.y + previewBounds.height);
   expect(inspectorBounds.width).toBe(previewBounds.width);
+});
+
+test("standalone shader properties open at the shared inspector width", async ({ page }) => {
+  await page.goto("/shader/dither/view");
+  await page.getByRole("button", { name: "Show properties", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Properties", exact: true })).toHaveCSS("width", "260px");
 });
 
 test("stored and keyboard sizes keep the desktop preview inside the editor", async ({ page }) => {
