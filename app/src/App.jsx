@@ -1279,7 +1279,7 @@ function pushShaderUrl(id, kind) {
   window.history.pushState({}, "", makeShareUrl(id, kind));
 }
 
-function AuthorAvatar({ class: className, tooltip, src, name, onClick, isYou }) {
+function AuthorAvatar({ class: className, tooltip, src, name, onClick, isYou, showName }) {
   return (
     <UserAvatar
       class={className}
@@ -1288,6 +1288,7 @@ function AuthorAvatar({ class: className, tooltip, src, name, onClick, isYou }) 
       name={name}
       onClick={onClick}
       isYou={isYou}
+      showName={showName}
     />
   );
 }
@@ -11216,7 +11217,61 @@ export default function App() {
     unpublishShader,
     user,
   ]);
+  const shaderAuthorAvatar = showCurrentAuthor && (
+    <AuthorAvatar
+      class="shader-author-avatar"
+      showName={!isComposerView}
+      tooltip={currentAuthorName}
+      src={currentAuthorAvatarUrl}
+      name={currentAuthorName}
+      isYou={currentAuthorIsYou}
+      onClick={
+        currentShader?.owner_id
+          ? () =>
+              openUserProfile(
+                currentShader.owner_id,
+                currentShader.author_handle,
+              )
+          : currentAuthorIsYou && user?.id
+            ? () => openUserProfile(user.id)
+            : undefined
+      }
+    />
+  );
+  const showShaderStatus = !renaming && Boolean(currentShader && (currentShader.is_public || isOwner));
+  const shaderStatusControls = showShaderStatus && (
+    <>
+      {!isOwner && currentShader?.is_public && (
+        <span
+          className="shader-published-status"
+          aria-label="Published"
+        >
+          <fig-tooltip text="Published">
+            <fig-icon name="globe" />
+          </fig-tooltip>
+        </span>
+      )}
+      {isOwner && currentShader && (
+        <ShaderVersionSelect
+          published={currentShader.is_public}
+          versions={shaderVersions}
+          versionsLoading={versionsLoading}
+          versionsHasMore={versionsHasMore}
+          dirty={dirty}
+          hasUncheckpointedChanges={hasUncheckpointedChanges}
+          saving={saving}
+          disabled={saving || restoringVersion || duplicating}
+          onOpen={openShaderVersions}
+          onLoadMore={loadMoreShaderVersions}
+          onPreviewVersion={previewShaderVersion}
+          onChange={restoreSelectedVersion}
+          onDuplicate={duplicateShaderVersion}
+        />
+      )}
+    </>
+  );
   const shaderEditorHeader = (
+        <>
           <fig-header class="shader-editor-header" borderless={isComposerView ? "" : undefined}>
             {libraryNavMotion === "open" ? null : (
             <fig-tooltip text="Show library">
@@ -11236,34 +11291,14 @@ export default function App() {
                 renaming ? "shader-title is-renaming" : "shader-title"
               }
             >
-                {showCurrentAuthor && (
-                  <AuthorAvatar
-                    class="shader-author-avatar"
-                    tooltip={currentAuthorName}
-                    src={currentAuthorAvatarUrl}
-                    name={currentAuthorName}
-                    isYou={currentAuthorIsYou}
-                    onClick={
-                      currentShader?.owner_id
-                        ? () =>
-                            openUserProfile(
-                              currentShader.owner_id,
-                              currentShader.author_handle,
-                            )
-                        : currentAuthorIsYou && user?.id
-                          ? () => openUserProfile(user.id)
-                          : undefined
-                    }
-                  />
-                )}
+                {isComposerView && shaderAuthorAvatar}
                 <fig-input-text
                   ref={nameInputRef}
                   name="name"
                   class="shader-name"
-                  size="large"
                   value={shaderName}
                   variant="editable"
-                  full=""
+                  full={renaming ? "" : undefined}
                   readonly={!renaming}
                   onClick={() => {
                     if (!renaming && !protectedPreview) startRename();
@@ -11303,32 +11338,7 @@ export default function App() {
             </div>
             {!renaming && (
               <hstack>
-                {currentShader?.is_public && (
-                  <span
-                    className="shader-published-status"
-                    aria-label="Published"
-                  >
-                    <fig-tooltip text="Published">
-                      <fig-icon name="globe" />
-                    </fig-tooltip>
-                  </span>
-                )}
-                {isOwner && currentShader && (
-                  <ShaderVersionSelect
-                    versions={shaderVersions}
-                    versionsLoading={versionsLoading}
-                    versionsHasMore={versionsHasMore}
-                    dirty={dirty}
-                    hasUncheckpointedChanges={hasUncheckpointedChanges}
-                    saving={saving}
-                    disabled={saving || restoringVersion || duplicating}
-                    onOpen={openShaderVersions}
-                    onLoadMore={loadMoreShaderVersions}
-                    onPreviewVersion={previewShaderVersion}
-                    onChange={restoreSelectedVersion}
-                    onDuplicate={duplicateShaderVersion}
-                  />
-                )}
+                {isComposerView && shaderStatusControls}
                 {protectedPreview ? (
                   <>
                     <fig-tooltip text="Present">
@@ -11388,6 +11398,13 @@ export default function App() {
               </hstack>
             )}
           </fig-header>
+          {!isComposerView && (showCurrentAuthor || showShaderStatus) && (
+            <fig-header class="shader-editor-metadata">
+              {shaderAuthorAvatar}
+              {showShaderStatus && <hstack>{shaderStatusControls}</hstack>}
+            </fig-header>
+          )}
+        </>
   );
   function renderShaderViewHeader({ minimized = false, toggle } = {}) {
     const toggleLabel = minimized ? "Show properties" : "Minimize properties";

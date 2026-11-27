@@ -328,6 +328,26 @@ fig-header[borderless]:has(+ fig-header) {
     gap: 0;
     margin: 0;
 
+    :is(.shader-editor-header, .shader-editor-metadata) {
+      .shader-published-status {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        color: var(--figma-color-icon-tertiary);
+      }
+    }
+
+    .shader-editor-metadata > hstack {
+      flex: 0 0 auto;
+      margin-left: auto;
+      --hstack-gap: var(--spacer-1);
+    }
+
+    .shader-editor-metadata > fig-tooltip {
+      min-width: 0;
+      max-width: 100%;
+    }
+
     .shader-editor-header {
       gap: var(--spacer-1);
 
@@ -349,20 +369,13 @@ fig-header[borderless]:has(+ fig-header) {
         }
 
         &.is-renaming {
+          gap: var(--spacer-2);
           pointer-events: auto;
 
           > fig-button {
             flex: 0 0 auto;
-            margin-right: calc(var(--spacer-2) * -1);
           }
         }
-      }
-
-      .shader-published-status {
-        display: inline-flex;
-        flex: 0 0 auto;
-        align-items: center;
-        color: var(--figma-color-icon-tertiary);
       }
 
       > hstack:last-child {
@@ -374,13 +387,11 @@ fig-header[borderless]:has(+ fig-header) {
       }
 
       fig-input-text.shader-name {
-        flex: 1;
-        min-width: 0;
-        width: auto;
-        margin-left: calc(var(--spacer-2) * -1);
+        max-width: 100%;
 
         > input {
           font-size: var(--body-large-fontSize);
+          min-width: 0;
         }
 
         &[readonly]:not([readonly="false"]) {
@@ -388,14 +399,10 @@ fig-header[borderless]:has(+ fig-header) {
           box-shadow: none !important;
           outline: none !important;
           user-select: none;
-          flex: 0 1 auto;
-          width: auto;
-          max-width: 100%;
           transition: background-color 120ms ease;
 
           > input {
-            field-sizing: content;
-            min-width: 3ch;
+            text-overflow: ellipsis;
           }
         }
 
@@ -404,9 +411,6 @@ fig-header[borderless]:has(+ fig-header) {
         }
       }
 
-      .shader-title:has(.shader-author-avatar) fig-input-text.shader-name {
-        margin-left: 0;
-      }
     }
 
     .composer-viewer > .shader-editor-header,

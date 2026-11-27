@@ -1,6 +1,21 @@
 .user-avatar {
   flex: 0 0 auto;
 }
+.user-profile-pill,
+.user-avatar-name {
+  max-width: 100%;
+  min-width: 0;
+  gap: var(--spacer-1);
+}
+.user-avatar-name {
+  display: inline-flex;
+  align-items: center;
+}
+.user-avatar-name > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .user-avatar-button{
   border-radius: 50%;
   &:hover{

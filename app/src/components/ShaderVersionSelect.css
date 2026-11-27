@@ -4,7 +4,9 @@ fig-select.shader-version-select {
 }
 
 dialog[is="fig-popup"].shader-version-popup {
-  max-width: min(20rem, calc(100vw - var(--spacer-6)));
+  box-sizing: border-box;
+  width: 280px;
+  max-width: calc(100vw - var(--spacer-6));
   pointer-events: auto;
 
   > fig-content {

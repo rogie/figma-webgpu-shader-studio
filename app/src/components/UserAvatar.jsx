@@ -9,6 +9,7 @@ export default function UserAvatar({
   tooltip,
   onClick,
   isYou = false,
+  showName = false,
   size,
 }) {
   const ref = useRef(null);
@@ -36,6 +37,7 @@ export default function UserAvatar({
     <fig-avatar
       ref={isAnonYou ? ref : undefined}
       class={avatarClass}
+      slot={showName && onClick ? "prepend" : undefined}
       src={src || ""}
       style={size ? { "--size": size } : undefined}
       {...(isAnonYou ? { initials: "A" } : { name: name || "Anon" })}
@@ -43,11 +45,12 @@ export default function UserAvatar({
   );
   const avatar = onClick ? (
     <fig-button
-      class="user-avatar-button"
+      class={showName ? "user-profile-pill" : "user-avatar-button"}
       type="button"
       variant="ghost"
-      icon="true"
-      aria-label={profileLabel}
+      icon={showName ? undefined : "true"}
+      pill={showName ? "" : undefined}
+      aria-label={showName ? `${name || "Anon"} · ${profileLabel}` : profileLabel}
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
@@ -55,7 +58,10 @@ export default function UserAvatar({
       }}
     >
       {avatarImage}
+      {showName && <span slot="label">{name || "Anon"}</span>}
     </fig-button>
+  ) : showName ? (
+    <span className="user-avatar-name">{avatarImage}<span>{name || "Anon"}</span></span>
   ) : (
     avatarImage
   );

@@ -15,7 +15,6 @@ import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import { visibleVersionHistory } from "../lib/versionHistory.js";
 import "./ShaderVersionSelect.css";
 
-const opaqueContent = { __html: "" };
 const PENDING_VALUE = "__pending";
 
 function readVersionMenuItem(node) {
@@ -116,6 +115,7 @@ function VersionMenuItem({
 }
 
 export default function ShaderVersionSelect({
+  published = false,
   versions = [],
   versionsLoading = false,
   versionsHasMore = false,
@@ -292,23 +292,26 @@ export default function ShaderVersionSelect({
     [closePopup, currentVersionId, onChange, versions]
   );
 
+  const triggerLabel = saving ? "Saving version" : "Shader version history";
+  const tooltip = tooltipText({ saving, dirty, hasUncheckpointedChanges });
   return (
     <>
-      <fig-tooltip
-        text={tooltipText({ saving, dirty, hasUncheckpointedChanges })}
-      >
+      <fig-tooltip text={published ? `Published · ${tooltip}` : tooltip}>
         <fig-select
           ref={selectRef}
           class="shader-version-select"
           variant="ghost"
-          aria-label={saving ? "Saving version" : "Shader version history"}
+          aria-label={published ? `${triggerLabel}, published` : triggerLabel}
           value={selectValue}
           label={selectLabel}
           options={selectOptions}
           id="shader-version-select"
           disabled={disabled ? "" : undefined}
-          dangerouslySetInnerHTML={opaqueContent}
-        />
+        >
+          {published && (
+            <fig-icon slot="prepend-trigger" name="globe" size="small" color="tertiary" />
+          )}
+        </fig-select>
       </fig-tooltip>
 
       {open && portalToFigOverlay(
