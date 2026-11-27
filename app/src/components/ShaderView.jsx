@@ -26,28 +26,37 @@ export default function ShaderView({
   onKeyResizeProperties,
 }) {
   return (
-    <main ref={viewerRef} className="shader-viewer" style={style}>
-      <div
-        ref={sidebarRef}
-        className="shader-viewer-sidebar"
-        data-code-collapsed={codeCollapsed ? "true" : "false"}
-        data-chat-collapsed={chatCollapsed ? "true" : "false"}
-      >
-        {sidebar}
-      </div>
+    <main
+      ref={viewerRef}
+      className="shader-viewer"
+      data-layout={sidebar ? undefined : "composition"}
+      style={style}
+    >
+      {sidebar && (
+        <>
+          <div
+            ref={sidebarRef}
+            className="shader-viewer-sidebar"
+            data-code-collapsed={codeCollapsed ? "true" : "false"}
+            data-chat-collapsed={chatCollapsed ? "true" : "false"}
+          >
+            {sidebar}
+          </div>
 
-      <div
-        className="pane-resizer shader-code-resizer"
-        role="separator"
-        aria-label="Resize code and preview panes"
-        aria-orientation={stacked ? "horizontal" : "vertical"}
-        aria-valuemin={stacked ? minPreviewHeight : minCodeWidth}
-        aria-valuenow={stacked ? previewHeight ?? undefined : codeWidth}
-        tabIndex={0}
-        onPointerDown={onResizeCode}
-        onDoubleClick={onResetCodeSize}
-        onKeyDown={onKeyResizeCode}
-      />
+          <div
+            className="pane-resizer shader-code-resizer"
+            role="separator"
+            aria-label="Resize code and preview panes"
+            aria-orientation={stacked ? "horizontal" : "vertical"}
+            aria-valuemin={stacked ? minPreviewHeight : minCodeWidth}
+            aria-valuenow={stacked ? previewHeight ?? undefined : codeWidth}
+            tabIndex={0}
+            onPointerDown={onResizeCode}
+            onDoubleClick={onResetCodeSize}
+            onKeyDown={onKeyResizeCode}
+          />
+        </>
+      )}
 
       <section
         ref={visualizerRef}

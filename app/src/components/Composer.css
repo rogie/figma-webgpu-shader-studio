@@ -136,17 +136,6 @@
   min-height: 0;
 }
 
-.composer-stage > .shader-editor-header,
-#root .composer-viewer > .shader-editor-header {
-  flex: 0 0 auto;
-}
-
-.composer-stage > .shader-editor-header {
-  box-sizing: border-box;
-  width: calc(100% + var(--spacer-3));
-  padding-right: var(--spacer-3);
-}
-
 #root .composer-viewer .composer-preview.shader-viewer-visualizer {
   flex: 1 1 auto;
   width: auto;

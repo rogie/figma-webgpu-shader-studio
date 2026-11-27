@@ -9,7 +9,6 @@ export default function ComposerView({
   viewerRef,
   visualizerRef,
   className,
-  header,
   preview,
   properties,
 }) {
@@ -43,7 +42,6 @@ export default function ComposerView({
     >
       <div className="composer-body">
         <div className="composer-stage">
-          {header}
           <section
             ref={visualizerRef}
             className="composer-preview shader-viewer-visualizer background--light"

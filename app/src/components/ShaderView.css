@@ -338,3 +338,43 @@
     display: none;
   }
 }
+
+#root .shader-viewer[data-layout="composition"] {
+  grid-template-columns: minmax(0, 1fr) var(--spacer-3) var(--shader-properties-track-width);
+  grid-template-rows: var(--spacer-3) minmax(0, 1fr);
+
+  > .shader-viewer-visualizer {
+    grid-column: 1;
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+    aspect-ratio: auto;
+  }
+
+  > .shader-properties-resizer {
+    grid-column: 2;
+  }
+
+  > .shader-properties-panel {
+    grid-column: 3;
+  }
+}
+
+@container editor (max-width: 740px) {
+  #root .shader-viewer[data-layout="composition"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--spacer-3) auto auto;
+
+    > .shader-viewer-visualizer {
+      height: auto;
+      min-height: 160px;
+      aspect-ratio: 16 / 9;
+    }
+
+    > .shader-properties-panel {
+      grid-column: 1;
+      grid-row: 3;
+      max-height: none;
+    }
+  }
+}

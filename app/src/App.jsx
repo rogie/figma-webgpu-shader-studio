@@ -10573,10 +10573,10 @@ export default function App() {
     <>
       {viewMode === "view" ? (
         renderShaderViewHeader(viewDialog)
-      ) : (isComposerView || isShaderFillPanel) && (
+      ) : !isComposerView && isShaderFillPanel && (
         <fig-header>
           <h2>{propertiesPanelTitle}</h2>
-          {!isComposerView && renderPropertyHeaderActions("fill")}
+          {renderPropertyHeaderActions("fill")}
         </fig-header>
       )}
 
@@ -10654,28 +10654,6 @@ export default function App() {
                   }
                 }}
               />
-              {viewMode !== "view" && user && !protectedPreview && (
-                <div className="sharing-controls properties-pane">
-                  <fig-header borderless>
-                    <h3>Visibility</h3>
-                  </fig-header>
-                  <fig-field label="Public" direction="horizontal">
-                    <fig-switch
-                      checked={isPublic}
-                      label={
-                        isPublic
-                          ? "Anyone with the link can view the source and input."
-                          : "Only you can open this cloud shader."
-                      }
-                      onInput={(event) => {
-                        setIsPublic(event.target.checked);
-                        setDirty(true);
-                      }}
-                      dangerouslySetInnerHTML={{ __html: "" }}
-                    />
-                  </fig-field>
-                </div>
-              )}
             </>
           ) : (
           <>
@@ -10862,34 +10840,34 @@ export default function App() {
                 error={activeFigmaDetailError}
               />
             )}
-            {viewMode !== "view" && user && !protectedPreview && (
-              <div className="sharing-controls properties-pane grouped-properties-pane">
-                <fig-group name="Visibility" collapsible="">
-                  <fig-field label="Public" direction="horizontal">
-                    <fig-switch
-                      checked={isPublic}
-                      label={
-                        isPublic
-                          ? "Anyone with the link can view the source and input."
-                          : "Only you can open this cloud shader."
-                      }
-                      onInput={(event) => {
-                        setIsPublic(event.target.checked);
-                        setDirty(true);
-                      }}
-                      dangerouslySetInnerHTML={{ __html: "" }}
-                    />
-                  </fig-field>
-                </fig-group>
-              </div>
-            )}
           </>
+          )}
+          {viewMode !== "view" && user && !protectedPreview && (
+            <div className="sharing-controls properties-pane grouped-properties-pane">
+              <fig-group name="Visibility" collapsible="">
+                <fig-field label="Public" direction="horizontal">
+                  <fig-switch
+                    checked={isPublic}
+                    label={
+                      isPublic
+                        ? "Anyone with the link can view the source and input."
+                        : "Only you can open this cloud shader."
+                    }
+                    onInput={(event) => {
+                      setIsPublic(event.target.checked);
+                      setDirty(true);
+                    }}
+                    dangerouslySetInnerHTML={{ __html: "" }}
+                  />
+                </fig-field>
+              </fig-group>
+            </div>
           )}
       </fig-content>}
     </>
   );
 
-  const renderPropertiesPanel = (editorHeader = null) => (
+  const renderPropertiesPanel = (editorHeader) => (
     <aside
       ref={propertiesPanelRef}
       className="shader-properties-panel"
@@ -11198,7 +11176,7 @@ export default function App() {
   const shaderAuthorAvatar = showCurrentAuthor && (
     <AuthorAvatar
       class="shader-author-avatar"
-      showName={!isComposerView}
+      showName
       tooltip={currentAuthorName}
       src={currentAuthorAvatarUrl}
       name={currentAuthorName}
@@ -11256,7 +11234,6 @@ export default function App() {
                 renaming ? "shader-title is-renaming" : "shader-title"
               }
             >
-                {isComposerView && shaderAuthorAvatar}
                 <fig-input-text
                   ref={nameInputRef}
                   name="name"
@@ -11303,7 +11280,6 @@ export default function App() {
             </div>
             {!renaming && (
               <hstack>
-                {isComposerView && shaderStatusControls}
                 {protectedPreview ? (
                   <>
                     <fig-tooltip text="Present">
@@ -11363,7 +11339,7 @@ export default function App() {
               </hstack>
             )}
           </fig-header>
-          {!isComposerView && (showCurrentAuthor || showShaderStatus) && (
+          {(showCurrentAuthor || showShaderStatus) && (
             <fig-header class="shader-editor-metadata">
               {shaderAuthorAvatar}
               {showShaderStatus && <hstack>{shaderStatusControls}</hstack>}
@@ -11954,16 +11930,9 @@ export default function App() {
         >
           <p>{editorRouteErrorMessage}</p>
         </main>
-      ) : isComposerView ? (
-        <ComposerView
-          viewerRef={viewerRef}
-          visualizerRef={visualizerRef}
-          header={shaderEditorHeader}
-          preview={editorPreviewContent}
-          properties={renderPropertiesPanel()}
-        />
       ) : (
         <ShaderView
+          key={isComposerView ? "composition" : "shader"}
           viewerRef={viewerRef}
           sidebarRef={sidebarRef}
           visualizerRef={visualizerRef}
@@ -11995,7 +11964,7 @@ export default function App() {
           previewHeight={previewHeight}
           minCodeWidth={MIN_CODE_WIDTH}
           minPreviewHeight={MIN_PREVIEW_HEIGHT}
-          sidebar={
+          sidebar={!isComposerView && (
             <>
               <section
                 className="shader-viewer-code"
@@ -12122,7 +12091,7 @@ export default function App() {
                 </Suspense>
               )}
             </>
-          }
+          )}
           preview={editorPreviewContent}
           properties={renderPropertiesPanel(shaderEditorHeader)}
           onResizeCode={resizeCodePane}

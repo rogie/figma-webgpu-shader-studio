@@ -52,6 +52,47 @@ test("properties resize within navigation limits and remember their width", asyn
   await expect(handle).toBeHidden();
 });
 
+test("composition preview and inspector share the shader editor layout", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.addInitScript(() => {
+    localStorage.setItem("figma-shader-studio:drafts", JSON.stringify([
+      { id: "draft:inspector", name: "Composition layout", kind: "composition" },
+    ]));
+  });
+  await page.goto("/composer/draft%3Ainspector");
+
+  const viewer = page.locator('main.shader-viewer[data-layout="composition"]');
+  const preview = viewer.locator(".shader-viewer-visualizer");
+  const inspector = viewer.getByRole("complementary", { name: "Composition" });
+  const title = inspector.locator(".shader-editor-header input");
+  const resizer = viewer.getByRole("separator", { name: "Resize shader properties" });
+  await expect(title).toHaveValue("Composition layout");
+  await expect(inspector.getByRole("heading", { name: "Effects" })).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Export", exact: true })).toBeVisible();
+  await expect(viewer.getByRole("separator", { name: "Resize code and preview panes" })).toHaveCount(0);
+
+  for (const width of [1440, 1920]) {
+    await page.setViewportSize({ width, height: 1000 });
+    const previewBounds = await preview.boundingBox();
+    const inspectorBounds = await inspector.boundingBox();
+    expect(inspectorBounds.y).toBe(previewBounds.y);
+    expect(inspectorBounds.x - previewBounds.x - previewBounds.width).toBe(16);
+    expect(width - inspectorBounds.x - inspectorBounds.width).toBe(16);
+    expect(inspectorBounds.height).toBeLessThan(previewBounds.height);
+    await expect(inspector).toHaveCSS("border-left-width", "0px");
+    await expect(inspector).toHaveCSS("border-radius", await preview.evaluate((node) => getComputedStyle(node).borderRadius));
+  }
+
+  await resizer.press("ArrowLeft");
+  await expect(inspector).toHaveCSS("width", "296px");
+  await page.setViewportSize({ width: 390, height: 740 });
+  await expect(resizer).toBeHidden();
+  const previewBounds = await preview.boundingBox();
+  const inspectorBounds = await inspector.boundingBox();
+  expect(inspectorBounds.y).toBeGreaterThanOrEqual(previewBounds.y + previewBounds.height);
+  expect(inspectorBounds.width).toBe(previewBounds.width);
+});
+
 test("stored and keyboard sizes keep the desktop preview inside the editor", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 900 });
   await page.addInitScript(() => {

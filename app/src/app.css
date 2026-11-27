@@ -461,12 +461,6 @@ dialog[is="fig-popup"].preview-settings-popup {
 
     }
 
-    .composer-viewer > .shader-editor-header,
-    .composer-stage > .shader-editor-header {
-      padding-left: var(--spacer-0);
-      padding-right: var(--spacer-3);
-    }
-
     .editor-view
       &
       .shader-editor-header
