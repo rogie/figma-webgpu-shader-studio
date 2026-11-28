@@ -1,7 +1,6 @@
 import { OPENAI_CHAT_MODELS } from "../../../supabase/functions/chat/openaiModels.mjs";
 
-/** Curated shortlist for other providers — keep in sync with supabase/functions/chat/models.ts.
- * Cursor options are replaced by GET /v1/models when a Cursor key is present. */
+/** Curated shortlist for other providers — keep in sync with supabase/functions/chat/models.ts. */
 
 const openAIModels = OPENAI_CHAT_MODELS.map(({ id, label }) => ({ provider: "openai", id, label }));
 const openAIModelsRequiringDiscovery = new Set(
@@ -37,13 +36,6 @@ export const CHAT_MODEL_GROUPS = [
       { provider: "grok", id: "grok-4.3", label: "Grok 4.3" },
     ],
   },
-  {
-    label: "Cursor",
-    models: [
-      { provider: "cursor", id: "auto-smart", label: "Cursor Auto" },
-      { provider: "cursor", id: "composer-2.5", label: "Composer 2.5" },
-    ],
-  },
 ];
 
 export const CHAT_MODELS = CHAT_MODEL_GROUPS.flatMap((group) => group.models);
@@ -52,113 +44,6 @@ export const DEFAULT_CHAT_MODEL = CHAT_MODELS[0];
 
 function modelId(entry) {
   return typeof entry === "string" ? entry : entry?.id;
-}
-
-const CURSOR_MODEL_SHORTLIST = [
-  ["Claude Opus 5"],
-  ["Claude Fable 5"],
-  ["GPT-5.6 Sol"],
-  ["Composer 2.5"],
-  ["Cursor Grok 4.6"],
-  ["Gemini 3.6 Flash"],
-];
-
-function cursorModelLabel(id, label) {
-  if (typeof label === "string" && label.trim()) return label.trim();
-  if (id === "auto" || id === "auto-smart") return "Auto";
-  return id;
-}
-
-function matchesChatModel(model, provider, id) {
-  if (!model || model.provider !== provider) return false;
-  if (model.id === id) return true;
-  return Array.isArray(model.aliases) && model.aliases.includes(id);
-}
-
-function uniqueAliases(values, id) {
-  const seen = new Set();
-  const aliases = [];
-  for (const value of values) {
-    if (!value || value === id || seen.has(value)) continue;
-    seen.add(value);
-    aliases.push(value);
-  }
-  return aliases;
-}
-
-function collapseCursorModels(models) {
-  const byId = new Map(models.map((model) => [model.id, model]));
-  const skip = new Set();
-
-  for (const model of models) {
-    for (const alias of model.aliases || []) {
-      if (alias !== model.id && byId.has(alias)) skip.add(alias);
-    }
-  }
-
-  const auto = byId.get("auto");
-  const smart = byId.get("auto-smart");
-  if (auto && smart) {
-    skip.add("auto");
-    const aliases = uniqueAliases(
-      [...(smart.aliases || []), "auto", ...(auto.aliases || [])],
-      smart.id
-    );
-    smart.aliases = aliases.length ? aliases : undefined;
-  }
-
-  const kept = models.filter((model) => !skip.has(model.id));
-  const usedLabels = new Map();
-  for (const model of kept) {
-    const key = model.label.toLowerCase();
-    const firstId = usedLabels.get(key);
-    if (!firstId) {
-      usedLabels.set(key, model.id);
-      continue;
-    }
-    if (firstId !== model.id) model.label = `${model.label} (${model.id})`;
-  }
-  return kept.sort((a, b) => {
-    const byLabel = a.label.localeCompare(b.label, undefined, {
-      numeric: true,
-      sensitivity: "base",
-    });
-    return byLabel || a.id.localeCompare(b.id, undefined, { numeric: true });
-  });
-}
-
-function shortlistCursorModels(models) {
-  const byLabel = new Map(
-    models.map((model) => [model.label.toLowerCase(), model])
-  );
-  return CURSOR_MODEL_SHORTLIST.flatMap((labels) => {
-    const match = labels
-      .map((label) => byLabel.get(label.toLowerCase()))
-      .find(Boolean);
-    return match ? [match] : [];
-  });
-}
-
-function discoveredCursorModels(available) {
-  if (!Array.isArray(available) || available.length === 0) return [];
-  const seen = new Set();
-  const models = [];
-  for (const entry of available) {
-    const id = modelId(entry);
-    if (!id || seen.has(id)) continue;
-    seen.add(id);
-    const aliases = uniqueAliases(
-      Array.isArray(entry?.aliases) ? entry.aliases : [],
-      id
-    );
-    models.push({
-      provider: "cursor",
-      id,
-      label: cursorModelLabel(id, typeof entry === "object" ? entry.label : undefined),
-      ...(aliases.length ? { aliases } : {}),
-    });
-  }
-  return shortlistCursorModels(collapseCursorModels(models));
 }
 
 export function groupsForAvailableProviderModels(availableModelsByProvider) {
@@ -177,11 +62,6 @@ export function groupsForAvailableProviderModels(availableModelsByProvider) {
 
   return CHAT_MODEL_GROUPS.map((group) => {
     const provider = group.models[0]?.provider;
-    if (provider === "cursor") {
-      const discovered = discoveredCursorModels(availableModelsByProvider.cursor);
-      if (discovered.length) return { ...group, models: discovered };
-      return group;
-    }
     if (provider === "openai" && availableIdsByProvider.has(provider)) {
       const available = availableIdsByProvider.get(provider);
       return { ...group, models: openAIModels.filter((model) => available.has(model.id)) };
@@ -209,12 +89,12 @@ export function reconcileAvailableChatModel(
 ) {
   const models = groups.flatMap((group) => group.models);
   const match = models.find((model) =>
-    matchesChatModel(model, currentModel?.provider, currentModel?.id)
+    model.provider === currentModel?.provider && model.id === currentModel?.id
   );
   if (match) return match;
   const provider = currentModel?.provider;
   const discoveryPending =
-    provider &&
+    modelsForProvider(provider).length > 0 &&
     (!availableModelsByProvider ||
       !Object.prototype.hasOwnProperty.call(availableModelsByProvider, provider));
   if (discoveryPending && currentModel?.id) return currentModel;
@@ -244,16 +124,7 @@ export function findSelectableChatModel(models, value) {
 
 export function findChatModel(provider, id) {
   const models = provider === "openai" ? openAIModels : CHAT_MODELS;
-  const known = models.find((model) =>
-    matchesChatModel(model, provider, id)
-  );
+  const known = models.find((model) => model.provider === provider && model.id === id);
   if (known) return known;
-  if (provider === "cursor" && typeof id === "string" && id.trim()) {
-    return {
-      provider: "cursor",
-      id,
-      label: cursorModelLabel(id),
-    };
-  }
   return modelsForProvider(provider)[0] || DEFAULT_CHAT_MODEL;
 }

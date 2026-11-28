@@ -11,7 +11,6 @@ import {
   userContentForApi,
 } from "../src/lib/chatPayload.js";
 import { buildCurrentShaderTurn, buildSystemPrompt } from "../../supabase/functions/chat/prompt.ts";
-import { FIGMA_SHADER_SKILL_REVISION } from "../../supabase/functions/_shared/figmaShaderGuidance.mjs";
 
 let vite;
 let getChatSkillContext;
@@ -141,7 +140,7 @@ test("current attachment payloads reach the final user message intact", () => {
   ]);
 });
 
-test("request sends the full source, Figma revision, and only supported feature metadata", () => {
+test("request sends the full source and only supported feature metadata", () => {
   const source = `export default function Effect() {}\n// ${"shader-source-".repeat(2000)}`;
   const skills = getChatSkillContext();
   const request = buildChatRequest({
@@ -153,18 +152,11 @@ test("request sends the full source, Figma revision, and only supported feature 
     fileName: "main.ts",
     features: { isAnimated: false, usesMouse: true, supportsAudio: true },
     skills,
-    figmaSkillRevision: FIGMA_SHADER_SKILL_REVISION,
     mode: "plan",
-    cursorAgentId: "bc-11111111-2222-3333-4444-555555555555",
   });
 
-  assert.equal(
-    request.cursorAgentId,
-    "bc-11111111-2222-3333-4444-555555555555"
-  );
   assert.equal(request.source, source);
   assert.equal(request.skills, skills);
-  assert.equal(request.figmaSkillRevision, FIGMA_SHADER_SKILL_REVISION);
   assert.equal(request.mode, "plan");
   assert.equal(request.experimentalAudio, undefined);
   assert.deepEqual(request.features, {
@@ -283,36 +275,22 @@ test("SSE parser preserves safe provider status phases", () => {
     [
       { type: "status", phase: "thinking" },
       { type: "status", phase: "responding" },
-      { type: "status", phase: "starting" },
-      {
-        type: "cursor-agent",
-        agentId: "bc-11111111-2222-3333-4444-555555555555",
-        runId: "run-1",
-      },
-      {
-        type: "done",
-        agentId: "bc-11111111-2222-3333-4444-555555555555",
-        runId: "run-1",
-      },
+      { type: "done" },
     ]
   );
 });
 
 test("a premature stream end cannot synthesize a completed shader edit", () => {
   assert.equal(
-    chatStreamCompletionEvent("cursor", { sawDone: true }),
+    chatStreamCompletionEvent({ sawDone: true }),
     null
   );
   assert.equal(
-    chatStreamCompletionEvent("cursor", { sawError: true }),
+    chatStreamCompletionEvent({ sawError: true }),
     null
   );
-  assert.deepEqual(chatStreamCompletionEvent("openai"), {
+  assert.deepEqual(chatStreamCompletionEvent(), {
     type: "error",
     message: "The model stream ended before the agent finished. Try again.",
-  });
-  assert.deepEqual(chatStreamCompletionEvent("cursor"), {
-    type: "error",
-    message: "Cursor stream ended before the agent finished. Try again.",
   });
 });

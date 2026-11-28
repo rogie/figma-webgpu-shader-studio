@@ -1,13 +1,12 @@
 import { OPENAI_CHAT_MODELS } from "./openaiModels.mjs";
 
-export type Provider = "openai" | "anthropic" | "gemini" | "grok" | "cursor";
+export type Provider = "openai" | "anthropic" | "gemini" | "grok";
 
 export const PROVIDERS: Provider[] = [
   "openai",
   "anthropic",
   "gemini",
   "grok",
-  "cursor",
 ];
 
 export function isProvider(value: string | undefined): value is Provider {
@@ -20,8 +19,7 @@ export type ModelOption = {
   label: string;
 };
 
-/** Curated BYOK models. Keep other providers in sync with app/src/lib/chatModels.js.
- * Cursor also accepts any well-formed id from GET /v1/models. */
+/** Curated BYOK models. Keep other providers in sync with app/src/lib/chatModels.js. */
 export const MODELS: ModelOption[] = [
   // OpenAI
   ...OPENAI_CHAT_MODELS.map(({ id, label }) => ({ provider: "openai" as const, id, label })),
@@ -40,23 +38,8 @@ export const MODELS: ModelOption[] = [
   { provider: "grok", id: "grok-4.6", label: "Grok 4.6" },
   { provider: "grok", id: "grok-4.5", label: "Grok 4.5" },
   { provider: "grok", id: "grok-4.3", label: "Grok 4.3" },
-
-  // Cursor Cloud Agents
-  { provider: "cursor", id: "auto-smart", label: "Cursor Auto" },
-  { provider: "cursor", id: "composer-2.5", label: "Composer 2.5" },
 ];
 
-const CURSOR_MODEL_ID = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
-
-export function isCursorModelId(value: string): boolean {
-  return CURSOR_MODEL_ID.test(value);
-}
-
 export function isAllowedModel(provider: string, model: string): boolean {
-  if (MODELS.some((entry) => entry.provider === provider && entry.id === model)) {
-    return true;
-  }
-  // Cursor's /v1/models catalog is account-specific; accept any well-formed id
-  // the picker can return from that API.
-  return provider === "cursor" && isCursorModelId(model);
+  return MODELS.some((entry) => entry.provider === provider && entry.id === model);
 }

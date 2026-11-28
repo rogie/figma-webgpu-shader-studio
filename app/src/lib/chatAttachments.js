@@ -10,8 +10,7 @@ export function providerSupportsChatImage(provider) {
     provider === "openai" ||
     provider === "anthropic" ||
     provider === "gemini" ||
-    provider === "grok" ||
-    provider === "cursor"
+    provider === "grok"
   );
 }
 

@@ -1,6 +1,5 @@
 import { isAllowedModel, isProvider, MODELS, type Provider } from "./models.ts";
 import { buildCurrentShaderTurn, buildSystemPrompt } from "./prompt.ts";
-import { isCursorAgentId, parseCursorModels, streamCursorChat } from "./cursor.ts";
 import { anthropicOutputConfig } from "./anthropic.ts";
 import { loadFigmaAuthoringReference } from "./figmaAuthoringReference.mjs";
 import { resolveOpenAIReasoningEffort } from "./openaiModels.mjs";
@@ -36,10 +35,8 @@ type RequestBody = {
   kind?: string;
   fileName?: string;
   features?: { isAnimated?: boolean; usesMouse?: boolean };
-  figmaSkillRevision?: string;
   mode?: "agent" | "plan";
   reasoningEffort?: unknown;
-  cursorAgentId?: string;
   compileError?: string;
 };
 
@@ -595,12 +592,6 @@ async function listProviderModels(
         "anthropic-version": "2023-06-01",
       },
     });
-  } else if (provider === "cursor") {
-    upstream = await fetch("https://api.cursor.com/v1/models", {
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-    });
   } else {
     upstream = await fetch(
       "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
@@ -619,20 +610,11 @@ async function listProviderModels(
 
   const payload = await upstream.json() as {
     data?: Array<{ id?: string }>;
-    items?: Array<{ id?: string; aliases?: string[] }>;
     models?: Array<{
       name?: string;
       supportedGenerationMethods?: string[];
     }>;
   };
-  if (provider === "cursor") {
-    const models = parseCursorModels(payload);
-    return jsonResponse(200, {
-      models: models.length
-        ? models
-        : MODELS.filter((entry) => entry.provider === "cursor"),
-    });
-  }
   const ids = provider === "gemini"
     ? (payload.models || [])
       .filter((entry) =>
@@ -859,7 +841,7 @@ Deno.serve(async (req) => {
   if (body.action === "list-models") {
     if (!isProvider(provider)) {
       return jsonResponse(400, {
-        error: "provider must be openai, anthropic, gemini, grok, or cursor",
+        error: "provider must be openai, anthropic, gemini, or grok",
       });
     }
     try {
@@ -879,7 +861,7 @@ Deno.serve(async (req) => {
 
   if (!isProvider(provider)) {
     return jsonResponse(400, {
-      error: "provider must be openai, anthropic, gemini, grok, or cursor",
+      error: "provider must be openai, anthropic, gemini, or grok",
     });
   }
   if (!isAllowedModel(provider, model)) {
@@ -941,22 +923,7 @@ Deno.serve(async (req) => {
     });
 
     let response: Response;
-    if (provider === "cursor") {
-      const cursorAgentId =
-        body.figmaSkillRevision === skillRevision && isCursorAgentId(body.cursorAgentId)
-          ? body.cursorAgentId
-          : undefined;
-      response = streamCursorChat({
-        apiKey,
-        model,
-        system,
-        messages: history,
-        mode,
-        agentId: cursorAgentId,
-        corsHeaders: CORS_HEADERS,
-        signal: req.signal,
-      });
-    } else if (provider === "openai") {
+    if (provider === "openai") {
       response = await streamOpenAI(apiKey, model, system, history, reasoningEffort);
     } else if (provider === "grok") {
       response = await streamGrok(apiKey, model, system, history);

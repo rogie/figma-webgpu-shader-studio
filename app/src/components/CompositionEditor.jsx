@@ -949,6 +949,7 @@ export function DocumentInputsPane({
   onSupportsAudioChange,
 }) {
   const normalized = normalizeDocumentInputs(inputs);
+  const hasSources = normalized.length > 0;
   const audioEnabled = experimentalAudio;
   const atInputLimit = normalized.length >= MAX_DOCUMENT_INPUTS;
   const canAdd = experimentalAudio && !readOnly && !atInputLimit;
@@ -984,13 +985,19 @@ export function DocumentInputsPane({
     [normalized, onChange]
   );
 
+  if (!experimentalAudio && !hasSources) return null;
+
   return (
     <div className="properties-pane">
       <fig-header borderless>
         <h3>Sources</h3>
         {!readOnly && (
           <hstack>
-            <fig-menu ref={addMenuRef} position="bottom right">
+            <fig-menu
+              ref={addMenuRef}
+              position="bottom right"
+              disabled={!canAdd ? "" : undefined}
+            >
               <fig-tooltip text="Add input">
                 <fig-button
                   type="button"
@@ -998,7 +1005,6 @@ export function DocumentInputsPane({
                   icon="true"
                   fig-menu-trigger=""
                   aria-label="Add input"
-                  disabled={!canAdd ? "" : undefined}
                 >
                   <fig-icon name="add" />
                 </fig-button>
@@ -1023,12 +1029,12 @@ export function DocumentInputsPane({
           </hstack>
         )}
       </fig-header>
-      {!experimentalAudio && normalized.length > 0 ? (
+      {!experimentalAudio ? (
         <p className="composition-notice">
           This shader uses audio. Enable Audio inputs in Settings → Experimental.
         </p>
       ) : null}
-      {normalized.length > 0 && (
+      {hasSources && (
         <div className="composition-effect-list">
           {normalized.map((input) => {
             const rowId =

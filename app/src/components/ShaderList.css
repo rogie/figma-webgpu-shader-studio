@@ -75,6 +75,10 @@
     overflow: visible;
     gap: 1px;
 
+    #shader-library & {
+      width: stretch;
+    }
+
     fig-choice {
       height: max-content;
       align-self: start;

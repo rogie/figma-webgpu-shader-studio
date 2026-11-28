@@ -110,10 +110,6 @@ import {
   migrateChatThreadKey,
 } from "./lib/chatThreads.js";
 import {
-  copyCursorAgentThreadKey,
-  migrateCursorAgentThreadKey,
-} from "./lib/cursorAgent.js";
-import {
   buildShaderDocumentPayload,
   buildShaderDocumentSnapshot,
   buildShaderStateSavePayload,
@@ -1971,7 +1967,6 @@ export default function App() {
       : sessionKind === "fill"
         ? "Shader fill"
         : "Shader effect";
-  const isShaderFillPanel = sessionKind === "fill";
   const isComposerView = routeKind === COMPOSITION_KIND;
   useEffect(() => {
     if (presetId && kind !== COMPOSITION_KIND) {
@@ -6623,7 +6618,6 @@ export default function App() {
             continue;
           }
           migrateChatThreadKey(sourceThreadKey, targetThreadKey);
-          migrateCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
           removeLocalPlan(sourceThreadKey);
           migrated.push(saved);
           if (active) activeMigration = saved;
@@ -8230,7 +8224,6 @@ export default function App() {
         }
         if (localDraft) {
           migrateChatThreadKey(planLocalKey, targetThreadKey);
-          migrateCursorAgentThreadKey(planLocalKey, targetThreadKey);
           removeLocalPlan(planLocalKey);
           await removePromotedDraftState({
             draftId: saveTargetId,
@@ -9334,7 +9327,6 @@ export default function App() {
           saved.id
         );
         copyChatThreadKey(sourceThreadKey, targetThreadKey);
-        copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
         await activateShaderSession({
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
@@ -9530,7 +9522,6 @@ export default function App() {
           saved.id
         );
         copyChatThreadKey(sourceThreadKey, targetThreadKey);
-        copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
         await activateShaderSession({
           sessionId: cloudChoiceId(saved.id),
           routeId: saved.id,
@@ -9594,7 +9585,6 @@ export default function App() {
         if (copiedPlan.built) markLocalPlanBuilt(targetThreadKey, copiedPlan.revision);
       }
       copyChatThreadKey(sourceThreadKey, targetThreadKey);
-      copyCursorAgentThreadKey(sourceThreadKey, targetThreadKey);
       await activateShaderSession({
         sessionId: id,
         routeId: id,
@@ -10424,16 +10414,22 @@ export default function App() {
     );
   };
 
+  const shaderPropertyRows = (
+    <Suspense fallback={null}>
+      <Controls
+        props={props}
+        values={values}
+        onChange={updateControl}
+        onInput={previewControl}
+      />
+    </Suspense>
+  );
+  const showShaderPropertyHeader =
+    sessionKind === "effect" || (sessionKind === "fill" && viewMode !== "view");
+
   const renderPropertiesPanelContent = (viewDialog = null) => (
     <>
-      {viewMode === "view" ? (
-        renderShaderViewHeader(viewDialog)
-      ) : !isComposerView && isShaderFillPanel && (
-        <fig-header>
-          <h2>{propertiesPanelTitle}</h2>
-          {renderPropertyHeaderActions("fill")}
-        </fig-header>
-      )}
+      {viewMode === "view" && renderShaderViewHeader(viewDialog)}
 
       {!viewDialog?.minimized && <fig-content
         ref={propertiesPanelContentFadeRef}
@@ -10623,22 +10619,17 @@ export default function App() {
                 }}
               />
             )}
-            <div className="properties-pane">
-              {sessionKind === "effect" && (
+            {showShaderPropertyHeader ? (
+              <fig-group class="properties-pane">
                 <fig-header borderless="">
-                  <h3>Effect</h3>
-                  {renderPropertyHeaderActions("effect")}
+                  <h3>{sessionKind === "fill" ? "Fill" : "Effect"}</h3>
+                  {renderPropertyHeaderActions(sessionKind)}
                 </fig-header>
-              )}
-              <Suspense fallback={null}>
-                <Controls
-                  props={props}
-                  values={values}
-                  onChange={updateControl}
-                  onInput={previewControl}
-                />
-              </Suspense>
-            </div>
+                {shaderPropertyRows}
+              </fig-group>
+            ) : (
+              <div className="properties-pane">{shaderPropertyRows}</div>
+            )}
             <DocumentInputsPane
               inputs={documentInputs}
               readOnly={viewMode === "view" ? false : protectedPreview}

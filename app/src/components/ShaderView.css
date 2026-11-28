@@ -185,6 +185,10 @@
         background-color: transparent;
       }
 
+      .cm-lineNumbers > .cm-gutterElement {
+        color: var(--figma-color-text-tertiary);
+      }
+
       /* Column layout keeps the search panel from pushing the scroller past
          the editor's fixed height. */
       .cm-editor {

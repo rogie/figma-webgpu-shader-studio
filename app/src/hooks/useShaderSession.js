@@ -127,12 +127,12 @@ export function useShaderSession({
       setShaderDescription(nextDescription);
       setSource(nextSource);
       setSessionKind(nextKind);
+      const nextInputs = readDocumentInputs(nextComposition || cloudShader?.composition);
       setSupportsAudio?.(
-        Boolean(features?.supportsAudio || cloudShader?.features?.supportsAudio),
+        nextInputs.length > 0 ||
+          Boolean(features?.supportsAudio || cloudShader?.features?.supportsAudio),
       );
-      setDocumentInputs?.(
-        readDocumentInputs(nextComposition || cloudShader?.composition),
-      );
+      setDocumentInputs?.(nextInputs);
       const graph =
         nextKind === COMPOSITION_KIND
           ? normalizeComposition(nextComposition || emptyComposition())

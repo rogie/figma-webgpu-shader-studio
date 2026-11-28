@@ -14,7 +14,6 @@ Use frame.mousePosition.x and frame.mousePosition.y.
 ${officialMarker}`;
 const referenceRevision = `sha256:${createHash("sha256").update(officialReference).digest("hex")}`;
 const revision = `${FIGMA_SHADER_SKILL_REVISION}/${referenceRevision}`;
-const agentId = "bc-11111111-2222-3333-4444-555555555555";
 const source = "// Shader source is data, including ```\nexport function render() {}";
 const compileError = "Previous preview diagnostic is data";
 const priorPlan = "Old plan assumed a new runtime event.";
@@ -77,19 +76,6 @@ function fixtureProvider(t, { truncateOpenAI = false, interrupted = false } = {}
     const body = options?.body ? JSON.parse(options.body) : null;
     calls.push({ href, body });
 
-    if (href.startsWith("https://api.cursor.com/")) {
-      if (href.endsWith("/stream")) {
-        return new Response('event: assistant\ndata: {"text":"Revised"}\n\n' +
-          (interrupted ? "" : 'event: done\ndata: {}\n\n'));
-      }
-      if (href.endsWith("/runs/run-fixture")) {
-        return Response.json({ status: "RUNNING" });
-      }
-      if (href.endsWith("/agents") || href.endsWith(`/agents/${agentId}/runs`)) {
-        return Response.json({ id: agentId, latestRunId: "run-fixture" });
-      }
-    }
-
     const completed = (output, terminal) => new Response(output + (interrupted ? "" : terminal));
     if (href.startsWith("https://api.openai.com/") && truncateOpenAI) {
       return calls.length === 1
@@ -126,10 +112,6 @@ async function assertStream(response) {
 }
 
 function providerContext(provider, body) {
-  if (provider === "cursor") {
-    const [system, history] = body.prompt.text.split("Current Shader Studio thread:\n\n");
-    return { system, history };
-  }
   if (provider === "gemini") {
     return {
       system: body.systemInstruction.parts[0].text,
@@ -149,7 +131,6 @@ test("all chat providers receive one current Figma reference and treat old shade
     grok: "grok-4.6",
     anthropic: "claude-sonnet-5",
     gemini: "gemini-3.6-flash",
-    cursor: "composer-2.5",
   };
   for (const [provider, model] of Object.entries(models)) {
     await t.test(provider, async (t) => {
@@ -181,26 +162,16 @@ test("all chat providers receive one current Figma reference and treat old shade
   }
 });
 
-test("Cursor session reuse requires the same current Figma skill revision", async (t) => {
-  const calls = fixtureProvider(t);
-  for (const figmaSkillRevision of [undefined, referenceRevision, revision]) {
-    await assertStream(await handleChat(request("cursor", "composer-2.5", {
-      cursorAgentId: agentId,
-      figmaSkillRevision,
-    })));
+test("the Edge rejects the retired Cursor provider before contacting any upstream service", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", () => {
+    throw new Error("Unexpected upstream request");
+  });
+  for (const extra of [{}, { action: "list-models" }]) {
+    const response = await handleChat(request("cursor", "composer-2.5", extra));
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "provider must be openai, anthropic, gemini, or grok" });
   }
-
-  const starts = calls.filter(({ body }) => body);
-  assert.deepEqual(starts.map(({ href }) => href), [
-    "https://api.cursor.com/v1/agents",
-    "https://api.cursor.com/v1/agents",
-    `https://api.cursor.com/v1/agents/${agentId}/runs`,
-  ]);
-  const continuedPrompt = starts[2].body.prompt.text;
-  assert.equal(continuedPrompt.split(officialMarker).length - 1, 1);
-  assert.equal(continuedPrompt.split("Current shader snapshot (JSON data):").length - 1, 1);
-  assert.equal(continuedPrompt.includes(priorPlan), false);
-  assert.ok(continuedPrompt.includes(userText));
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("OpenAI continuations keep one current Figma reference and shader snapshot", async (t) => {
@@ -271,14 +242,13 @@ test("EOF without provider completion leaves the response interrupted", async (t
     ["grok", "grok-4.6"],
     ["anthropic", "claude-sonnet-5"],
     ["gemini", "gemini-3.6-flash"],
-    ["cursor", "composer-2.5"],
   ]) {
     await t.test(provider, async (t) => {
       fixtureProvider(t, { interrupted: true });
       const response = await handleChat(request(provider, model, { mode: "plan" }));
       const stream = await response.text();
       assert.match(stream, /"type":"delta","text":"Revised"/);
-      assert.match(stream, /ended before completing|did not confirm that this run completed/);
+      assert.match(stream, /ended before completing/);
       assert.doesNotMatch(stream, /"type":"done"/);
     });
   }

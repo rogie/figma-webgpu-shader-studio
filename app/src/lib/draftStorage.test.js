@@ -91,6 +91,35 @@ test("writeDrafts keeps preview data out of localStorage", () => {
   );
 });
 
+test("draft storage retains audio source metadata for every document kind", () => {
+  const storage = memoryStorage();
+  const inputs = [
+    { id: "mic", type: "microphone", enabled: false },
+    {
+      id: "track",
+      type: "audio",
+      enabled: true,
+      audio: { name: "Track.wav", url: "blob:temporary", gain: 0.5, monitor: false, loop: false },
+    },
+  ];
+  const drafts = ["fill", "effect", "composition"].map((kind) => ({
+    id: `draft:${kind}`,
+    name: kind,
+    kind,
+    source: "",
+    composition: { inputs },
+  }));
+  writeDrafts(drafts, {}, storage);
+
+  const expectedInputs = [inputs[0], { ...inputs[1], audio: { ...inputs[1].audio, url: "" } }];
+  for (const saved of [JSON.parse(storage.getItem(DRAFTS_STORAGE_KEY)), readDrafts(storage)]) {
+    assert.equal(saved.length, drafts.length);
+    for (const draft of saved) {
+      assert.deepEqual(draft.composition.inputs, expectedInputs);
+    }
+  }
+});
+
 test("stripPersistedDraftThumbnails preserves draft source and settings", () => {
   const storage = memoryStorage({
     [DRAFTS_STORAGE_KEY]: JSON.stringify([

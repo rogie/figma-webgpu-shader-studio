@@ -139,6 +139,49 @@ test("standalone shader properties open at the shared inspector width", async ({
   await expect(page.getByRole("dialog", { name: "Properties", exact: true })).toHaveCSS("width", "260px");
 });
 
+test("Sources follows the experimental audio setting and shows saved inputs while off", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("figma-shader-studio:experimental-audio", "false");
+    localStorage.setItem("figma-shader-studio:drafts", JSON.stringify([
+      {
+        id: "draft:saved-source",
+        name: "Saved audio source",
+        kind: "fill",
+        source: "export default function Fill() {}",
+        composition: { inputs: [{ id: "saved-mic", type: "microphone", enabled: false }] },
+      },
+      { id: "draft:no-sources", name: "Empty sources", kind: "composition" },
+    ]));
+  });
+  const inspector = page.locator(".shader-properties-panel");
+  const sources = inspector.getByRole("heading", { name: "Sources", exact: true });
+  const addInput = inspector.getByRole("button", { name: "Add input", exact: true });
+  await page.goto("/shader/sphere");
+  await expect(inspector.locator(".shader-editor-header input")).toHaveValue("Sphere");
+  await expect(sources).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const experimental = page.locator('.settings-popup fig-group[name="Experimental"]');
+  await experimental.getByRole("button", { name: "Experimental", exact: true }).click();
+  const audio = experimental.getByRole("switch");
+  await audio.click();
+  await expect(sources).toBeVisible();
+  await expect(addInput).toBeEnabled();
+  await audio.click();
+  await expect(sources).toHaveCount(0);
+
+  await page.goto("/shader/draft%3Asaved-source");
+  await expect(sources).toBeVisible();
+  await expect(inspector.getByText(/Enable Audio inputs in Settings/)).toBeVisible();
+  await expect(inspector.locator('fig-property[aria-label="Microphone"]')).toBeVisible();
+  await expect(addInput).toBeDisabled();
+
+  await page.goto("/composer/draft%3Ano-sources");
+  await expect(inspector.getByRole("heading", { name: "Effects", exact: true })).toBeVisible();
+  await expect(sources).toHaveCount(0);
+});
+
 async function dragDivider(page, divider, dx, dy, checkDuringDrag) {
   await divider.scrollIntoViewIfNeeded();
   const bounds = await divider.boundingBox();

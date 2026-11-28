@@ -196,15 +196,14 @@ export function chatApplyTargetStatus({
 
 /**
  * @param {string} [provider]
- * @returns {"openai" | "anthropic" | "gemini" | "grok" | "cursor" | null}
+ * @returns {"openai" | "anthropic" | "gemini" | "grok" | null}
  */
 function normalizeProvider(provider) {
   if (
     provider === "openai" ||
     provider === "anthropic" ||
     provider === "gemini" ||
-    provider === "grok" ||
-    provider === "cursor"
+    provider === "grok"
   ) {
     return provider;
   }
@@ -231,9 +230,6 @@ function summarizeProviderError(text, provider) {
     if (known === "grok") {
       return "API quota or rate limit exceeded. Check your Grok plan/billing at console.x.ai, or switch model/provider.";
     }
-    if (known === "cursor") {
-      return "Cursor usage limit exceeded. Check your Cursor plan at cursor.com/dashboard, or switch model/provider.";
-    }
     return "API quota or rate limit exceeded. Check your plan/billing for the selected provider, or switch model/provider.";
   }
   if (/no longer available|not available to new users/i.test(text)) {
@@ -241,11 +237,6 @@ function summarizeProviderError(text, provider) {
       return "That model is no longer available for your API key. Pick a newer Gemini model from the list.";
     }
     return "That model is no longer available for your API key. Pick another model from the list.";
-  }
-  if (/usage_limit_exceeded|usage limit exceeded/i.test(text)) {
-    if (known === "cursor") {
-      return "Cursor usage limit exceeded. Check your Cursor plan at cursor.com/dashboard, or switch model/provider.";
-    }
   }
   if (/API key not valid|API_KEY_INVALID|invalid api key/i.test(text)) {
     return "API key is invalid. Update it in Settings.";

@@ -25,10 +25,12 @@ import {
   providerSupportsChatVideo,
 } from "../lib/chatAttachments.js";
 import {
+  CHAT_MODELS,
   DEFAULT_CHAT_MODEL,
   findChatModel,
   findSelectableChatModel,
   groupsForAvailableProviderModels,
+  modelsForProvider,
   reconcileAvailableChatModel,
 } from "../lib/chatModels.js";
 import {
@@ -58,17 +60,11 @@ import {
 } from "../lib/chatPlans.js";
 import {
   getProviderKey,
+  getProviderKeys,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
-import {
-  bindCursorAgentToSource,
-  clearCursorAgent,
-  cursorAgentIdForModel,
-  loadCursorAgent,
-  saveCursorAgent,
-} from "../lib/cursorAgent.js";
 import { toApiMessages } from "../lib/chatPayload.js";
-import { FIGMA_SHADER_SKILL_REVISION, getChatSkillContext } from "../lib/chatSkills.js";
+import { getChatSkillContext } from "../lib/chatSkills.js";
 import { splitComposerPaste } from "../lib/pastedText.js";
 import { isSupabaseConfigured } from "../lib/supabase.js";
 import {
@@ -109,8 +105,6 @@ const TOOLTIP_DELAY_MS = 500;
 
 function assistantPhaseLabel(message) {
   switch (message?.phase) {
-    case "starting":
-      return "Starting Cursor agent…";
     case "thinking":
       return "Thinking…";
     case "responding":
@@ -135,7 +129,11 @@ function loadSavedModel() {
     const raw = localStorage.getItem(MODEL_STORAGE_KEY);
     if (!raw) return DEFAULT_CHAT_MODEL;
     const parsed = JSON.parse(raw);
-    return findChatModel(parsed.provider, parsed.id);
+    if (modelsForProvider(parsed.provider).length) {
+      return findChatModel(parsed.provider, parsed.id);
+    }
+    const keys = getProviderKeys();
+    return CHAT_MODELS.find(({ provider }) => keys[provider]?.trim()) || DEFAULT_CHAT_MODEL;
   } catch {
     return DEFAULT_CHAT_MODEL;
   }
@@ -168,29 +166,6 @@ function isEmptyAssistant(message) {
   );
 }
 
-function rememberCursorAgent(event, model, { threadId, source, skills } = {}) {
-  if (model?.provider !== "cursor") return;
-  if (typeof event?.agentId === "string" && event.agentId) {
-    saveCursorAgent({
-      agentId: event.agentId,
-      modelId: model.id,
-      runId: event.runId,
-      threadId,
-      source,
-      skills,
-      figmaSkillRevision: event.figmaSkillRevision,
-    });
-  }
-}
-
-function cursorRequestOptions(model, context) {
-  const cursorAgentId = cursorAgentIdForModel(model, context);
-  const storedRevision = cursorAgentId
-    ? loadCursorAgent(context.threadId)?.figmaSkillRevision
-    : null;
-  return { cursorAgentId, figmaSkillRevision: storedRevision || FIGMA_SHADER_SKILL_REVISION };
-}
-
 function pruneEmptyAssistants(thread) {
   return thread.filter((message) => !isEmptyAssistant(message));
 }
@@ -200,7 +175,6 @@ function chatActivityLabel(messages) {
   if (!latest) return "New chat activity";
   if (latest.role !== "assistant") return "New message";
   if (latest.pending) {
-    if (latest.phase === "starting") return "Starting Cursor agent…";
     if (latest.mode === "plan" || latest.phase === "planning") {
       return "Writing plan…";
     }
@@ -578,10 +552,6 @@ const ChatPane = forwardRef(function ChatPane(
     () => getProviderKey("grok"),
     [keyVersion]
   );
-  const cursorApiKey = useMemo(
-    () => getProviderKey("cursor"),
-    [keyVersion]
-  );
   const modelGroups = useMemo(
     () => groupsForAvailableProviderModels(availableProviderModels),
     [availableProviderModels]
@@ -691,7 +661,6 @@ const ChatPane = forwardRef(function ChatPane(
       ["anthropic", anthropicApiKey],
       ["gemini", geminiApiKey],
       ["grok", grokApiKey],
-      ["cursor", cursorApiKey],
     ];
     for (const [provider, providerKey] of providerKeys) {
       if (!providerKey) continue;
@@ -709,7 +678,7 @@ const ChatPane = forwardRef(function ChatPane(
         });
     }
     return () => controller.abort();
-  }, [openaiApiKey, anthropicApiKey, geminiApiKey, grokApiKey, cursorApiKey]);
+  }, [openaiApiKey, anthropicApiKey, geminiApiKey, grokApiKey]);
 
   useEffect(() => {
     if (Object.keys(availableProviderModels).length === 0) return;
@@ -1118,7 +1087,6 @@ const ChatPane = forwardRef(function ChatPane(
       abortRef.current = null;
       setStreaming(false);
     }
-    clearCursorAgent(threadId);
     const next = { ...threadsRef.current };
     delete next[threadId];
     threadsRef.current = next;
@@ -1399,10 +1367,6 @@ const ChatPane = forwardRef(function ChatPane(
       lastApplied = moduleSource;
       updateLastAssistant({ phase: "applying" });
       onApplySource(moduleSource);
-      bindCursorAgentToSource(model, {
-        threadId: requestThreadId,
-        source: moduleSource,
-      });
       markAssistantApplied();
       return moduleSource;
     };
@@ -1457,19 +1421,9 @@ const ChatPane = forwardRef(function ChatPane(
           features,
           skills,
           compileError: String(compileErrorRef?.current || ""),
-          ...cursorRequestOptions(model, {
-            threadId: requestThreadId,
-            source: brokenSource,
-            skills,
-          }),
           signal: controller.signal,
         })) {
           if (controller.signal.aborted) break;
-          rememberCursorAgent(event, model, {
-            threadId: requestThreadId,
-            source: brokenSource,
-            skills,
-          });
           if (event.type === "error") {
             throw new Error(event.message || "Automatic repair failed.");
           }
@@ -1547,19 +1501,9 @@ const ChatPane = forwardRef(function ChatPane(
         skills,
         mode: requestMode,
         compileError: String(compileErrorRef?.current || ""),
-        ...cursorRequestOptions(model, {
-          threadId: requestThreadId,
-          source: baselineSource,
-          skills,
-        }),
         signal: controller.signal,
       })) {
         if (controller.signal.aborted) break;
-        rememberCursorAgent(event, model, {
-          threadId: requestThreadId,
-          source: baselineSource,
-          skills,
-        });
         if (event.type === "delta") {
           assembled += event.text;
           const snapshot = assembled;
@@ -1591,12 +1535,7 @@ const ChatPane = forwardRef(function ChatPane(
           }
         } else if (event.type === "status") {
           updateLastAssistant({
-            phase:
-              event.phase === "starting"
-                ? "starting"
-                : requestMode === "plan"
-                  ? "planning"
-                  : event.phase,
+            phase: requestMode === "plan" ? "planning" : event.phase,
           });
         } else if (event.type === "done") {
           sawDone = true;

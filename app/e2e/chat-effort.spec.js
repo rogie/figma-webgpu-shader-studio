@@ -199,3 +199,55 @@ test("effort follows the model, persists, and is sent in Plan and Agent requests
   await expect(effortLabel).toHaveText("Default");
   expect(await send("Reset to provider default")).not.toHaveProperty("reasoningEffort");
 });
+
+test("old Cursor settings fall back to a configured provider and keep shader chat history", async ({ page }) => {
+  const providers = [];
+  await page.addInitScript(() => {
+    localStorage.setItem("shader-studio.providerKeys", JSON.stringify({ cursor: "retired-key", grok: "test-key" }));
+    localStorage.setItem("shader-studio.chatModel", JSON.stringify({ provider: "cursor", id: "composer-2.5" }));
+    localStorage.setItem("shader-studio.chatThreads.v1", JSON.stringify({
+      "preset:dither": [{ role: "assistant", content: "Existing shader discussion" }],
+    }));
+  });
+  await page.route("**/functions/v1/chat", async (route) => {
+    const request = route.request();
+    if (request.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    const { action, provider } = request.postDataJSON();
+    providers.push(provider);
+    if (action === "list-models") {
+      return route.fulfill({ headers: cors, json: { models: [{ id: "grok-4.6" }] } });
+    }
+    return route.fulfill({
+      headers: { ...cors, "content-type": "text/event-stream" },
+      body: 'data: {"type":"delta","text":"Grok reply"}\n\ndata: {"type":"done"}\n\n',
+    });
+  });
+  await page.goto("/shader/dither");
+  const picker = page.locator(".chat-model-picker-trigger");
+  await expect(picker).toHaveAccessibleName(/Model and effort: Grok 4\.6/);
+  await expect(page.getByText("Existing shader discussion", { exact: true })).toBeVisible();
+  await picker.click();
+  const modelDialog = page.getByRole("dialog", { name: "Model and effort", exact: true });
+  await modelDialog.getByRole("button", { name: "Model", exact: true }).click();
+  await expect(modelDialog.getByRole("option", { name: "Grok 4.6", exact: true })).toBeVisible();
+  await expect(modelDialog.getByText(/Cursor|Composer 2\.5/)).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Escape");
+
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  const keys = page.locator('.settings-popup fig-group[name="AI API keys"]');
+  await expect(keys.locator("fig-field > label")).toHaveText(["OpenAI", "Anthropic", "Gemini", "Grok"]);
+  await page.locator(".settings-popup").getByRole("button", { name: "Save", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem("shader-studio.providerKeys")))).toEqual({
+    openai: "", anthropic: "", gemini: "", grok: "test-key",
+  });
+  await page.keyboard.press("Escape");
+
+  const input = page.locator("fig-input-text.chat-input textarea");
+  await input.fill("Continue the conversation");
+  await input.press("Enter");
+  await expect(page.getByText("Grok reply", { exact: true })).toBeVisible();
+  expect(providers).not.toHaveLength(0);
+  expect(new Set(providers)).toEqual(new Set(["grok"]));
+});

@@ -16,7 +16,7 @@ The migration was exercised on disposable PostgreSQL with two independent client
 
 | Area | Invariant now enforced | Verification |
 | --- | --- | --- |
-| AI chat and code apply | The proxy emits success only after the provider confirms completion. EOF, failed Cursor runs, and unfinished continuation segments yield an error. Cursor can recover from a closed stream if its run endpoint confirms completion. | Edge fixtures for OpenAI, Grok, Anthropic, Gemini, Cursor, and continuations. Browser fixtures for interrupted plans, selected efforts, and compatibility checks. |
+| AI chat and code apply | The proxy emits success only after the provider confirms completion. EOF and unfinished continuation segments yield an error. | Edge fixtures for OpenAI, Grok, Anthropic, Gemini, and continuations. Browser fixtures for interrupted plans, selected efforts, and compatibility checks. |
 | Chat cancellation | Stop aborts the stream while the active request retains ownership of its final UI update. Clearing the active chat revokes that ownership immediately. Unmount aborts the request before persisting history. | Existing chat browser suite and Edge tests. |
 | Composition save | The save queue works from a captured graph. Promoting saved dependency references updates the editor only after save succeeds and the editor still matches the captured snapshot. Saves already queued when a conflict is detected must respect the conflict guard. | Existing document and save-queue tests. Live two-client composition conflict test still needed. |
 | Public dependencies | The client checks every page of public references before unpublishing or deleting. | Service test with 501 graphs. Database enforcement is tracked below. |

@@ -103,10 +103,8 @@ export function buildChatRequest({
   fileName,
   features,
   skills,
-  figmaSkillRevision,
   mode = "agent",
   reasoningEffort,
-  cursorAgentId,
   compileError,
 }) {
   const request = {
@@ -121,12 +119,8 @@ export function buildChatRequest({
       usesMouse: Boolean(features.usesMouse),
     },
     skills,
-    figmaSkillRevision,
     mode: mode === "plan" ? "plan" : "agent",
   };
-  if (typeof cursorAgentId === "string" && cursorAgentId) {
-    request.cursorAgentId = cursorAgentId;
-  }
   if (provider === "openai") {
     const effort = resolveOpenAIReasoningEffort(model, reasoningEffort);
     if (effort !== undefined) request.reasoningEffort = effort;
@@ -136,11 +130,11 @@ export function buildChatRequest({
   return request;
 }
 
-export function chatStreamCompletionEvent(provider, { sawDone, sawError } = {}) {
+export function chatStreamCompletionEvent({ sawDone, sawError } = {}) {
   if (sawDone || sawError) return null;
   return {
     type: "error",
-    message: `${provider === "cursor" ? "Cursor" : "The model"} stream ended before the agent finished. Try again.`,
+    message: "The model stream ended before the agent finished. Try again.",
   };
 }
 
@@ -166,29 +160,11 @@ export function createChatSseParser() {
           } else if (
             event.type === "status" &&
             (event.phase === "thinking" ||
-              event.phase === "responding" ||
-              event.phase === "starting")
+              event.phase === "responding")
           ) {
             events.push({ type: "status", phase: event.phase });
-          } else if (
-            event.type === "cursor-agent" &&
-            typeof event.agentId === "string" &&
-            event.agentId
-          ) {
-            const next = { type: "cursor-agent", agentId: event.agentId };
-            if (typeof event.runId === "string" && event.runId) {
-              next.runId = event.runId;
-            }
-            events.push(next);
           } else if (event.type === "done") {
-            const done = { type: "done" };
-            if (typeof event.agentId === "string" && event.agentId) {
-              done.agentId = event.agentId;
-            }
-            if (typeof event.runId === "string" && event.runId) {
-              done.runId = event.runId;
-            }
-            events.push(done);
+            events.push({ type: "done" });
           } else if (event.type === "error") {
             events.push({
               type: "error",

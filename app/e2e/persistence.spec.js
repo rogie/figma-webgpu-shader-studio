@@ -78,21 +78,6 @@ test("anonymous duplication carries editor state, plan, and chat continuity", as
         ],
       }),
     );
-    localStorage.setItem(
-      "shader-studio.cursorAgents.v2",
-      JSON.stringify({
-        version: 2,
-        lastBindingKey: "preset:dither",
-        bindings: {
-          "preset:dither": {
-            agentId: "bc-11111111-2222-3333-4444-555555555555",
-            modelId: "composer-2.5",
-            threadId: "preset:dither",
-            sourceFingerprint: "1:1",
-          },
-        },
-      }),
-    );
   });
   await appendSourceMarker(page, "duplicate-keeps-current-source");
   await setBrightness(page, 135);
@@ -140,17 +125,12 @@ test("anonymous duplication carries editor state, plan, and chat continuity", as
     const threads = JSON.parse(
       localStorage.getItem("shader-studio.chatThreads.v1") || "{}",
     );
-    const cursorAgents = JSON.parse(
-      localStorage.getItem("shader-studio.cursorAgents.v2") || "{}",
-    );
     return {
       source: draft.source,
       brightness: draft.values.brightness,
       effectFillCount: draft.composition.effectFills.length,
       plan: plans[threadKey],
       messages: threads[threadKey],
-      sourceAgent: cursorAgents.bindings?.["preset:dither"],
-      targetAgent: cursorAgents.bindings?.[threadKey],
     };
   });
   expect(duplicate.source).toContain("duplicate-keeps-current-source");
@@ -162,10 +142,6 @@ test("anonymous duplication carries editor state, plan, and chat continuity", as
     "It will be copied",
   ]);
   expect(duplicate.messages.at(-1).content).toContain("Keep this plan");
-  expect(duplicate.sourceAgent.agentId).toBe(
-    "bc-11111111-2222-3333-4444-555555555555",
-  );
-  expect(duplicate.targetAgent.agentId).toBe(duplicate.sourceAgent.agentId);
 });
 
 test("IndexedDB media survives a browser document reload", async ({ page }) => {

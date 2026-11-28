@@ -4,6 +4,7 @@ import {
   normalizeComposition,
   readEffectFillsFromComposition,
 } from "./composition.js";
+import { persistableDocumentInputs } from "./documentInputs.js";
 import { isTransientDraftMediaUrl } from "./draftMediaStorage.js";
 import { figmaShaderLink, isDraftId } from "./shaderIdentity.js";
 
@@ -35,6 +36,7 @@ function persistableComposition(composition) {
   return {
     ...graph,
     fills: graph.fills.map(persistableMediaFill),
+    inputs: persistableDocumentInputs(graph.inputs),
   };
 }
 
@@ -57,9 +59,17 @@ function effectFillState(draft) {
   };
 }
 
+function shaderDraftComposition(draft, effectFills) {
+  const inputs = persistableDocumentInputs(draft.composition?.inputs);
+  return inputs.length ? { ...effectFills, inputs } : effectFills;
+}
+
 export function serializeDraft(draft) {
   const storedEffectFills =
     draft.kind === "effect" ? effectFillState(draft) : null;
+  const composition = draft.kind === "composition"
+    ? persistableComposition(draft.composition)
+    : shaderDraftComposition(draft, storedEffectFills);
   return {
     id: draft.id,
     name: draft.name,
@@ -70,11 +80,7 @@ export function serializeDraft(draft) {
     kind: draft.kind,
     source: typeof draft.source === "string" ? draft.source : "",
     values: draft.values && typeof draft.values === "object" ? draft.values : {},
-    ...(draft.kind === "composition"
-      ? { composition: persistableComposition(draft.composition) }
-      : storedEffectFills
-        ? { composition: storedEffectFills }
-        : {}),
+    ...(composition ? { composition } : {}),
     dependencySnapshots:
       draft.dependencySnapshots &&
       typeof draft.dependencySnapshots === "object" &&
@@ -104,6 +110,9 @@ export function readDrafts(storage = globalThis.localStorage) {
       .map((draft) => {
         const storedEffectFills =
           draft.kind === "effect" ? effectFillState(draft) : null;
+        const composition = draft.kind === "composition"
+          ? normalizeComposition(draft.composition || emptyComposition())
+          : shaderDraftComposition(draft, storedEffectFills);
         return {
           id: draft.id,
           name: draft.name,
@@ -115,19 +124,8 @@ export function readDrafts(storage = globalThis.localStorage) {
           source: typeof draft.source === "string" ? draft.source : "",
           values:
             draft.values && typeof draft.values === "object" ? draft.values : {},
-          ...(draft.kind === "composition"
-            ? {
-                composition: normalizeComposition(
-                  draft.composition || emptyComposition()
-                ),
-              }
-            : storedEffectFills
-              ? {
-                  composition: storedEffectFills,
-                  effectFills: storedEffectFills.effectFills,
-                  effectFill: storedEffectFills.effectFill,
-                }
-              : {}),
+          ...(composition ? { composition } : {}),
+          ...storedEffectFills,
           dependencySnapshots:
             draft.dependencySnapshots &&
             typeof draft.dependencySnapshots === "object" &&

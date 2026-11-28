@@ -8,8 +8,6 @@ import {
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const publishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const RESPONSE_IDLE_TIMEOUT_MS = 60_000;
-const CURSOR_IDLE_TIMEOUT_MS = 300_000;
-const CURSOR_START_TIMEOUT_MS = 120_000;
 
 export async function listAvailableProviderModels(
   provider,
@@ -61,10 +59,8 @@ export async function listAvailableProviderModels(
  * @param {{ isAnimated?: boolean, usesMouse?: boolean }} [options.features]
  * @param {string} [options.compileError]
  * @param {string} [options.skills]
- * @param {string} [options.figmaSkillRevision]
  * @param {"agent"|"plan"} [options.mode]
  * @param {string} [options.reasoningEffort]
- * @param {string} [options.cursorAgentId]
  * @param {AbortSignal} [options.signal]
  */
 export async function* streamChat({
@@ -77,10 +73,8 @@ export async function* streamChat({
   fileName,
   features,
   skills,
-  figmaSkillRevision,
   mode,
   reasoningEffort,
-  cursorAgentId,
   compileError,
   signal,
 }) {
@@ -116,10 +110,8 @@ export async function* streamChat({
       fileName,
       features,
       skills,
-      figmaSkillRevision,
       mode,
       reasoningEffort,
-      cursorAgentId,
       compileError,
     })),
     signal,
@@ -151,53 +143,32 @@ export async function* streamChat({
   }
 
   const reader = response.body.getReader();
-  const activeSkillRevision = response.headers.get("X-Figma-Skill-Revision") || figmaSkillRevision;
   const decoder = new TextDecoder();
   const parser = createChatSseParser();
-  const idleTimeoutMs =
-    provider === "cursor" ? CURSOR_IDLE_TIMEOUT_MS : RESPONSE_IDLE_TIMEOUT_MS;
-  const idleSeconds = Math.round(idleTimeoutMs / 1000);
-  const startedAt = Date.now();
-  let lastOutputAt = startedAt;
+  const idleSeconds = RESPONSE_IDLE_TIMEOUT_MS / 1000;
+  let lastOutputAt = Date.now();
   let receivedOutput = false;
   let sawDone = false;
   let sawError = false;
 
   while (true) {
-    const outputTimeoutMs =
-      provider === "cursor" && !receivedOutput
-        ? CURSOR_START_TIMEOUT_MS
-        : idleTimeoutMs;
-    const outputElapsedMs =
-      Date.now() - (receivedOutput ? lastOutputAt : startedAt);
-    const remainingOutputMs = Math.max(0, outputTimeoutMs - outputElapsedMs);
-    if (remainingOutputMs === 0) {
-      await reader.cancel();
-      yield {
-        type: "error",
-        message:
-          provider === "cursor" && !receivedOutput
-            ? "Cursor did not start a reply within 2 minutes. It may still be waiting for provider capacity; try again or choose another model/provider."
-            : `The model stopped producing output for ${Math.round(outputTimeoutMs / 1000)} seconds. The partial reply was preserved; try again.`,
-      };
-      return;
-    }
-
-    let timeoutId;
-    const read = reader.read();
-    let result;
-    try {
-      result = await Promise.race([
-        read,
-        new Promise((resolve) => {
-          timeoutId = window.setTimeout(
-            () => resolve({ timedOut: true }),
-            remainingOutputMs
-          );
-        }),
-      ]);
-    } finally {
-      if (timeoutId) window.clearTimeout(timeoutId);
+    const remainingOutputMs = RESPONSE_IDLE_TIMEOUT_MS - (Date.now() - lastOutputAt);
+    let result = { timedOut: true };
+    if (remainingOutputMs > 0) {
+      let timeoutId;
+      try {
+        result = await Promise.race([
+          reader.read(),
+          new Promise((resolve) => {
+            timeoutId = window.setTimeout(
+              () => resolve({ timedOut: true }),
+              remainingOutputMs
+            );
+          }),
+        ]);
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
     }
     if (result.timedOut) {
       await reader.cancel();
@@ -205,9 +176,7 @@ export async function* streamChat({
         type: "error",
         message: receivedOutput
           ? `The model stopped producing output for ${idleSeconds} seconds. The partial reply was preserved; try again.`
-          : provider === "cursor"
-            ? "Cursor did not start a reply within 2 minutes. It may still be waiting for provider capacity; try again or choose another model/provider."
-            : `The model did not start responding within ${idleSeconds} seconds. Try again or choose a faster model.`,
+          : `The model did not start responding within ${idleSeconds} seconds. Try again or choose a faster model.`,
       };
       return;
     }
@@ -222,11 +191,11 @@ export async function* streamChat({
       }
       if (event.type === "done") sawDone = true;
       if (event.type === "error") sawError = true;
-      yield event.agentId ? { ...event, figmaSkillRevision: activeSkillRevision } : event;
+      yield event;
     }
     if (done) break;
   }
 
-  const completion = chatStreamCompletionEvent(provider, { sawDone, sawError });
+  const completion = chatStreamCompletionEvent({ sawDone, sawError });
   if (completion) yield completion;
 }

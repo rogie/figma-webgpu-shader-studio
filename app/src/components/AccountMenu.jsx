@@ -7,7 +7,6 @@ import {
   setProviderKeys,
   subscribeProviderKeys,
 } from "../lib/providerKeys.js";
-import { clearCursorAgent } from "../lib/cursorAgent.js";
 import { useFigMenuChange } from "../hooks/useFigMenuChange.js";
 import {
   getFigmaAccessToken,
@@ -101,7 +100,6 @@ export default function AccountMenu({
   );
   const [geminiKey, setGeminiKey] = useState(() => getProviderKeys().gemini);
   const [grokKey, setGrokKey] = useState(() => getProviderKeys().grok);
-  const [cursorKey, setCursorKey] = useState(() => getProviderKeys().cursor);
   const [pixelRatioMode, setPixelRatioMode] = useState(
     readPreviewPixelRatioMode
   );
@@ -144,7 +142,6 @@ export default function AccountMenu({
       setAnthropicKey(keys.anthropic);
       setGeminiKey(keys.gemini);
       setGrokKey(keys.grok);
-      setCursorKey(keys.cursor);
     });
   }, []);
 
@@ -299,17 +296,12 @@ export default function AccountMenu({
         setHandle(profile.handle);
         onProfileChange?.(profile.display_name, profile);
       }
-      const previousCursorKey = getProviderKeys().cursor;
       setProviderKeys({
         openai: openaiKey,
         anthropic: anthropicKey,
         gemini: geminiKey,
         grok: grokKey,
-        cursor: cursorKey,
       });
-      if ((cursorKey || "").trim() !== previousCursorKey) {
-        clearCursorAgent();
-      }
       setSettingsSaved(true);
       window.setTimeout(() => setSettingsSaved(false), 2000);
     } catch (saveError) {
@@ -728,18 +720,6 @@ export default function AccountMenu({
                 placeholder="xai-…"
                 autocomplete="off"
                 onInput={(event) => setGrokKey(event.target.value)}
-                dangerouslySetInnerHTML={{ __html: "" }}
-              />
-            </fig-field>
-            <fig-field>
-              <label>Cursor</label>
-              <fig-input-text
-                type="password"
-                full=""
-                value={cursorKey}
-                placeholder="crsr_…"
-                autocomplete="off"
-                onInput={(event) => setCursorKey(event.target.value)}
                 dangerouslySetInnerHTML={{ __html: "" }}
               />
             </fig-field>
